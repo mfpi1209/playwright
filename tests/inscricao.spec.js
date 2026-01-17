@@ -283,6 +283,7 @@ test('test', async ({ page }) => {
   const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
   await searchInput.waitFor({ state: 'visible', timeout: 15000 });
   await searchInput.click();
+  console.log(`🔍 Digitando na busca: "${CLIENTE.curso}"`);
   await searchInput.type(CLIENTE.curso, { delay: 80 });
   await searchInput.press('Enter');
   
