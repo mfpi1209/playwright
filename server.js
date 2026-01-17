@@ -104,8 +104,8 @@ app.post('/inscricao', async (req, res) => {
     } else {
       console.log('✅ SUCESSO');
       
-      // Tenta extrair o link da prova do output
-      const linkMatch = stdout.match(/🔗 LINK DA PROVA.*?\n\s+(https?:\/\/[^\s]+)/s);
+      // Tenta extrair o link da prova do output (formato: 🔗 https://...)
+      const linkMatch = stdout.match(/🔗\s*(https?:\/\/[^\s]+)/);
       const linkProva = linkMatch ? linkMatch[1] : null;
       
       execucaoAtual.status = 'concluido';
@@ -238,8 +238,8 @@ app.post('/inscricao/sync', async (req, res) => {
     
     console.log('✅ SUCESSO');
     
-    // Tenta extrair o link da prova do output
-    const linkMatch = stdout.match(/🔗 LINK DA PROVA.*?\n\s+(https?:\/\/[^\s]+)/s);
+    // Tenta extrair o link da prova do output (formato: 🔗 https://...)
+    const linkMatch = stdout.match(/🔗\s*(https?:\/\/[^\s]+)/);
     const linkProva = linkMatch ? linkMatch[1] : null;
     
     // Verifica se CPF já tinha inscrição
