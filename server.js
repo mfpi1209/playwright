@@ -157,6 +157,10 @@ app.get('/status', (req, res) => {
 // ROTA: Inscrição Síncrona (aguarda resultado)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/inscricao/sync', async (req, res) => {
+  // Debug: mostra o body completo recebido
+  console.log('');
+  console.log('📦 BODY RECEBIDO:', JSON.stringify(req.body, null, 2));
+  
   const { nome, cpf, email, telefone, nascimento, cep, numero, complemento, estado, cidade, curso, polo, tipoVestibular } = req.body;
 
   // Validação básica
