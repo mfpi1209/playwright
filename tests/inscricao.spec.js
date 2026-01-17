@@ -604,35 +604,49 @@ test('test', async ({ page }) => {
   // Verifica se precisa responder "Você mora no Brasil?"
   console.log('📍 Verificando botão "Sim"...');
   const btnSim = page.locator('button:has-text("Sim")').first();
-  if (await btnSim.isVisible({ timeout: 3000 }).catch(() => false)) {
+  if (await btnSim.isVisible({ timeout: 5000 }).catch(() => false)) {
     console.log('📍 Clicando em "Sim" (mora no Brasil)...');
     await btnSim.click();
     console.log('✅ Clicou em "Sim"!');
+    await page.waitForTimeout(3000); // Aguarda formulário de endereço aparecer
   }
   
   await page.waitForTimeout(2000);
   
-  // Preenche CEP diretamente
+  // Preenche CEP - SIMULA HUMANO digitando letra por letra
   console.log('📝 Preenchendo CEP...');
-  await page.fill('input[name*="postalCode"]', CLIENTE.cep).catch(async () => {
-    // Tenta seletor alternativo
-    await page.getByRole('textbox', { name: 'CEP *' }).fill(CLIENTE.cep).catch(() => {
-      console.log('⚠️ Não conseguiu preencher CEP');
-    });
-  });
-  console.log(`✅ CEP: ${CLIENTE.cep}`);
+  const campoCep = page.getByRole('textbox', { name: 'CEP *' });
   
-  await page.keyboard.press('Tab');
-  await page.waitForTimeout(3000);
+  try {
+    await campoCep.waitFor({ state: 'visible', timeout: 15000 });
+    await campoCep.click();
+    await page.waitForTimeout(500);
+    await campoCep.clear();
+    await page.waitForTimeout(300);
+    // Digita letra por letra como humano
+    await campoCep.type(CLIENTE.cep, { delay: 100 });
+    console.log(`✅ CEP: ${CLIENTE.cep}`);
+    
+    // Tab para acionar busca
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(5000); // Aguarda CEP carregar endereço
+  } catch (e) {
+    console.log('⚠️ Erro no CEP:', e.message);
+  }
   
-  // Preenche Número
+  // Preenche Número - SIMULA HUMANO
   console.log('📝 Preenchendo Número...');
-  await page.fill('input[name*="number"]', CLIENTE.numero).catch(async () => {
-    await page.getByRole('textbox', { name: 'Número *' }).fill(CLIENTE.numero).catch(() => {
-      console.log('⚠️ Não conseguiu preencher número');
-    });
-  });
-  console.log(`✅ Número: ${CLIENTE.numero}`);
+  const campoNumero = page.getByRole('textbox', { name: 'Número *' });
+  
+  try {
+    await campoNumero.waitFor({ state: 'visible', timeout: 10000 });
+    await campoNumero.click();
+    await page.waitForTimeout(300);
+    await campoNumero.type(CLIENTE.numero, { delay: 80 });
+    console.log(`✅ Número: ${CLIENTE.numero}`);
+  } catch (e) {
+    console.log('⚠️ Erro no Número:', e.message);
+  }
   
   await page.waitForTimeout(1000);
   
