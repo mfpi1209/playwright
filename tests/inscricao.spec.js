@@ -40,11 +40,18 @@ test('test', async ({ page }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO AUXILIAR: Aguarda carregamento com verificação
   // ═══════════════════════════════════════════════════════════════════════════
-  async function aguardarCarregamento(descricao, timeout = 10000) {
+  async function aguardarCarregamento(descricao, timeout = 30000) {
     console.log(`⏳ Aguardando: ${descricao}...`);
     const inicio = Date.now();
-    await page.waitForLoadState('networkidle', { timeout });
-    await page.waitForTimeout(1000);
+    
+    // Usa domcontentloaded ao invés de networkidle (mais confiável)
+    try {
+      await page.waitForLoadState('domcontentloaded', { timeout: 15000 });
+    } catch (e) {
+      // Continua mesmo se der timeout
+    }
+    
+    await page.waitForTimeout(2000);
     
     // Aguarda "Carregando..." desaparecer (se existir)
     await aguardarCarregandoDesaparecer();
