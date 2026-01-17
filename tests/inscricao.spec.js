@@ -14,6 +14,9 @@ const CLIENTE = {
   cep: process.env.CLIENTE_CEP || '05315030',
   numero: process.env.CLIENTE_NUMERO || '12',
   complemento: process.env.CLIENTE_COMPLEMENTO || '',
+  // Localização
+  estado: process.env.CLIENTE_ESTADO || 'São Paulo',
+  cidade: process.env.CLIENTE_CIDADE || 'São Paulo',
   // Curso
   curso: process.env.CLIENTE_CURSO || 'pedagogia',
   polo: process.env.CLIENTE_POLO || 'vila mariana',
@@ -32,6 +35,8 @@ test('test', async ({ page }) => {
   console.log(`   Nascimento: ${CLIENTE.nascimento}`);
   console.log(`   CEP: ${CLIENTE.cep}`);
   console.log(`   Número: ${CLIENTE.numero}`);
+  console.log(`   Estado: ${CLIENTE.estado}`);
+  console.log(`   Cidade: ${CLIENTE.cidade}`);
   console.log(`   Curso: ${CLIENTE.curso}`);
   console.log(`   Polo: ${CLIENTE.polo}`);
   console.log(`   Vestibular: ${CLIENTE.tipoVestibular}`);
@@ -385,7 +390,7 @@ test('test', async ({ page }) => {
   // Estado
   await selecionarOpcao(
     page.locator('.react-select__input-container').nth(1),
-    'são paulo',
+    CLIENTE.estado,
     null,
     'Estado'
   );
@@ -393,7 +398,7 @@ test('test', async ({ page }) => {
   // Cidade
   await selecionarOpcao(
     page.locator('.react-select__input-container').nth(2),
-    'são paulo',
+    CLIENTE.cidade,
     null,
     'Cidade'
   );

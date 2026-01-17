@@ -28,7 +28,7 @@ app.get('/', (req, res) => {
 // ROTA: Iniciar Inscrição
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/inscricao', async (req, res) => {
-  const { nome, cpf, email, telefone, nascimento, cep, numero, complemento, curso, polo, tipoVestibular } = req.body;
+  const { nome, cpf, email, telefone, nascimento, cep, numero, complemento, estado, cidade, curso, polo, tipoVestibular } = req.body;
 
   // Validação básica
   if (!nome || !cpf || !email || !telefone || !nascimento) {
@@ -49,6 +49,8 @@ app.post('/inscricao', async (req, res) => {
   console.log(`   Nascimento: ${nascimento}`);
   console.log(`   CEP: ${cep || '(padrão)'}`);
   console.log(`   Número: ${numero || '(padrão)'}`);
+  console.log(`   Estado: ${estado || '(padrão)'}`);
+  console.log(`   Cidade: ${cidade || '(padrão)'}`);
   console.log(`   Curso: ${curso || '(padrão)'}`);
   console.log(`   Polo: ${polo || '(padrão)'}`);
   console.log(`   Vestibular: ${tipoVestibular || '(padrão)'}`);
@@ -65,6 +67,8 @@ app.post('/inscricao', async (req, res) => {
     CLIENTE_CEP: cep || '',
     CLIENTE_NUMERO: numero || '',
     CLIENTE_COMPLEMENTO: complemento || '',
+    CLIENTE_ESTADO: estado || '',
+    CLIENTE_CIDADE: cidade || '',
     CLIENTE_CURSO: curso || '',
     CLIENTE_POLO: polo || '',
     CLIENTE_TIPO_VESTIBULAR: tipoVestibular || ''
@@ -153,7 +157,7 @@ app.get('/status', (req, res) => {
 // ROTA: Inscrição Síncrona (aguarda resultado)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/inscricao/sync', async (req, res) => {
-  const { nome, cpf, email, telefone, nascimento, cep, numero, complemento, curso, polo, tipoVestibular } = req.body;
+  const { nome, cpf, email, telefone, nascimento, cep, numero, complemento, estado, cidade, curso, polo, tipoVestibular } = req.body;
 
   // Validação básica
   if (!nome || !cpf || !email || !telefone || !nascimento) {
@@ -174,6 +178,8 @@ app.post('/inscricao/sync', async (req, res) => {
   console.log(`   Nascimento: ${nascimento}`);
   console.log(`   CEP: ${cep || '(padrão)'}`);
   console.log(`   Número: ${numero || '(padrão)'}`);
+  console.log(`   Estado: ${estado || '(padrão)'}`);
+  console.log(`   Cidade: ${cidade || '(padrão)'}`);
   console.log(`   Curso: ${curso || '(padrão)'}`);
   console.log(`   Polo: ${polo || '(padrão)'}`);
   console.log(`   Vestibular: ${tipoVestibular || '(padrão)'}`);
@@ -190,6 +196,8 @@ app.post('/inscricao/sync', async (req, res) => {
     CLIENTE_CEP: cep || '',
     CLIENTE_NUMERO: numero || '',
     CLIENTE_COMPLEMENTO: complemento || '',
+    CLIENTE_ESTADO: estado || '',
+    CLIENTE_CIDADE: cidade || '',
     CLIENTE_CURSO: curso || '',
     CLIENTE_POLO: polo || '',
     CLIENTE_TIPO_VESTIBULAR: tipoVestibular || ''
