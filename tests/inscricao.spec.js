@@ -4,11 +4,20 @@ import { test, expect } from '@playwright/test';
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
 // ═══════════════════════════════════════════════════════════════════════════
 const CLIENTE = {
+  // Dados pessoais
   nome: process.env.CLIENTE_NOME || 'Camila Souza Pinto',
   cpf: process.env.CLIENTE_CPF || '61414460007',
   email: process.env.CLIENTE_EMAIL || 'csouza85@yahoo.com.br',
   telefone: process.env.CLIENTE_TELEFONE || '11981284567',
   nascimento: process.env.CLIENTE_NASCIMENTO || '02/11/1985',
+  // Endereço
+  cep: process.env.CLIENTE_CEP || '05315030',
+  numero: process.env.CLIENTE_NUMERO || '12',
+  complemento: process.env.CLIENTE_COMPLEMENTO || '',
+  // Curso
+  curso: process.env.CLIENTE_CURSO || 'pedagogia',
+  polo: process.env.CLIENTE_POLO || 'vila mariana',
+  tipoVestibular: process.env.CLIENTE_TIPO_VESTIBULAR || 'Vestibular Múltipla Escolha',
 };
 
 test('test', async ({ page }) => {
@@ -21,6 +30,11 @@ test('test', async ({ page }) => {
   console.log(`   Email: ${CLIENTE.email}`);
   console.log(`   Telefone: ${CLIENTE.telefone}`);
   console.log(`   Nascimento: ${CLIENTE.nascimento}`);
+  console.log(`   CEP: ${CLIENTE.cep}`);
+  console.log(`   Número: ${CLIENTE.numero}`);
+  console.log(`   Curso: ${CLIENTE.curso}`);
+  console.log(`   Polo: ${CLIENTE.polo}`);
+  console.log(`   Vestibular: ${CLIENTE.tipoVestibular}`);
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -257,12 +271,12 @@ test('test', async ({ page }) => {
   const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
   await searchInput.waitFor({ state: 'visible', timeout: 15000 });
   await searchInput.click();
-  await searchInput.type('pedagogia', { delay: 80 });
+  await searchInput.type(CLIENTE.curso, { delay: 80 });
   await searchInput.press('Enter');
   
   await aguardarCarregamento('Resultados da busca');
   
-  const produtoLink = page.getByRole('link', { name: 'View product details for Pedagogia (Semipresencial)' });
+  const produtoLink = page.locator(`a[href*="${CLIENTE.curso}"]`).first();
   await produtoLink.waitFor({ state: 'visible', timeout: 15000 });
   await produtoLink.click();
   
@@ -366,7 +380,7 @@ test('test', async ({ page }) => {
   // Polo
   await selecionarOpcao(
     page.locator('.react-select__input-container').nth(3),
-    'vila mariana',
+    CLIENTE.polo,
     null,
     'Polo'
   );
@@ -397,7 +411,7 @@ test('test', async ({ page }) => {
   await selecionarOpcao(
     page.locator('.react-select__control').filter({ hasText: 'Selecione' }).first(),
     'vest',
-    'Vestibular Múltipla Escolha',
+    CLIENTE.tipoVestibular,
     'Tipo de Vestibular'
   );
   
@@ -606,8 +620,8 @@ test('test', async ({ page }) => {
     await page.waitForTimeout(300);
     await campoCep.clear();
     await page.waitForTimeout(300);
-    await campoCep.type('05315030', { delay: 100 });
-    console.log('✅ CEP preenchido: 05315030');
+    await campoCep.type(CLIENTE.cep, { delay: 100 });
+    console.log(`✅ CEP preenchido: ${CLIENTE.cep}`);
     
     // Pressiona Tab para acionar busca do CEP
     await page.keyboard.press('Tab');
@@ -630,8 +644,8 @@ test('test', async ({ page }) => {
   if (await campoNumero.isVisible({ timeout: 5000 }).catch(() => false)) {
     await campoNumero.click();
     await page.waitForTimeout(300);
-    await campoNumero.fill('12');
-    console.log('✅ Número: 12');
+    await campoNumero.fill(CLIENTE.numero);
+    console.log(`✅ Número: ${CLIENTE.numero}`);
   } else {
     console.log('ℹ️ Campo de número não encontrado');
   }
