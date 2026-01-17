@@ -235,17 +235,6 @@ app.post('/inscricao/sync', async (req, res) => {
     console.log(`📤 PROCESSO FINALIZADO (código: ${code})`);
     console.log('═══════════════════════════════════════════════════════════════');
     
-    if (code !== 0) {
-      console.log('❌ ERRO na execução');
-      return res.status(500).json({
-        sucesso: false,
-        erro: `Processo terminou com código ${code}`,
-        logs: stdout
-      });
-    }
-    
-    console.log('✅ SUCESSO');
-    
     // Tenta extrair o link da prova do output (formato: 🔗 https://...)
     const linkMatch = stdout.match(/🔗\s*(https?:\/\/[^\s]+)/);
     const linkProva = linkMatch ? linkMatch[1] : null;
@@ -254,6 +243,7 @@ app.post('/inscricao/sync', async (req, res) => {
     const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição');
     
     if (cpfJaInscrito) {
+      console.log('⚠️ CPF já possui inscrição');
       return res.json({
         sucesso: false,
         erro: 'CPF já possui inscrição',
@@ -261,10 +251,34 @@ app.post('/inscricao/sync', async (req, res) => {
       });
     }
     
+    // Se capturou o link, considera SUCESSO mesmo com código de erro
+    // (erros de trace/video no Docker não afetam o resultado)
+    if (linkProva) {
+      console.log('✅ SUCESSO - Link capturado!');
+      return res.json({
+        sucesso: true,
+        linkProva: linkProva,
+        mensagem: 'Inscrição concluída com sucesso!',
+        cliente: { nome, cpf, email }
+      });
+    }
+    
+    // Se não capturou o link e teve erro, retorna erro
+    if (code !== 0) {
+      console.log('❌ ERRO na execução');
+      return res.status(500).json({
+        sucesso: false,
+        erro: `Processo terminou com código ${code}`,
+        logs: stdout.slice(-2000) // Últimos 2000 chars para debug
+      });
+    }
+    
+    // Sucesso sem link (raro)
+    console.log('✅ SUCESSO - Sem link');
     res.json({
       sucesso: true,
-      linkProva: linkProva,
-      mensagem: linkProva ? 'Inscrição concluída com sucesso!' : 'Inscrição concluída',
+      linkProva: null,
+      mensagem: 'Inscrição concluída',
       cliente: { nome, cpf, email }
     });
   });

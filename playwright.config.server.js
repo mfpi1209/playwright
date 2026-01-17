@@ -13,10 +13,10 @@ export default defineConfig({
   ],
   timeout: 15 * 60 * 1000, // 15 minutos
   use: {
-    trace: 'on',
+    trace: 'off', // Desabilitado no servidor para evitar erros de disco
     headless: true,
-    screenshot: 'on',
-    video: 'on',
+    screenshot: 'off', // Desabilitado no servidor
+    video: 'off', // Desabilitado no servidor
     slowMo: 300, // Delay entre ações para parecer humano
     actionTimeout: 30000,
     navigationTimeout: 60000,
