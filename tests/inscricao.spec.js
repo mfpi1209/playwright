@@ -5,11 +5,11 @@ import { test, expect } from '@playwright/test';
 // ═══════════════════════════════════════════════════════════════════════════
 const CLIENTE = {
   // Dados pessoais
-  nome: process.env.CLIENTE_NOME || 'Marcelo S Cunha',
-  cpf: process.env.CLIENTE_CPF || '81579256066',
-  email: process.env.CLIENTE_EMAIL || 'marceloscunha1@gmail.com',
-  telefone: process.env.CLIENTE_TELEFONE || '11984358765',
-  nascimento: process.env.CLIENTE_NASCIMENTO || '12/08/1983',
+  nome: process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro',
+  cpf: process.env.CLIENTE_CPF || '96724754038',
+  email: process.env.CLIENTE_EMAIL || 'ceduardoribeiro@hotmail.com',
+  telefone: process.env.CLIENTE_TELEFONE || '11974562318',
+  nascimento: process.env.CLIENTE_NASCIMENTO || '14/02/1985',
   // Endereço
   cep: process.env.CLIENTE_CEP || '05315030',
   numero: process.env.CLIENTE_NUMERO || '12',
@@ -744,88 +744,116 @@ test('test', async ({ page }) => {
     await page.pause();
   }
   
+  let linkProva = null;
+  
   if (novaAba) {
-    await novaAba.waitForTimeout(5000);
+   console.log('⏳ Página aberta, buscando botões...');
+   await novaAba.waitForTimeout(2000); // Espera mínima
+   console.log(`📍 URL da nova aba: ${novaAba.url()}`);
+   
+   // ═══════════════════════════════════════════════════════════════════════════
+   // PASSO 1: Encontrar e clicar em "Acompanhar Inscrição"
+   // ═══════════════════════════════════════════════════════════════════════════
+   console.log('');
+   console.log('🔍 PASSO 1: Procurando "Acompanhar Inscrição"...');
+   
+   let clicouAcompanhar = false;
+   
+   // Usa o seletor exato do Codegen
+   const btnAcompanhar = novaAba.getByRole('button', { name: 'Acompanhar Inscrição' });
+   
+   try {
+     await btnAcompanhar.waitFor({ state: 'visible', timeout: 15000 });
+     console.log('   ✅ ENCONTROU "Acompanhar Inscrição"!');
+     await btnAcompanhar.click();
+     console.log('   ✅ Clicou em "Acompanhar Inscrição"!');
+     clicouAcompanhar = true;
+     await novaAba.waitForTimeout(3000); // Espera modal abrir
+   } catch (e) {
+     console.log('   ⚠️ "Acompanhar Inscrição" não encontrado');
+     const botoesVisiveis = await novaAba.locator('button:visible').allTextContents().catch(() => []);
+     console.log('   Botões disponíveis:', botoesVisiveis.join(' | '));
+   }
+   
+   // ═══════════════════════════════════════════════════════════════════════════
+   // PASSO 2: Encontrar "Acessar prova" dentro da MODAL
+   // ═══════════════════════════════════════════════════════════════════════════
+   console.log('');
+   console.log('🔍 PASSO 2: Procurando "Acessar prova" na modal...');
+   
+   // Aguarda a modal abrir completamente (5 segundos)
+   await novaAba.waitForTimeout(5000);
+   
+   // Usa o seletor exato do Codegen - o botão está dentro de um <a>
+   const btnAcessarProva = novaAba.getByRole('button', { name: 'Acessar prova' });
+   let acessarProvaLink = null;
+   
+   try {
+     await btnAcessarProva.waitFor({ state: 'visible', timeout: 10000 });
+     console.log('   ✅ ENCONTROU "Acessar prova" na modal!');
+     // Pega o elemento pai <a> que contém o href
+     acessarProvaLink = novaAba.locator('a:has(button:has-text("Acessar prova"))');
+   } catch (e) {
+     console.log('   ⚠️ Botão "Acessar prova" não encontrado');
+   }
     
-    let linkProva = null;
-    
-    // Clica em "Acompanhar Inscrição" para abrir o modal
-    console.log('📍 Procurando "Acompanhar Inscrição"...');
-    const acompanharBtn = novaAba.getByRole('button', { name: 'Acompanhar Inscrição' });
-    if (await acompanharBtn.isVisible({ timeout: 10000 }).catch(() => false)) {
-      await acompanharBtn.click();
-      console.log('✅ Clicou em "Acompanhar Inscrição"');
-      await novaAba.waitForTimeout(5000); // Aguarda modal abrir
-    } else {
-      console.log('ℹ️ Botão "Acompanhar Inscrição" não encontrado');
-    }
-    
-    // Agora procura "Acessar prova" no modal
-    console.log('📍 Procurando "Acessar prova"...');
-    await novaAba.waitForTimeout(2000);
-    
-    // Seletor exato: <button class="cta-button w-100">Acessar prova</button>
-    const acessarProvaBtn = novaAba.locator('button.cta-button:has-text("Acessar prova"), button:has-text("Acessar prova")').first();
-    
-    if (await acessarProvaBtn.isVisible({ timeout: 10000 }).catch(() => false)) {
-      console.log('✅ Encontrou "Acessar prova"!');
-      
-      // Clica no botão e captura a URL da nova página/aba
-      console.log('📍 Clicando em "Acessar prova"...');
-      
-      try {
-        // Espera popup (nova aba) ao clicar
-        const [provaPage] = await Promise.all([
-          novaAba.context().waitForEvent('page', { timeout: 15000 }),
-          acessarProvaBtn.click()
-        ]);
-        
-        // Aguarda a nova página carregar
-        await provaPage.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
-        await provaPage.waitForTimeout(2000);
-        
-        linkProva = provaPage.url();
-        console.log('✅ Nova aba aberta com a prova!');
-      } catch (e) {
-        // Se não abriu popup, pega a URL atual
-        await novaAba.waitForTimeout(3000);
-        linkProva = novaAba.url();
-      }
-      
-      if (linkProva && linkProva.includes('avalia') || linkProva.includes('prova')) {
-        console.log('');
-        console.log('═══════════════════════════════════════════════════════════════════════════');
-        console.log('🔗 LINK DA PROVA:');
-        console.log(`   ${linkProva}`);
-        console.log('═══════════════════════════════════════════════════════════════════════════');
-        console.log('');
-      } else if (linkProva) {
-        console.log('');
-        console.log('═══════════════════════════════════════════════════════════════════════════');
-        console.log('🔗 URL CAPTURADA:');
-        console.log(`   ${linkProva}`);
-        console.log('═══════════════════════════════════════════════════════════════════════════');
-        console.log('');
-      }
-    } else {
-      console.log('⚠️ "Acessar prova" não encontrado');
-      
-      // Debug: lista botões visíveis
-      const botoesVisiveis = await novaAba.locator('button:visible').allTextContents();
-      console.log('   Botões visíveis:', botoesVisiveis.slice(0, 5).join(', '));
-      
-      // PAUSA PARA DEBUG - só funciona em modo local (headed)
+   // ═══════════════════════════════════════════════════════════════════════════
+   // PASSO 3: Capturar o link da prova (extrair href do <a>)
+   // ═══════════════════════════════════════════════════════════════════════════
+   if (acessarProvaLink) {
+     console.log('');
+     console.log('🔍 PASSO 3: Extraindo link da prova...');
+     
+     try {
+       // Pega o href diretamente do elemento <a>
+       const href = await acessarProvaLink.getAttribute('href').catch(() => null);
+       if (href && href.startsWith('http')) {
+         linkProva = href;
+         console.log('   ✅ Link extraído com sucesso!');
+       } else {
+         // Se não conseguiu o href, tenta clicar e capturar a URL
+         console.log('   📍 href não encontrado, clicando para capturar URL...');
+         const [provaPage] = await Promise.all([
+           novaAba.context().waitForEvent('page', { timeout: 15000 }).catch(() => null),
+           acessarProvaLink.click()
+         ]);
+         
+         await novaAba.waitForTimeout(3000);
+         
+         if (provaPage) {
+           await provaPage.waitForLoadState('domcontentloaded').catch(() => {});
+           linkProva = provaPage.url();
+           console.log('   ✅ Link capturado da nova aba!');
+           await provaPage.close().catch(() => {});
+         } else {
+           linkProva = novaAba.url();
+           console.log('   ✅ Link capturado da URL atual!');
+         }
+       }
+     } catch (e) {
+       console.log(`   ❌ Erro ao capturar link: ${e.message}`);
+     }
+   } else {
       console.log('');
-      console.log('⏸️  PAUSADO PARA DEBUG - Investigue manualmente');
-      console.log('   Pressione "Resume" no Playwright Inspector para continuar');
-      await novaAba.pause();
+      console.log('⚠️ "Acessar prova" NÃO ENCONTRADO na modal');
+      const botoesVisiveis = await novaAba.locator('button:visible').allTextContents().catch(() => []);
+      console.log('   Botões visíveis:', botoesVisiveis.slice(0, 10).join(' | '));
+      const linksVisiveis = await novaAba.locator('a:visible').allTextContents().catch(() => []);
+      console.log('   Links visíveis:', linksVisiveis.slice(0, 10).join(' | '));
     }
   }
   
-  console.log(`✅ ETAPA 10 CONCLUÍDA`);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RESULTADO FINAL
+  // ═══════════════════════════════════════════════════════════════════════════
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════════════════');
-  console.log('🎉 SCRIPT FINALIZADO!');
+  if (linkProva) {
+    console.log('🎉 SUCESSO! LINK DA PROVA CAPTURADO:');
+    console.log(`🔗 ${linkProva}`);
+  } else {
+    console.log('⚠️ FINALIZADO SEM LINK DA PROVA');
+  }
   console.log(`📍 URL final: ${page.url()}`);
   console.log('═══════════════════════════════════════════════════════════════════════════');
 });
