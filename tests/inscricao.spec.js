@@ -604,37 +604,36 @@ test('test', async ({ page }) => {
   // Verifica se precisa responder "Você mora no Brasil?"
   console.log('📍 Verificando botão "Sim"...');
   const btnSim = page.locator('button:has-text("Sim")').first();
-  try {
-    if (await btnSim.isVisible({ timeout: 5000 })) {
-      console.log('📍 Clicando em "Sim" (mora no Brasil)...');
-      await btnSim.click();
-      console.log('✅ Clicou em "Sim"!');
-    } else {
-      console.log('ℹ️ Botão "Sim" não visível');
-    }
-  } catch (e) {
-    console.log('ℹ️ Botão "Sim" não encontrado');
+  if (await btnSim.isVisible({ timeout: 3000 }).catch(() => false)) {
+    console.log('📍 Clicando em "Sim" (mora no Brasil)...');
+    await btnSim.click();
+    console.log('✅ Clicou em "Sim"!');
+    await page.waitForTimeout(3000);
+  } else {
+    console.log('ℹ️ Botão "Sim" não encontrado, continuando...');
   }
   
   // Aguarda campos de endereço carregarem
   console.log('⏳ Aguardando campo de CEP aparecer...');
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(3000);
   
-  // Procura campo de CEP
+  // Procura campo de CEP - tenta múltiplos seletores
   console.log('📝 Procurando campo de CEP...');
-  const campoCep = page.getByRole('textbox', { name: 'CEP *' });
+  let campoCep = page.getByRole('textbox', { name: 'CEP *' });
   
-  try {
-    await campoCep.waitFor({ state: 'visible', timeout: 20000 });
+  if (!await campoCep.isVisible({ timeout: 5000 }).catch(() => false)) {
+    console.log('⚠️ Tentando seletor alternativo para CEP...');
+    campoCep = page.locator('input[name*="postalCode"], input[placeholder*="CEP"], input[name*="cep"]').first();
+  }
+  
+  if (await campoCep.isVisible({ timeout: 5000 }).catch(() => false)) {
     console.log('✅ Campo de CEP encontrado!');
     
-    // Preenche CEP usando type() para digitar letra por letra
+    // Preenche CEP
     console.log('📝 Preenchendo CEP...');
     await campoCep.click();
-    await page.waitForTimeout(300);
-    await campoCep.clear();
-    await page.waitForTimeout(300);
-    await campoCep.type(CLIENTE.cep, { delay: 100 });
+    await page.waitForTimeout(500);
+    await campoCep.fill(CLIENTE.cep);
     console.log(`✅ CEP preenchido: ${CLIENTE.cep}`);
     
     // Pressiona Tab para acionar busca do CEP
@@ -642,11 +641,13 @@ test('test', async ({ page }) => {
     
     // Aguarda busca do CEP preencher o endereço
     console.log('⏳ Aguardando busca do CEP...');
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(5000);
     console.log('✅ Busca de CEP concluída!');
-    
-  } catch (e) {
-    console.log('⚠️ Erro ao preencher CEP:', e.message);
+  } else {
+    console.log('⚠️ Campo de CEP não encontrado!');
+    // Lista inputs para debug
+    const inputs = await page.locator('input:visible').all();
+    console.log(`   Inputs visíveis: ${inputs.length}`);
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
