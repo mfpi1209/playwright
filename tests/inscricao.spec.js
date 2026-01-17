@@ -5,11 +5,11 @@ import { test, expect } from '@playwright/test';
 // ═══════════════════════════════════════════════════════════════════════════
 const CLIENTE = {
   // Dados pessoais
-  nome: process.env.CLIENTE_NOME || 'Camila Souza Pinto',
-  cpf: process.env.CLIENTE_CPF || '61414460007',
-  email: process.env.CLIENTE_EMAIL || 'csouza85@yahoo.com.br',
-  telefone: process.env.CLIENTE_TELEFONE || '11981284567',
-  nascimento: process.env.CLIENTE_NASCIMENTO || '02/11/1985',
+  nome: process.env.CLIENTE_NOME || 'Marcelo S Cunha',
+  cpf: process.env.CLIENTE_CPF || '81579256066',
+  email: process.env.CLIENTE_EMAIL || 'marceloscunha1@gmail.com',
+  telefone: process.env.CLIENTE_TELEFONE || '11984358765',
+  nascimento: process.env.CLIENTE_NASCIMENTO || '12/08/1983',
   // Endereço
   cep: process.env.CLIENTE_CEP || '05315030',
   numero: process.env.CLIENTE_NUMERO || '12',
@@ -737,6 +737,11 @@ test('test', async ({ page }) => {
       const texto = await botoes[i].innerText().catch(() => '');
       if (texto) console.log(`   - "${texto.trim()}"`);
     }
+    
+    // PAUSA PARA DEBUG
+    console.log('');
+    console.log('⏸️  PAUSADO PARA DEBUG - "Continuar Processo" não encontrado');
+    await page.pause();
   }
   
   if (novaAba) {
@@ -759,38 +764,45 @@ test('test', async ({ page }) => {
     console.log('📍 Procurando "Acessar prova"...');
     await novaAba.waitForTimeout(2000);
     
-    // Tenta encontrar o botão "Acessar prova"
-    const acessarProvaBtn = novaAba.locator('button:has-text("Acessar prova"), a:has-text("Acessar prova")').first();
+    // Seletor exato: <button class="cta-button w-100">Acessar prova</button>
+    const acessarProvaBtn = novaAba.locator('button.cta-button:has-text("Acessar prova"), button:has-text("Acessar prova")').first();
     
     if (await acessarProvaBtn.isVisible({ timeout: 10000 }).catch(() => false)) {
       console.log('✅ Encontrou "Acessar prova"!');
       
-      // Tenta pegar o href se for link
-      linkProva = await acessarProvaBtn.getAttribute('href').catch(() => null);
+      // Clica no botão e captura a URL da nova página/aba
+      console.log('📍 Clicando em "Acessar prova"...');
       
-      if (!linkProva) {
-        // Se não tem href, clica e pega a URL da nova página
-        console.log('📍 Clicando em "Acessar prova"...');
-        
-        // Espera popup ou navegação
-        const [novaProvaPage] = await Promise.all([
-          novaAba.waitForEvent('popup', { timeout: 30000 }).catch(() => null),
+      try {
+        // Espera popup (nova aba) ao clicar
+        const [provaPage] = await Promise.all([
+          novaAba.context().waitForEvent('page', { timeout: 15000 }),
           acessarProvaBtn.click()
         ]);
         
-        await novaAba.waitForTimeout(3000);
+        // Aguarda a nova página carregar
+        await provaPage.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+        await provaPage.waitForTimeout(2000);
         
-        if (novaProvaPage) {
-          linkProva = novaProvaPage.url();
-        } else {
-          linkProva = novaAba.url();
-        }
+        linkProva = provaPage.url();
+        console.log('✅ Nova aba aberta com a prova!');
+      } catch (e) {
+        // Se não abriu popup, pega a URL atual
+        await novaAba.waitForTimeout(3000);
+        linkProva = novaAba.url();
       }
       
-      if (linkProva) {
+      if (linkProva && linkProva.includes('avalia') || linkProva.includes('prova')) {
         console.log('');
         console.log('═══════════════════════════════════════════════════════════════════════════');
         console.log('🔗 LINK DA PROVA:');
+        console.log(`   ${linkProva}`);
+        console.log('═══════════════════════════════════════════════════════════════════════════');
+        console.log('');
+      } else if (linkProva) {
+        console.log('');
+        console.log('═══════════════════════════════════════════════════════════════════════════');
+        console.log('🔗 URL CAPTURADA:');
         console.log(`   ${linkProva}`);
         console.log('═══════════════════════════════════════════════════════════════════════════');
         console.log('');
@@ -801,43 +813,19 @@ test('test', async ({ page }) => {
       // Debug: lista botões visíveis
       const botoesVisiveis = await novaAba.locator('button:visible').allTextContents();
       console.log('   Botões visíveis:', botoesVisiveis.slice(0, 5).join(', '));
+      
+      // PAUSA PARA DEBUG - só funciona em modo local (headed)
+      console.log('');
+      console.log('⏸️  PAUSADO PARA DEBUG - Investigue manualmente');
+      console.log('   Pressione "Resume" no Playwright Inspector para continuar');
+      await novaAba.pause();
     }
   }
   
   console.log(`✅ ETAPA 10 CONCLUÍDA`);
   console.log('');
-  
-  // Captura screenshot final para debug
-  await page.screenshot({ path: 'estado-final.png', fullPage: true });
-  console.log('📸 Screenshot salvo em: estado-final.png');
-  
-  // Lista todos os botões e links visíveis para debug
-  console.log('');
-  console.log('🔍 DEBUG - Elementos encontrados na página:');
-  console.log('─────────────────────────────────────────────────────────────────────────');
-  
-  const botoes = await page.locator('button:visible').all();
-  console.log(`📍 Botões visíveis (${botoes.length}):`);
-  for (const btn of botoes) {
-    const texto = await btn.innerText().catch(() => '');
-    if (texto.trim()) console.log(`   - "${texto.trim().substring(0, 50)}"`);
-  }
-  
-  const links = await page.locator('a:visible').all();
-  console.log(`📍 Links visíveis (${links.length}):`);
-  for (const link of links) {
-    const texto = await link.innerText().catch(() => '');
-    if (texto.trim()) console.log(`   - "${texto.trim().substring(0, 50)}"`);
-  }
-  
-  console.log('');
   console.log('═══════════════════════════════════════════════════════════════════════════');
   console.log('🎉 SCRIPT FINALIZADO!');
   console.log(`📍 URL final: ${page.url()}`);
   console.log('═══════════════════════════════════════════════════════════════════════════');
-  console.log('');
-  
-  // Aguarda 30 segundos para você ver a tela antes de fechar
-  console.log('⏳ Aguardando 30 segundos para você verificar a tela...');
-  await page.waitForTimeout(30000);
 });
