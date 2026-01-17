@@ -1,5 +1,5 @@
 const express = require('express');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 
 const app = express();
@@ -195,20 +195,43 @@ app.post('/inscricao/sync', async (req, res) => {
     CLIENTE_TIPO_VESTIBULAR: tipoVestibular || ''
   };
 
-  // Executa o Playwright e aguarda resultado
-  const comando = 'npx playwright test --config=playwright.config.server.js';
+  // Executa o Playwright com spawn para logs em tempo real
+  console.log('🚀 Iniciando Playwright...');
+  console.log('');
   
-  exec(comando, { env, cwd: __dirname, timeout: 10 * 60 * 1000 }, (error, stdout, stderr) => {
+  const processo = spawn('npx', ['playwright', 'test', '--config=playwright.config.server.js'], {
+    env,
+    cwd: __dirname,
+    shell: true
+  });
+
+  let stdout = '';
+  let stderr = '';
+
+  // Mostra logs em tempo real
+  processo.stdout.on('data', (data) => {
+    const texto = data.toString();
+    stdout += texto;
+    process.stdout.write(texto); // Mostra no console em tempo real
+  });
+
+  processo.stderr.on('data', (data) => {
+    const texto = data.toString();
+    stderr += texto;
+    process.stderr.write(texto); // Mostra erros em tempo real
+  });
+
+  processo.on('close', (code) => {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════');
-    console.log('📤 RESULTADO DA EXECUÇÃO');
+    console.log(`📤 PROCESSO FINALIZADO (código: ${code})`);
     console.log('═══════════════════════════════════════════════════════════════');
     
-    if (error) {
-      console.log('❌ ERRO:', error.message);
+    if (code !== 0) {
+      console.log('❌ ERRO na execução');
       return res.status(500).json({
         sucesso: false,
-        erro: error.message,
+        erro: `Processo terminou com código ${code}`,
         logs: stdout
       });
     }
@@ -235,6 +258,14 @@ app.post('/inscricao/sync', async (req, res) => {
       linkProva: linkProva,
       mensagem: linkProva ? 'Inscrição concluída com sucesso!' : 'Inscrição concluída',
       cliente: { nome, cpf, email }
+    });
+  });
+
+  processo.on('error', (err) => {
+    console.log('❌ ERRO ao iniciar processo:', err.message);
+    res.status(500).json({
+      sucesso: false,
+      erro: err.message
     });
   });
 });
