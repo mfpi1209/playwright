@@ -598,51 +598,47 @@ test('test', async ({ page }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 CHECKOUT: Verificando Endereço...');
   
-  // Aguarda seção de endereço expandir/carregar
-  await page.waitForTimeout(5000);
+  // Aguarda seção de endereço
+  await page.waitForTimeout(3000);
   
-  // Verifica se precisa responder "Você mora no Brasil?"
+  // Clica em "Sim" se aparecer (usando seletor do codegen original)
   console.log('📍 Verificando botão "Sim"...');
-  const btnSim = page.locator('button:has-text("Sim")').first();
-  if (await btnSim.isVisible({ timeout: 5000 }).catch(() => false)) {
-    console.log('📍 Clicando em "Sim" (mora no Brasil)...');
-    await btnSim.click();
-    console.log('✅ Clicou em "Sim"!');
-    await page.waitForTimeout(3000); // Aguarda formulário de endereço aparecer
+  try {
+    const simNao = page.getByText('SimNão');
+    if (await simNao.isVisible({ timeout: 3000 }).catch(() => false)) {
+      console.log('📍 Clicando em "Sim"...');
+      await simNao.click();
+      await page.waitForTimeout(2000);
+      console.log('✅ Clicou em "Sim"!');
+    }
+  } catch (e) {
+    console.log('ℹ️ Botão SimNão não encontrado');
   }
   
   await page.waitForTimeout(2000);
   
-  // Preenche CEP - SIMULA HUMANO digitando letra por letra
+  // Preenche CEP
   console.log('📝 Preenchendo CEP...');
-  const campoCep = page.getByRole('textbox', { name: 'CEP *' });
-  
   try {
-    await campoCep.waitFor({ state: 'visible', timeout: 15000 });
+    const campoCep = page.getByRole('textbox', { name: 'CEP *' });
     await campoCep.click();
     await page.waitForTimeout(500);
-    await campoCep.clear();
-    await page.waitForTimeout(300);
-    // Digita letra por letra como humano
-    await campoCep.type(CLIENTE.cep, { delay: 100 });
+    await campoCep.fill(CLIENTE.cep);
     console.log(`✅ CEP: ${CLIENTE.cep}`);
-    
-    // Tab para acionar busca
-    await page.keyboard.press('Tab');
-    await page.waitForTimeout(5000); // Aguarda CEP carregar endereço
+    await page.waitForTimeout(1000);
+    await campoCep.press('Tab');
+    await page.waitForTimeout(5000);
   } catch (e) {
     console.log('⚠️ Erro no CEP:', e.message);
   }
   
-  // Preenche Número - SIMULA HUMANO
+  // Preenche Número
   console.log('📝 Preenchendo Número...');
-  const campoNumero = page.getByRole('textbox', { name: 'Número *' });
-  
   try {
-    await campoNumero.waitFor({ state: 'visible', timeout: 10000 });
+    const campoNumero = page.getByRole('textbox', { name: 'Número *' });
     await campoNumero.click();
     await page.waitForTimeout(300);
-    await campoNumero.type(CLIENTE.numero, { delay: 80 });
+    await campoNumero.fill(CLIENTE.numero);
     console.log(`✅ Número: ${CLIENTE.numero}`);
   } catch (e) {
     console.log('⚠️ Erro no Número:', e.message);
