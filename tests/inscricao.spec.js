@@ -292,8 +292,19 @@ test('test', async ({ page }) => {
   console.log('📌 ETAPA 5: Formulário Inicial');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  // Nome completo
-  const nomeInput = page.getByRole('textbox', { name: 'Nome completo' });
+  // Aguarda formulário do produto carregar
+  console.log('⏳ Aguardando formulário do produto...');
+  await page.waitForTimeout(5000);
+  
+  // Nome completo - tenta diferentes seletores
+  let nomeInput = page.getByRole('textbox', { name: 'Nome completo' });
+  
+  // Se não encontrar, tenta seletor alternativo
+  if (!await nomeInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+    console.log('⚠️ Tentando seletor alternativo para nome...');
+    nomeInput = page.locator('input[name*="name"], input[placeholder*="nome"], input[name*="nome"]').first();
+  }
+  
   await preencherCampo(nomeInput, CLIENTE.nome, 'Nome completo');
   
   // Telefone
