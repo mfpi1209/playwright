@@ -276,11 +276,14 @@ test('test', async ({ page }) => {
   
   await aguardarCarregamento('Resultados da busca');
   
-  const produtoLink = page.locator(`a[href*="${CLIENTE.curso}"]`).first();
+  // Clica no primeiro resultado que contém o curso (link com "View product details")
+  const produtoLink = page.getByRole('link', { name: /View product details/i }).first();
   await produtoLink.waitFor({ state: 'visible', timeout: 15000 });
+  console.log('📍 Produto encontrado, clicando...');
   await produtoLink.click();
   
   await aguardarCarregamento('Página do produto', 30000);
+  console.log(`📍 URL atual: ${page.url()}`);
   await page.waitForTimeout(5000); // Espera página estabilizar
   
   console.log(`✅ ETAPA 4 CONCLUÍDA - Curso selecionado`);
@@ -292,19 +295,19 @@ test('test', async ({ page }) => {
   console.log('📌 ETAPA 5: Formulário Inicial');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  // Aguarda formulário do produto carregar
+  // Aguarda formulário do produto carregar - espera o botão Inscreva-se aparecer
   console.log('⏳ Aguardando formulário do produto...');
-  await page.waitForTimeout(5000);
-  
-  // Nome completo - tenta diferentes seletores
-  let nomeInput = page.getByRole('textbox', { name: 'Nome completo' });
-  
-  // Se não encontrar, tenta seletor alternativo
-  if (!await nomeInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-    console.log('⚠️ Tentando seletor alternativo para nome...');
-    nomeInput = page.locator('input[name*="name"], input[placeholder*="nome"], input[name*="nome"]').first();
+  const btnInscreva = page.getByRole('button', { name: 'Inscreva-se' });
+  try {
+    await btnInscreva.waitFor({ state: 'visible', timeout: 30000 });
+    console.log('✅ Formulário do produto carregado!');
+  } catch (e) {
+    console.log('⚠️ Botão Inscreva-se não encontrado, continuando...');
   }
+  await page.waitForTimeout(3000);
   
+  // Nome completo
+  const nomeInput = page.getByRole('textbox', { name: 'Nome completo' });
   await preencherCampo(nomeInput, CLIENTE.nome, 'Nome completo');
   
   // Telefone
