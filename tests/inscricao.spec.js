@@ -608,64 +608,33 @@ test('test', async ({ page }) => {
     console.log('📍 Clicando em "Sim" (mora no Brasil)...');
     await btnSim.click();
     console.log('✅ Clicou em "Sim"!');
-    await page.waitForTimeout(3000);
-  } else {
-    console.log('ℹ️ Botão "Sim" não encontrado, continuando...');
-  }
-  
-  // Aguarda campos de endereço carregarem
-  console.log('⏳ Aguardando campo de CEP aparecer...');
-  await page.waitForTimeout(3000);
-  
-  // Procura campo de CEP - tenta múltiplos seletores
-  console.log('📝 Procurando campo de CEP...');
-  let campoCep = page.getByRole('textbox', { name: 'CEP *' });
-  
-  if (!await campoCep.isVisible({ timeout: 5000 }).catch(() => false)) {
-    console.log('⚠️ Tentando seletor alternativo para CEP...');
-    campoCep = page.locator('input[name*="postalCode"], input[placeholder*="CEP"], input[name*="cep"]').first();
-  }
-  
-  if (await campoCep.isVisible({ timeout: 5000 }).catch(() => false)) {
-    console.log('✅ Campo de CEP encontrado!');
-    
-    // Preenche CEP
-    console.log('📝 Preenchendo CEP...');
-    await campoCep.click();
-    await page.waitForTimeout(500);
-    await campoCep.fill(CLIENTE.cep);
-    console.log(`✅ CEP preenchido: ${CLIENTE.cep}`);
-    
-    // Pressiona Tab para acionar busca do CEP
-    await page.keyboard.press('Tab');
-    
-    // Aguarda busca do CEP preencher o endereço
-    console.log('⏳ Aguardando busca do CEP...');
-    await page.waitForTimeout(5000);
-    console.log('✅ Busca de CEP concluída!');
-  } else {
-    console.log('⚠️ Campo de CEP não encontrado!');
-    // Lista inputs para debug
-    const inputs = await page.locator('input:visible').all();
-    console.log(`   Inputs visíveis: ${inputs.length}`);
-  }
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // PREENCHE NÚMERO (seletor correto do Codegen)
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log('📝 Preenchendo Número...');
-  const campoNumero = page.getByRole('textbox', { name: 'Número *' });
-  
-  if (await campoNumero.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await campoNumero.click();
-    await page.waitForTimeout(300);
-    await campoNumero.fill(CLIENTE.numero);
-    console.log(`✅ Número: ${CLIENTE.numero}`);
-  } else {
-    console.log('ℹ️ Campo de número não encontrado');
   }
   
   await page.waitForTimeout(2000);
+  
+  // Preenche CEP diretamente
+  console.log('📝 Preenchendo CEP...');
+  await page.fill('input[name*="postalCode"]', CLIENTE.cep).catch(async () => {
+    // Tenta seletor alternativo
+    await page.getByRole('textbox', { name: 'CEP *' }).fill(CLIENTE.cep).catch(() => {
+      console.log('⚠️ Não conseguiu preencher CEP');
+    });
+  });
+  console.log(`✅ CEP: ${CLIENTE.cep}`);
+  
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(3000);
+  
+  // Preenche Número
+  console.log('📝 Preenchendo Número...');
+  await page.fill('input[name*="number"]', CLIENTE.numero).catch(async () => {
+    await page.getByRole('textbox', { name: 'Número *' }).fill(CLIENTE.numero).catch(() => {
+      console.log('⚠️ Não conseguiu preencher número');
+    });
+  });
+  console.log(`✅ Número: ${CLIENTE.numero}`);
+  
+  await page.waitForTimeout(1000);
   
   // ═══════════════════════════════════════════════════════════════════════════
   // CLICA EM "IR PARA O PAGAMENTO" (seletor correto do Codegen)
