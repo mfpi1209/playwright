@@ -4,14 +4,11 @@ services:
   inscricao-bot:
     build: .
     container_name: inscricao-cruzeiro
+    ports:
+      - "3000:3000"
     volumes:
       - ./test-results:/app/test-results
       - ./playwright-report:/app/playwright-report
     environment:
-      # Dados do cliente - configure no Easypanel ou via n8n
-      - CLIENTE_NOME
-      - CLIENTE_CPF
-      - CLIENTE_EMAIL
-      - CLIENTE_TELEFONE
-      - CLIENTE_NASCIMENTO
-    command: npx playwright test --config=playwright.config.server.js
+      - PORT=3000
+    restart: unless-stopped

@@ -1,11 +1,13 @@
 {
   "name": "script-inscricao",
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
-    "start": "node inscricaocompleta.js",
+    "start": "node server.js",
     "test": "npx playwright test",
     "test:headed": "npx playwright test --headed"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.40.0"

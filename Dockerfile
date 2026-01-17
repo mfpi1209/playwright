@@ -6,11 +6,15 @@ WORKDIR /app
 
 # Copia arquivos do projeto
 COPY package*.json ./
-COPY playwright.config.js ./
-COPY tests/ ./tests/
 
 # Instala dependências
-RUN npm ci
+RUN npm install
 
-# Comando padrão (pode ser sobrescrito)
-CMD ["npx", "playwright", "test"]
+# Copia resto dos arquivos
+COPY . .
+
+# Expõe porta da API
+EXPOSE 3000
+
+# Comando padrão: inicia servidor da API
+CMD ["node", "server.js"]
