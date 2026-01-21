@@ -211,7 +211,8 @@ app.post('/inscricao/sync', async (req, res) => {
   console.log('🚀 Iniciando Playwright...');
   console.log('');
   
-  const processo = spawn('npx', ['playwright', 'test', '--config=playwright.config.server.js'], {
+  // IMPORTANTE: Usa apenas o script inscricao.spec.js (vestibular)
+  const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao.spec.js', '--config=playwright.config.server.js'], {
     env,
     cwd: __dirname,
     shell: true
