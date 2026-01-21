@@ -702,9 +702,28 @@ test('test-enem', async ({ page }) => {
     console.log(`✅ CEP: ${CLIENTE.cep}`);
     await page.waitForTimeout(1000);
     await campoCep.press('Tab');
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(5000); // Aguarda busca do CEP
   } catch (e) {
     console.log('⚠️ Erro no CEP:', e.message);
+  }
+  
+  // Verifica se o campo Endereço foi preenchido automaticamente
+  console.log('📝 Verificando campo Endereço...');
+  try {
+    const campoEndereco = page.getByRole('textbox', { name: 'Endereço *' });
+    const enderecoAtual = await campoEndereco.inputValue().catch(() => '');
+    
+    if (!enderecoAtual || enderecoAtual.trim() === '' || enderecoAtual.toLowerCase() === 'null') {
+      console.log('   ℹ️ Endereço não preenchido pelo CEP, inserindo "Null"...');
+      await campoEndereco.click();
+      await page.waitForTimeout(300);
+      await campoEndereco.fill('Null');
+      console.log('✅ Endereço: Null');
+    } else {
+      console.log(`✅ Endereço já preenchido: "${enderecoAtual}"`);
+    }
+  } catch (e) {
+    console.log('⚠️ Erro ao verificar Endereço:', e.message);
   }
   
   // Preenche Número
@@ -717,6 +736,25 @@ test('test-enem', async ({ page }) => {
     console.log(`✅ Número: ${CLIENTE.numero}`);
   } catch (e) {
     console.log('⚠️ Erro no Número:', e.message);
+  }
+  
+  // Verifica se o campo Bairro foi preenchido automaticamente
+  console.log('📝 Verificando campo Bairro...');
+  try {
+    const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
+    const bairroAtual = await campoBairro.inputValue().catch(() => '');
+    
+    if (!bairroAtual || bairroAtual.trim() === '') {
+      console.log('   ℹ️ Bairro não preenchido pelo CEP, inserindo "Centro"...');
+      await campoBairro.click();
+      await page.waitForTimeout(300);
+      await campoBairro.fill('Centro');
+      console.log('✅ Bairro: Centro');
+    } else {
+      console.log(`✅ Bairro já preenchido: "${bairroAtual}"`);
+    }
+  } catch (e) {
+    console.log('⚠️ Erro ao verificar Bairro:', e.message);
   }
   
   await page.waitForTimeout(1000);
