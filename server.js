@@ -380,8 +380,8 @@ app.post('/inscricao-enem/sync', async (req, res) => {
   console.log('🚀 Iniciando Playwright (ENEM)...');
   console.log('');
   
-  // IMPORTANTE: Usa o script inscricao-enem.spec.js
-  const processo = spawn('npx', ['playwright', 'test', 'inscricao-enem.spec.js', '--config=playwright.config.server.js'], {
+  // IMPORTANTE: Usa o script inscricao-enem.spec.js (caminho completo)
+  const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao-enem.spec.js', '--config=playwright.config.server.js'], {
     env,
     cwd: __dirname,
     shell: true
