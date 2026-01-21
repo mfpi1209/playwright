@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
+  testMatch: undefined, // Permite filtrar por arquivo na linha de comando
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
