@@ -206,7 +206,11 @@ test('test', async ({ page }) => {
   console.log('📌 ETAPA 2: Navegação para Graduação');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+  // Verifica se já está na página de graduação
+  const urlAtualEtapa2 = page.url();
+  if (!urlAtualEtapa2.includes('/graduacao')) {
+    await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+  }
   await aguardarCarregamento('Página de graduação', 30000);
   await page.waitForTimeout(3000);
   
