@@ -472,6 +472,149 @@ app.post('/inscricao-enem/sync', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Inscrição ENEM SEM NOTA Síncrona (aguarda resultado)
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
+  // Debug: mostra o body completo recebido
+  console.log('');
+  console.log('📦 BODY RECEBIDO (ENEM SEM NOTA):', JSON.stringify(req.body, null, 2));
+  
+  const { 
+    nome, cpf, email, telefone, nascimento, 
+    cep, numero, complemento, estado, cidade, curso, polo
+  } = req.body;
+
+  // Validação básica
+  if (!nome || !cpf || !email || !telefone || !nascimento) {
+    return res.status(400).json({
+      sucesso: false,
+      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento'
+    });
+  }
+
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('📥 NOVA REQUISIÇÃO DE INSCRIÇÃO ENEM SEM NOTA (SÍNCRONA)');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log(`   Nome: ${nome}`);
+  console.log(`   CPF: ${cpf}`);
+  console.log(`   Email: ${email}`);
+  console.log(`   Telefone: ${telefone}`);
+  console.log(`   Nascimento: ${nascimento}`);
+  console.log(`   CEP: ${cep || '(padrão)'}`);
+  console.log(`   Número: ${numero || '(padrão)'}`);
+  console.log(`   Estado: ${estado || '(padrão)'}`);
+  console.log(`   Cidade: ${cidade || '(padrão)'}`);
+  console.log(`   Curso: ${curso || '(padrão)'}`);
+  console.log(`   Polo: ${polo || '(padrão)'}`);
+  console.log('   ⚠️ NOTAS DO ENEM: Não disponíveis (serão preenchidas depois)');
+  console.log('');
+
+  // Define variáveis de ambiente para o Playwright
+  const env = {
+    ...process.env,
+    CLIENTE_NOME: nome,
+    CLIENTE_CPF: cpf,
+    CLIENTE_EMAIL: email,
+    CLIENTE_TELEFONE: telefone,
+    CLIENTE_NASCIMENTO: nascimento,
+    CLIENTE_CEP: cep || '',
+    CLIENTE_NUMERO: numero || '',
+    CLIENTE_COMPLEMENTO: complemento || '',
+    CLIENTE_ESTADO: estado || '',
+    CLIENTE_CIDADE: cidade || '',
+    CLIENTE_CURSO: curso || '',
+    CLIENTE_POLO: polo || ''
+  };
+
+  // Executa o Playwright com spawn para logs em tempo real
+  console.log('🚀 Iniciando Playwright (ENEM SEM NOTA)...');
+  console.log('');
+  
+  // IMPORTANTE: Usa o script inscricao-enem-sem-nota.spec.js
+  const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao-enem-sem-nota.spec.js', '--config=playwright.config.server.js'], {
+    env,
+    cwd: __dirname,
+    shell: true
+  });
+
+  let stdout = '';
+  let stderr = '';
+
+  // Mostra logs em tempo real
+  processo.stdout.on('data', (data) => {
+    const texto = data.toString();
+    stdout += texto;
+    process.stdout.write(texto);
+  });
+
+  processo.stderr.on('data', (data) => {
+    const texto = data.toString();
+    stderr += texto;
+    process.stderr.write(texto);
+  });
+
+  processo.on('close', (code) => {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log(`📤 PROCESSO ENEM SEM NOTA FINALIZADO (código: ${code})`);
+    console.log('═══════════════════════════════════════════════════════════════');
+    
+    // Verifica se CPF já tinha inscrição
+    const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição');
+    
+    if (cpfJaInscrito) {
+      console.log('⚠️ CPF já possui inscrição');
+      return res.json({
+        sucesso: false,
+        erro: 'CPF já possui inscrição',
+        cliente: { nome, cpf, email }
+      });
+    }
+    
+    // Verifica se a inscrição foi finalizada com sucesso
+    const inscricaoFinalizada = stdout.includes('INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA');
+    
+    if (inscricaoFinalizada) {
+      console.log('✅ SUCESSO - Inscrição ENEM (sem nota) concluída!');
+      return res.json({
+        sucesso: true,
+        mensagem: 'Inscrição ENEM concluída! Notas deverão ser preenchidas posteriormente pelo aluno.',
+        notasPendentes: true,
+        cliente: { nome, cpf, email }
+      });
+    }
+    
+    // Se teve erro, retorna erro
+    if (code !== 0) {
+      console.log('❌ ERRO na execução ENEM SEM NOTA');
+      return res.status(500).json({
+        sucesso: false,
+        erro: `Processo terminou com código ${code}`,
+        logs: stdout.slice(-2000)
+      });
+    }
+    
+    // Sucesso genérico
+    console.log('✅ SUCESSO - ENEM SEM NOTA');
+    res.json({
+      sucesso: true,
+      mensagem: 'Inscrição ENEM concluída (notas pendentes)',
+      notasPendentes: true,
+      cliente: { nome, cpf, email }
+    });
+  });
+
+  processo.on('error', (err) => {
+    console.log('❌ ERRO ao iniciar processo ENEM SEM NOTA:', err.message);
+    res.status(500).json({
+      sucesso: false,
+      erro: err.message
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // INICIA SERVIDOR
 // ═══════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
@@ -482,9 +625,10 @@ app.listen(PORT, () => {
   console.log(`   URL: http://localhost:${PORT}`);
   console.log('');
   console.log('   Endpoints disponíveis:');
-  console.log('   POST /inscricao           - Inicia inscrição (assíncrono)');
-  console.log('   POST /inscricao/sync      - Inicia inscrição vestibular (aguarda resultado)');
-  console.log('   POST /inscricao-enem/sync - Inicia inscrição ENEM (aguarda resultado)');
-  console.log('   GET  /status              - Status da execução atual');
+  console.log('   POST /inscricao                - Inicia inscrição (assíncrono)');
+  console.log('   POST /inscricao/sync           - Inicia inscrição vestibular (aguarda resultado)');
+  console.log('   POST /inscricao-enem/sync      - Inicia inscrição ENEM com notas');
+  console.log('   POST /inscricao-enem-sem-nota/sync - Inicia inscrição ENEM sem notas');
+  console.log('   GET  /status                   - Status da execução atual');
   console.log('');
 });
