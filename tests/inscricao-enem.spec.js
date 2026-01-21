@@ -392,12 +392,39 @@ test('test-enem', async ({ page }) => {
   console.log('📌 ETAPA 6: Dados de Localização');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
+  // Debug: mostra URL e estado da página
+  console.log(`📍 URL atual: ${page.url()}`);
+  
   // Aguarda formulário estar completamente carregado
   console.log('⏳ Verificando se formulário está pronto...');
   await aguardarCarregandoDesaparecer();
+  await page.waitForTimeout(3000);
   
-  // Aguarda o primeiro select estar visível e interativo
-  const primeiroSelect = page.locator('.react-select__input-container').first();
+  // Debug: lista elementos na página
+  const selects = await page.locator('.react-select__input-container').count();
+  const selectsControl = await page.locator('.react-select__control').count();
+  console.log(`   📋 Selects encontrados: ${selects} (input-container), ${selectsControl} (control)`);
+  
+  // Tenta seletores alternativos se não encontrar o padrão
+  let primeiroSelect = page.locator('.react-select__input-container').first();
+  
+  // Se não encontrar, tenta com .react-select__control
+  if (selects === 0 && selectsControl > 0) {
+    console.log('   ℹ️ Usando seletor alternativo: .react-select__control');
+    primeiroSelect = page.locator('.react-select__control').first();
+  }
+  
+  // Se ainda não encontrar, lista o que tem na página
+  if (selects === 0 && selectsControl === 0) {
+    console.log('   ⚠️ Nenhum select encontrado! Listando elementos...');
+    const h1s = await page.locator('h1, h2, h3').allTextContents();
+    console.log(`   Títulos: ${h1s.slice(0, 5).join(' | ')}`);
+    const buttons = await page.locator('button:visible').allTextContents();
+    console.log(`   Botões: ${buttons.slice(0, 5).join(' | ')}`);
+    const inputs = await page.locator('input:visible').count();
+    console.log(`   Inputs visíveis: ${inputs}`);
+  }
+  
   await primeiroSelect.waitFor({ state: 'visible', timeout: 30000 });
   await page.waitForTimeout(2000);
   
