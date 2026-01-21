@@ -227,11 +227,7 @@ test('test-enem', async ({ page }) => {
   console.log('📌 ETAPA 2: Navegação para Graduação');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  await page.evaluate(() => {
-    window.location.href = 'https://cruzeirodosul.myvtex.com/graduacao';
-  });
-  
-  await page.waitForURL('**/graduacao**', { timeout: 30000 });
+  await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await aguardarCarregamento('Página de graduação', 30000);
   await page.waitForTimeout(3000);
   
