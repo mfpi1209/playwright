@@ -297,6 +297,180 @@ app.post('/inscricao/sync', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Inscrição ENEM Síncrona (aguarda resultado)
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/inscricao-enem/sync', async (req, res) => {
+  // Debug: mostra o body completo recebido
+  console.log('');
+  console.log('📦 BODY RECEBIDO (ENEM):', JSON.stringify(req.body, null, 2));
+  
+  const { 
+    nome, cpf, email, telefone, nascimento, 
+    cep, numero, complemento, estado, cidade, curso, polo,
+    // Notas do ENEM
+    enemCienciasHumanas, enemCienciasNatureza, enemLinguagens, 
+    enemMatematica, enemRedacao, enemAno
+  } = req.body;
+
+  // Validação básica
+  if (!nome || !cpf || !email || !telefone || !nascimento) {
+    return res.status(400).json({
+      sucesso: false,
+      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento'
+    });
+  }
+
+  // Validação das notas do ENEM
+  if (!enemCienciasHumanas || !enemCienciasNatureza || !enemLinguagens || !enemMatematica || !enemRedacao || !enemAno) {
+    return res.status(400).json({
+      sucesso: false,
+      erro: 'Campos ENEM obrigatórios: enemCienciasHumanas, enemCienciasNatureza, enemLinguagens, enemMatematica, enemRedacao, enemAno'
+    });
+  }
+
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('📥 NOVA REQUISIÇÃO DE INSCRIÇÃO ENEM (SÍNCRONA)');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log(`   Nome: ${nome}`);
+  console.log(`   CPF: ${cpf}`);
+  console.log(`   Email: ${email}`);
+  console.log(`   Telefone: ${telefone}`);
+  console.log(`   Nascimento: ${nascimento}`);
+  console.log(`   CEP: ${cep || '(padrão)'}`);
+  console.log(`   Número: ${numero || '(padrão)'}`);
+  console.log(`   Estado: ${estado || '(padrão)'}`);
+  console.log(`   Cidade: ${cidade || '(padrão)'}`);
+  console.log(`   Curso: ${curso || '(padrão)'}`);
+  console.log(`   Polo: ${polo || '(padrão)'}`);
+  console.log('   --- NOTAS ENEM ---');
+  console.log(`   Ciências Humanas: ${enemCienciasHumanas}`);
+  console.log(`   Ciências Natureza: ${enemCienciasNatureza}`);
+  console.log(`   Linguagens: ${enemLinguagens}`);
+  console.log(`   Matemática: ${enemMatematica}`);
+  console.log(`   Redação: ${enemRedacao}`);
+  console.log(`   Ano: ${enemAno}`);
+  console.log('');
+
+  // Define variáveis de ambiente para o Playwright
+  const env = {
+    ...process.env,
+    CLIENTE_NOME: nome,
+    CLIENTE_CPF: cpf,
+    CLIENTE_EMAIL: email,
+    CLIENTE_TELEFONE: telefone,
+    CLIENTE_NASCIMENTO: nascimento,
+    CLIENTE_CEP: cep || '',
+    CLIENTE_NUMERO: numero || '',
+    CLIENTE_COMPLEMENTO: complemento || '',
+    CLIENTE_ESTADO: estado || '',
+    CLIENTE_CIDADE: cidade || '',
+    CLIENTE_CURSO: curso || '',
+    CLIENTE_POLO: polo || '',
+    // Variáveis do ENEM
+    ENEM_CIENCIAS_HUMANAS: enemCienciasHumanas,
+    ENEM_CIENCIAS_NATUREZA: enemCienciasNatureza,
+    ENEM_LINGUAGENS: enemLinguagens,
+    ENEM_MATEMATICA: enemMatematica,
+    ENEM_REDACAO: enemRedacao,
+    ENEM_ANO: enemAno
+  };
+
+  // Executa o Playwright com spawn para logs em tempo real
+  console.log('🚀 Iniciando Playwright (ENEM)...');
+  console.log('');
+  
+  // IMPORTANTE: Usa o script inscricao-enem.spec.js
+  const processo = spawn('npx', ['playwright', 'test', 'inscricao-enem.spec.js', '--config=playwright.config.server.js'], {
+    env,
+    cwd: __dirname,
+    shell: true
+  });
+
+  let stdout = '';
+  let stderr = '';
+
+  // Mostra logs em tempo real
+  processo.stdout.on('data', (data) => {
+    const texto = data.toString();
+    stdout += texto;
+    process.stdout.write(texto); // Mostra no console em tempo real
+  });
+
+  processo.stderr.on('data', (data) => {
+    const texto = data.toString();
+    stderr += texto;
+    process.stderr.write(texto); // Mostra erros em tempo real
+  });
+
+  processo.on('close', (code) => {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log(`📤 PROCESSO ENEM FINALIZADO (código: ${code})`);
+    console.log('═══════════════════════════════════════════════════════════════');
+    
+    // Verifica se CPF já tinha inscrição
+    const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição');
+    
+    if (cpfJaInscrito) {
+      console.log('⚠️ CPF já possui inscrição');
+      return res.json({
+        sucesso: false,
+        erro: 'CPF já possui inscrição',
+        cliente: { nome, cpf, email }
+      });
+    }
+    
+    // Verifica se a inscrição ENEM foi finalizada com sucesso
+    const inscricaoFinalizada = stdout.includes('INSCRIÇÃO ENEM FINALIZADA');
+    const notasEnviadas = stdout.includes('Enviar notas para análise');
+    
+    if (inscricaoFinalizada || notasEnviadas) {
+      console.log('✅ SUCESSO - Inscrição ENEM concluída!');
+      return res.json({
+        sucesso: true,
+        mensagem: 'Inscrição ENEM concluída com sucesso! Notas enviadas para análise.',
+        cliente: { nome, cpf, email },
+        enem: {
+          cienciasHumanas: enemCienciasHumanas,
+          cienciasNatureza: enemCienciasNatureza,
+          linguagens: enemLinguagens,
+          matematica: enemMatematica,
+          redacao: enemRedacao,
+          ano: enemAno
+        }
+      });
+    }
+    
+    // Se teve erro, retorna erro
+    if (code !== 0) {
+      console.log('❌ ERRO na execução ENEM');
+      return res.status(500).json({
+        sucesso: false,
+        erro: `Processo terminou com código ${code}`,
+        logs: stdout.slice(-2000) // Últimos 2000 chars para debug
+      });
+    }
+    
+    // Sucesso genérico
+    console.log('✅ SUCESSO - ENEM');
+    res.json({
+      sucesso: true,
+      mensagem: 'Inscrição ENEM concluída',
+      cliente: { nome, cpf, email }
+    });
+  });
+
+  processo.on('error', (err) => {
+    console.log('❌ ERRO ao iniciar processo ENEM:', err.message);
+    res.status(500).json({
+      sucesso: false,
+      erro: err.message
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // INICIA SERVIDOR
 // ═══════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
@@ -307,8 +481,9 @@ app.listen(PORT, () => {
   console.log(`   URL: http://localhost:${PORT}`);
   console.log('');
   console.log('   Endpoints disponíveis:');
-  console.log('   POST /inscricao      - Inicia inscrição (assíncrono)');
-  console.log('   POST /inscricao/sync - Inicia inscrição (aguarda resultado)');
-  console.log('   GET  /status         - Status da execução atual');
+  console.log('   POST /inscricao           - Inicia inscrição (assíncrono)');
+  console.log('   POST /inscricao/sync      - Inicia inscrição vestibular (aguarda resultado)');
+  console.log('   POST /inscricao-enem/sync - Inicia inscrição ENEM (aguarda resultado)');
+  console.log('   GET  /status              - Status da execução atual');
   console.log('');
 });
