@@ -372,18 +372,16 @@ test('test', async ({ page }) => {
     await aguardarCarregamento('Formulário de inscrição', 60000);
     await page.waitForTimeout(5000);
     
-    // Verifica se a página navegou (não está mais na página do produto)
-    const urlAtual = page.url();
-    const aindaNaPaginaProduto = urlAtual.includes('/p') && !urlAtual.includes('checkout');
-    
     // Verifica se os selects de localização existem
+    const urlAtual = page.url();
     const selectsEncontrados = await page.locator('.react-select__input-container').count();
     const selectsControlEncontrados = await page.locator('.react-select__control').count();
     
     console.log(`   📍 URL: ${urlAtual}`);
     console.log(`   📋 Selects: ${selectsEncontrados} (input), ${selectsControlEncontrados} (control)`);
     
-    if ((selectsEncontrados > 0 || selectsControlEncontrados > 0) && !aindaNaPaginaProduto) {
+    // Se encontrou pelo menos 4 selects, o formulário carregou (País, Estado, Cidade, Polo)
+    if (selectsEncontrados >= 4 || selectsControlEncontrados >= 4) {
       formularioCarregado = true;
       console.log(`   ✅ Formulário de localização encontrado!`);
     } else if (tentativaAtual < MAX_TENTATIVAS) {
