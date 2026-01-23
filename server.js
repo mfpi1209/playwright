@@ -431,22 +431,12 @@ app.post('/inscricao-enem/sync', async (req, res) => {
       });
     }
     
-    // Se teve erro, retorna erro
-    if (code !== 0) {
-      console.log('❌ ERRO na execução ENEM');
-      return res.json({
-        sucesso: false,
-        erro: `Processo terminou com código ${code}`,
-        logs: stdout.slice(-2000) // Últimos 2000 chars para debug
-      });
-    }
-    
-    // Sucesso genérico
-    console.log('✅ SUCESSO - ENEM');
-    res.json({
-      sucesso: true,
-      mensagem: 'Inscrição ENEM concluída',
-      cliente: { nome, cpf, email }
+    // Se NÃO encontrou mensagem de finalização, é ERRO
+    console.log('❌ ERRO - Inscrição ENEM não foi finalizada corretamente');
+    return res.json({
+      sucesso: false,
+      erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição ENEM não foi finalizada corretamente',
+      logs: stdout.slice(-2000)
     });
   });
 
@@ -573,23 +563,12 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
       });
     }
     
-    // Se teve erro, retorna erro
-    if (code !== 0) {
-      console.log('❌ ERRO na execução ENEM SEM NOTA');
-      return res.json({
-        sucesso: false,
-        erro: `Processo terminou com código ${code}`,
-        logs: stdout.slice(-2000)
-      });
-    }
-    
-    // Sucesso genérico
-    console.log('✅ SUCESSO - ENEM SEM NOTA');
-    res.json({
-      sucesso: true,
-      mensagem: 'Inscrição ENEM concluída (notas pendentes)',
-      notasPendentes: true,
-      cliente: { nome, cpf, email }
+    // Se NÃO encontrou mensagem de finalização, é ERRO
+    console.log('❌ ERRO - Inscrição ENEM (sem nota) não foi finalizada corretamente');
+    return res.json({
+      sucesso: false,
+      erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição ENEM não foi finalizada corretamente',
+      logs: stdout.slice(-2000)
     });
   });
 
