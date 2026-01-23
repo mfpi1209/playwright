@@ -256,8 +256,7 @@ app.post('/inscricao/sync', async (req, res) => {
       });
     }
     
-    // Se capturou o link, considera SUCESSO mesmo com código de erro
-    // (erros de trace/video no Docker não afetam o resultado)
+    // Se capturou o link, considera SUCESSO
     if (linkProva) {
       console.log('✅ SUCESSO - Link capturado!');
       return res.json({
@@ -268,23 +267,12 @@ app.post('/inscricao/sync', async (req, res) => {
       });
     }
     
-    // Se não capturou o link e teve erro, retorna erro
-    if (code !== 0) {
-      console.log('❌ ERRO na execução');
-      return res.json({
-        sucesso: false,
-        erro: `Processo terminou com código ${code}`,
-        logs: stdout.slice(-2000) // Últimos 2000 chars para debug
-      });
-    }
-    
-    // Sucesso sem link (raro)
-    console.log('✅ SUCESSO - Sem link');
-    res.json({
-      sucesso: true,
-      linkProva: null,
-      mensagem: 'Inscrição concluída',
-      cliente: { nome, cpf, email }
+    // Se NÃO capturou o link, é ERRO (independente do código de saída)
+    console.log('❌ ERRO - Link da prova NÃO foi capturado');
+    return res.json({
+      sucesso: false,
+      erro: code !== 0 ? `Processo terminou com código ${code}` : 'Link da prova não foi capturado',
+      logs: stdout.slice(-2000) // Últimos 2000 chars para debug
     });
   });
 
