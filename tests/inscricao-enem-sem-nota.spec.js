@@ -359,10 +359,72 @@ test('test-enem-sem-nota', async ({ page }) => {
     await aguardarCarregandoDesaparecer();
   }
   
-  await inscreverBtn.click();
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SISTEMA DE RETRY - Tenta clicar e verificar se navegou corretamente
+  // ═══════════════════════════════════════════════════════════════════════════
+  const MAX_TENTATIVAS = 2;
+  let tentativaAtual = 0;
+  let formularioCarregado = false;
   
-  await aguardarCarregamento('Formulário de inscrição', 60000);
-  await page.waitForTimeout(5000);
+  while (tentativaAtual < MAX_TENTATIVAS && !formularioCarregado) {
+    tentativaAtual++;
+    console.log(`🔄 Tentativa ${tentativaAtual}/${MAX_TENTATIVAS} - Clicando em Inscreva-se...`);
+    
+    await inscreverBtn.click();
+    await aguardarCarregamento('Formulário de inscrição', 60000);
+    await page.waitForTimeout(5000);
+    
+    // Verifica se a página navegou (não está mais na página do produto)
+    const urlAtual = page.url();
+    const aindaNaPaginaProduto = urlAtual.includes('/p') && !urlAtual.includes('checkout');
+    
+    // Verifica se os selects de localização existem
+    const selectsEncontrados = await page.locator('.react-select__input-container').count();
+    const selectsControlEncontrados = await page.locator('.react-select__control').count();
+    
+    console.log(`   📍 URL: ${urlAtual}`);
+    console.log(`   📋 Selects: ${selectsEncontrados} (input), ${selectsControlEncontrados} (control)`);
+    
+    if ((selectsEncontrados > 0 || selectsControlEncontrados > 0) && !aindaNaPaginaProduto) {
+      formularioCarregado = true;
+      console.log(`   ✅ Formulário de localização encontrado!`);
+    } else if (tentativaAtual < MAX_TENTATIVAS) {
+      console.log(`   ⚠️ Formulário não carregou, recarregando página...`);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(3000);
+      await aguardarCarregandoDesaparecer();
+      
+      // Re-preenche o formulário inicial
+      console.log('   🔄 Re-preenchendo formulário inicial...');
+      
+      // Nome
+      const nomeInputRetry = page.getByRole('textbox', { name: 'Nome completo' });
+      if (await nomeInputRetry.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await nomeInputRetry.fill(CLIENTE.nome);
+      }
+      
+      // Telefone
+      const telefoneInputRetry = page.getByRole('textbox', { name: '(XX) XXXXX-XXXX' });
+      if (await telefoneInputRetry.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await telefoneInputRetry.click();
+        await telefoneInputRetry.fill(CLIENTE.telefone);
+      }
+      
+      // Checkbox
+      const checkboxRetry = page.locator('[class*="checkbox"]').filter({ hasText: /política|privacidade/i }).first();
+      if (await checkboxRetry.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await checkboxRetry.click({ force: true });
+      }
+      
+      await page.waitForTimeout(2000);
+    } else {
+      console.log(`   ❌ Falha após ${MAX_TENTATIVAS} tentativas`);
+    }
+  }
+  
+  if (!formularioCarregado) {
+    throw new Error(`Formulário de localização não carregou após ${MAX_TENTATIVAS} tentativas`);
+  }
   
   console.log(`✅ ETAPA 5 CONCLUÍDA`);
   console.log('');
@@ -379,9 +441,9 @@ test('test-enem-sem-nota', async ({ page }) => {
   // Aguarda formulário estar completamente carregado
   console.log('⏳ Verificando se formulário está pronto...');
   await aguardarCarregandoDesaparecer();
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(2000);
   
-  // Debug: lista elementos na página
+  // Pega os selects
   const selects = await page.locator('.react-select__input-container').count();
   const selectsControl = await page.locator('.react-select__control').count();
   console.log(`   📋 Selects encontrados: ${selects} (input-container), ${selectsControl} (control)`);
