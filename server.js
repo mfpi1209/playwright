@@ -271,7 +271,7 @@ app.post('/inscricao/sync', async (req, res) => {
     // Se não capturou o link e teve erro, retorna erro
     if (code !== 0) {
       console.log('❌ ERRO na execução');
-      return res.status(500).json({
+      return res.json({
         sucesso: false,
         erro: `Processo terminou com código ${code}`,
         logs: stdout.slice(-2000) // Últimos 2000 chars para debug
@@ -290,7 +290,7 @@ app.post('/inscricao/sync', async (req, res) => {
 
   processo.on('error', (err) => {
     console.log('❌ ERRO ao iniciar processo:', err.message);
-    res.status(500).json({
+    res.json({
       sucesso: false,
       erro: err.message
     });
@@ -446,7 +446,7 @@ app.post('/inscricao-enem/sync', async (req, res) => {
     // Se teve erro, retorna erro
     if (code !== 0) {
       console.log('❌ ERRO na execução ENEM');
-      return res.status(500).json({
+      return res.json({
         sucesso: false,
         erro: `Processo terminou com código ${code}`,
         logs: stdout.slice(-2000) // Últimos 2000 chars para debug
@@ -464,7 +464,7 @@ app.post('/inscricao-enem/sync', async (req, res) => {
 
   processo.on('error', (err) => {
     console.log('❌ ERRO ao iniciar processo ENEM:', err.message);
-    res.status(500).json({
+    res.json({
       sucesso: false,
       erro: err.message
     });
@@ -588,7 +588,7 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
     // Se teve erro, retorna erro
     if (code !== 0) {
       console.log('❌ ERRO na execução ENEM SEM NOTA');
-      return res.status(500).json({
+      return res.json({
         sucesso: false,
         erro: `Processo terminou com código ${code}`,
         logs: stdout.slice(-2000)
@@ -607,7 +607,7 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
 
   processo.on('error', (err) => {
     console.log('❌ ERRO ao iniciar processo ENEM SEM NOTA:', err.message);
-    res.status(500).json({
+    res.json({
       sucesso: false,
       erro: err.message
     });
