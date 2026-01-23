@@ -649,27 +649,41 @@ test('test', async ({ page }) => {
   
   await page.waitForTimeout(2000);
   
-  // Clica em "Ir para o Endereço" - SEMPRE tenta clicar
-  console.log('📍 Procurando botão "Ir para o Endereço"...');
+  // Clica no botão para próxima etapa (pode ser "Ir para o Endereço" ou "Ir para o pagamento")
+  console.log('📍 Procurando botão para próxima etapa...');
   
-  const seletoresBtnEndereco = [
+  // Lista todos os botões visíveis para debug
+  const botoesVisiveis = await page.locator('button:visible').all();
+  console.log(`   📋 Botões visíveis: ${botoesVisiveis.length}`);
+  for (let i = 0; i < Math.min(botoesVisiveis.length, 8); i++) {
+    const texto = await botoesVisiveis[i].innerText().catch(() => '');
+    if (texto.trim()) console.log(`      - "${texto.trim().substring(0, 50)}"`);
+  }
+  
+  const seletoresBtnProximo = [
     page.locator('button:has-text("Ir para o Endereço")'),
     page.locator('button:has-text("Ir para o endereço")'),
     page.getByRole('button', { name: /endereço/i }),
-    page.locator('button').filter({ hasText: 'Endereço' }).first()
+    page.getByRole('button', { name: /Ir para o pagamento/i }),
+    page.locator('button:has-text("Ir para o pagamento")'),
+    page.locator('button:has-text("Prosseguir")'),
+    page.locator('button:has-text("Continuar")').first(),
+    page.locator('button').filter({ hasText: 'Endereço' }).first(),
+    page.locator('button').filter({ hasText: 'pagamento' }).first()
   ];
   
-  let clicouEndereco = false;
+  let clicouProximo = false;
   
-  for (const btn of seletoresBtnEndereco) {
+  for (const btn of seletoresBtnProximo) {
     try {
-      if (await btn.isVisible({ timeout: 3000 })) {
-        console.log('📍 Encontrou botão "Ir para o Endereço", clicando...');
+      if (await btn.isVisible({ timeout: 2000 })) {
+        const textoBtn = await btn.innerText().catch(() => 'botão');
+        console.log(`📍 Encontrou botão "${textoBtn.trim().substring(0, 30)}", clicando...`);
         await btn.scrollIntoViewIfNeeded();
         await page.waitForTimeout(500);
         await btn.click();
-        clicouEndereco = true;
-        console.log('✅ Clicou em "Ir para o Endereço"!');
+        clicouProximo = true;
+        console.log(`✅ Clicou no botão!`);
         await page.waitForTimeout(5000);
         break;
       }
@@ -678,8 +692,8 @@ test('test', async ({ page }) => {
     }
   }
   
-  if (!clicouEndereco) {
-    console.log('⚠️ Não encontrou botão "Ir para o Endereço"');
+  if (!clicouProximo) {
+    console.log('⚠️ Não encontrou botão para próxima etapa, tentando continuar...');
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
@@ -774,18 +788,47 @@ test('test', async ({ page }) => {
   await page.waitForTimeout(1000);
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // CLICA EM "IR PARA O PAGAMENTO" (seletor correto do Codegen)
+  // CLICA EM "IR PARA O PAGAMENTO"
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('📍 Clicando em "Ir para o pagamento"...');
-  const btnPagamento = page.getByRole('button', { name: 'Ir para o pagamento Prosseguir' });
+  console.log('📍 Procurando botão "Ir para o pagamento"...');
   
-  if (await btnPagamento.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await btnPagamento.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(500);
-    await btnPagamento.click();
-    console.log('✅ Clicou em "Ir para o pagamento"!');
-    await page.waitForTimeout(5000);
-  } else {
+  // Lista botões visíveis para debug
+  const botoesPagamento = await page.locator('button:visible').all();
+  console.log(`   📋 Botões visíveis: ${botoesPagamento.length}`);
+  for (let i = 0; i < Math.min(botoesPagamento.length, 8); i++) {
+    const texto = await botoesPagamento[i].innerText().catch(() => '');
+    if (texto.trim()) console.log(`      - "${texto.trim().substring(0, 50)}"`);
+  }
+  
+  const seletoresBtnPagamento = [
+    page.getByRole('button', { name: /Ir para o pagamento/i }),
+    page.locator('button:has-text("Ir para o pagamento")'),
+    page.locator('button:has-text("pagamento")'),
+    page.locator('button:has-text("Prosseguir")'),
+    page.getByRole('button', { name: 'Ir para o pagamento Prosseguir' })
+  ];
+  
+  let clicouPagamento = false;
+  
+  for (const btn of seletoresBtnPagamento) {
+    try {
+      if (await btn.isVisible({ timeout: 3000 })) {
+        const textoBtn = await btn.innerText().catch(() => 'botão');
+        console.log(`📍 Encontrou botão "${textoBtn.trim().substring(0, 30)}", clicando...`);
+        await btn.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(500);
+        await btn.click();
+        clicouPagamento = true;
+        console.log('✅ Clicou em "Ir para o pagamento"!');
+        await page.waitForTimeout(5000);
+        break;
+      }
+    } catch (e) {
+      // Tenta próximo
+    }
+  }
+  
+  if (!clicouPagamento) {
     console.log('⚠️ Botão "Ir para o pagamento" não encontrado');
   }
   
