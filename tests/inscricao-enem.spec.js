@@ -230,20 +230,77 @@ test('test-enem', async ({ page }) => {
   // Verifica se já está na página de graduação
   const urlAtualEtapa2 = page.url();
   if (!urlAtualEtapa2.includes('/graduacao')) {
-    await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      try {
+        console.log(`   Tentativa ${tentativa}/3 de navegar para graduação...`);
+        await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        break;
+      } catch (e) {
+        console.log(`   ⚠️ Erro na tentativa ${tentativa}: ${e.message}`);
+        if (tentativa < 3) {
+          await page.waitForTimeout(2000);
+        } else {
+          throw e;
+        }
+      }
+    }
   }
   await aguardarCarregamento('Página de graduação', 30000);
+  
+  // ACEITAR COOKIES - CRÍTICO: não pode prosseguir sem aceitar
+  console.log('📍 Aguardando banner de cookies...');
   await page.waitForTimeout(3000);
   
-  // Aceita cookies
-  try {
-    await page.getByText('Aceitar todos').click({ timeout: 5000 });
-    console.log('✅ Cookies aceitos');
-  } catch (e) {
-    console.log('ℹ️ Banner de cookies não encontrado');
+  async function aceitarCookiesObrigatorio() {
+    const MAX_TENTATIVAS = 5;
+    
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+      console.log(`   🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de aceitar cookies...`);
+      
+      const seletores = [
+        { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar todos' }) },
+        { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar Todos' }) },
+        { tipo: 'text', loc: page.getByText('Aceitar todos') },
+        { tipo: 'text', loc: page.getByText('Aceitar Todos') },
+        { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar todos/i }).first() },
+        { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar/i }).first() },
+        { tipo: 'locator', loc: page.locator('[class*="cookie"] button').first() },
+        { tipo: 'locator', loc: page.locator('#onetrust-accept-btn-handler') },
+        { tipo: 'css', loc: page.locator('button:has-text("Aceitar")').first() },
+      ];
+      
+      for (const { tipo, loc } of seletores) {
+        try {
+          const count = await loc.count();
+          if (count > 0) {
+            const isVis = await loc.isVisible({ timeout: 2000 });
+            if (isVis) {
+              console.log(`   📍 Encontrou botão de cookies (${tipo})`);
+              await loc.scrollIntoViewIfNeeded();
+              await page.waitForTimeout(500);
+              await loc.click({ force: true, timeout: 5000 });
+              console.log('   ✅ Cookies aceitos!');
+              await page.waitForTimeout(1500);
+              return true;
+            }
+          }
+        } catch (e) {}
+      }
+      
+      if (tentativa < MAX_TENTATIVAS) {
+        console.log(`   ⏳ Aguardando mais 2s...`);
+        await page.waitForTimeout(2000);
+      }
+    }
+    return false;
   }
   
-  // Fecha modais
+  const cookieAceito = await aceitarCookiesObrigatorio();
+  if (!cookieAceito) {
+    console.log('⚠️ AVISO: Banner de cookies não encontrado');
+  }
+  
+  // Fecha modais se existirem
   await page.keyboard.press('Escape');
   await page.waitForTimeout(1000);
   
@@ -305,16 +362,100 @@ test('test-enem', async ({ page }) => {
   await searchInput.waitFor({ state: 'visible', timeout: 15000 });
   await searchInput.click();
   console.log(`🔍 Digitando na busca: "${CLIENTE.curso}"`);
-  await searchInput.type(CLIENTE.curso, { delay: 80 });
+  await searchInput.type(CLIENTE.curso, { delay: 100 });
+  await page.waitForTimeout(1000);
   await searchInput.press('Enter');
   
-  await aguardarCarregamento('Resultados da busca');
+  // Aguarda resultados carregarem completamente
+  console.log('⏳ Aguardando resultados da busca...');
+  await page.waitForTimeout(4000);
+  await aguardarCarregandoDesaparecer();
+  await page.waitForTimeout(2000);
   
-  // Clica no primeiro resultado que contém o curso (link com "View product details")
-  const produtoLink = page.getByRole('link', { name: /View product details/i }).first();
-  await produtoLink.waitFor({ state: 'visible', timeout: 15000 });
-  console.log('📍 Produto encontrado, clicando...');
-  await produtoLink.click();
+  // Verifica se está em página de busca ou de produto
+  const urlAposBusca = page.url();
+  console.log(`📍 URL após busca: ${urlAposBusca}`);
+  
+  // Se está em página de busca (contém ?map= ou não tem /p no final)
+  if (urlAposBusca.includes('?map=') || !urlAposBusca.endsWith('/p')) {
+    console.log(`🔍 Página de resultados detectada, procurando curso...`);
+    
+    // Aguarda cards carregarem completamente
+    await page.waitForTimeout(3000);
+    
+    // Rola a página para encontrar os cards
+    console.log('   📜 Rolando a página para encontrar os cards...');
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(1000);
+    
+    // Procura pelo PRIMEIRO botão/link azul dentro de um card de curso
+    console.log('   🔍 Procurando botão azul do primeiro card...');
+    
+    const seletoresBotaoAzul = [
+      page.locator('a').filter({ hasText: /^Semipresencial$/i }).first(),
+      page.locator('a').filter({ hasText: /^EAD Digital$/i }).first(),
+      page.locator('a').filter({ hasText: /^EAD$/i }).first(),
+      page.locator('article a[href$="/p"]').first(),
+      page.locator('[class*="product"] a[href$="/p"]').first(),
+      page.locator('[class*="card"] a[href$="/p"]').first(),
+      page.locator('a[href*="grad-"][href$="/p"]').first(),
+    ];
+    
+    let clicouNoBotao = false;
+    
+    for (const seletor of seletoresBotaoAzul) {
+      try {
+        const count = await seletor.count();
+        if (count > 0) {
+          const isVisible = await seletor.isVisible({ timeout: 2000 });
+          if (isVisible) {
+            const texto = await seletor.innerText().catch(() => '');
+            const href = await seletor.getAttribute('href').catch(() => '');
+            console.log(`   📍 Encontrou botão: "${texto.substring(0, 50).trim()}" -> ${href}`);
+            
+            await seletor.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(500);
+            await seletor.click({ force: true });
+            console.log('   ✅ Clicou no botão!');
+            clicouNoBotao = true;
+            break;
+          }
+        }
+      } catch (e) {}
+    }
+    
+    // Fallback: primeiro link de produto
+    if (!clicouNoBotao) {
+      console.log('   ⚠️ Tentando fallback: primeiro link de produto...');
+      try {
+        const todosLinks = page.locator('a[href*="/p"]');
+        const count = await todosLinks.count();
+        
+        for (let i = 0; i < Math.min(count, 10); i++) {
+          const link = todosLinks.nth(i);
+          const isVis = await link.isVisible().catch(() => false);
+          if (isVis) {
+            const href = await link.getAttribute('href');
+            if (href && href.includes('grad-')) {
+              console.log(`   📍 Clicando em: ${href}`);
+              await link.scrollIntoViewIfNeeded();
+              await page.waitForTimeout(300);
+              await link.click({ force: true });
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`   ⚠️ Erro no fallback: ${e.message}`);
+      }
+    }
+    
+    // Aguarda navegação
+    await page.waitForTimeout(3000);
+    console.log(`   📍 URL após clique: ${page.url()}`);
+  } else {
+    console.log('✅ Já está na página do produto');
+  }
   
   await aguardarCarregamento('Página do produto', 30000);
   console.log(`📍 URL atual: ${page.url()}`);
