@@ -3,6 +3,10 @@ import { test, expect } from '@playwright/test';
 // ═══════════════════════════════════════════════════════════════════════════
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Gera número de residência aleatório entre 1 e 999
+const numeroAleatorio = Math.floor(Math.random() * 999) + 1;
+
 const CLIENTE = {
   // Dados pessoais
   nome: process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro',
@@ -12,7 +16,7 @@ const CLIENTE = {
   nascimento: process.env.CLIENTE_NASCIMENTO || '14/02/1985',
   // Endereço
   cep: process.env.CLIENTE_CEP || '05315030',
-  numero: process.env.CLIENTE_NUMERO || '12',
+  numero: process.env.CLIENTE_NUMERO || String(numeroAleatorio),
   complemento: process.env.CLIENTE_COMPLEMENTO || '',
   // Localização
   estado: process.env.CLIENTE_ESTADO || 'São Paulo',
@@ -45,20 +49,17 @@ test('test', async ({ page }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO AUXILIAR: Aguarda carregamento com verificação
   // ═══════════════════════════════════════════════════════════════════════════
-  async function aguardarCarregamento(descricao, timeout = 30000) {
+  async function aguardarCarregamento(descricao, timeout = 20000) {
     console.log(`⏳ Aguardando: ${descricao}...`);
     const inicio = Date.now();
     
-    // Usa domcontentloaded ao invés de networkidle (mais confiável)
     try {
-      await page.waitForLoadState('domcontentloaded', { timeout: 15000 });
+      await page.waitForLoadState('domcontentloaded', { timeout: 10000 });
     } catch (e) {
       // Continua mesmo se der timeout
     }
     
-    await page.waitForTimeout(2000);
-    
-    // Aguarda "Carregando..." desaparecer (se existir)
+    await page.waitForTimeout(800);
     await aguardarCarregandoDesaparecer();
     
     const duracao = ((Date.now() - inicio) / 1000).toFixed(1);
@@ -68,31 +69,28 @@ test('test', async ({ page }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO AUXILIAR: Aguarda indicador "Carregando..." desaparecer
   // ═══════════════════════════════════════════════════════════════════════════
-  async function aguardarCarregandoDesaparecer(maxTentativas = 15) {
-    // Verifica apenas o texto específico "Carregando..." que aparece na página
+  async function aguardarCarregandoDesaparecer(maxTentativas = 10) {
     const carregandoTexto = page.locator('text=Carregando...').first();
     
     try {
-      // Verifica se existe o texto "Carregando..." visível
-      const visivel = await carregandoTexto.isVisible({ timeout: 1000 });
+      const visivel = await carregandoTexto.isVisible({ timeout: 500 });
       
       if (visivel) {
         console.log('   ⏳ Aguardando "Carregando..." desaparecer...');
         
-        // Aguarda até desaparecer (máximo de tentativas)
         for (let i = 0; i < maxTentativas; i++) {
-          await page.waitForTimeout(1000);
-          const aindaVisivel = await carregandoTexto.isVisible({ timeout: 500 }).catch(() => false);
+          await page.waitForTimeout(500);
+          const aindaVisivel = await carregandoTexto.isVisible({ timeout: 300 }).catch(() => false);
           if (!aindaVisivel) {
             console.log('   ✅ Carregamento concluído!');
-            await page.waitForTimeout(1000); // Espera extra para estabilizar
+            await page.waitForTimeout(300);
             return;
           }
         }
         console.log('   ⚠️ Timeout aguardando carregamento, continuando...');
       }
     } catch (e) {
-      // Não há indicador de carregamento, continua normalmente
+      // Não há indicador de carregamento
     }
   }
   
@@ -101,24 +99,21 @@ test('test', async ({ page }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   async function preencherCampo(locator, valor, descricao, digitarLetraPorLetra = true) {
     console.log(`📝 Preenchendo: ${descricao}...`);
-    await locator.waitFor({ state: 'visible', timeout: 20000 });
-    await page.waitForTimeout(500); // Espera estabilizar
+    await locator.waitFor({ state: 'visible', timeout: 15000 });
+    await page.waitForTimeout(200);
     await locator.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(300);
     await locator.click();
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(100);
     await locator.clear();
-    await page.waitForTimeout(200);
     
     if (digitarLetraPorLetra) {
-      await locator.type(valor, { delay: 40 });
+      await locator.type(valor, { delay: 25 });
     } else {
       await locator.fill(valor);
     }
     
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(200);
     
-    // Verifica se foi preenchido
     const valorAtual = await locator.inputValue().catch(() => '');
     if (valorAtual.replace(/\D/g, '').includes(valor.replace(/\D/g, '').substring(0, 5))) {
       console.log(`✅ ${descricao}: "${valorAtual}"`);
@@ -130,37 +125,137 @@ test('test', async ({ page }) => {
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // FUNÇÃO AUXILIAR: Seleciona opção em react-select
+  // FUNÇÃO AUXILIAR: Clica com verificação e retry
+  // ═══════════════════════════════════════════════════════════════════════════
+  async function clicarComVerificacao(locator, descricao, verificacao = null, maxTentativas = 2) {
+    console.log(`🖱️ Clicando em: ${descricao}...`);
+    
+    for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
+      try {
+        await locator.waitFor({ state: 'visible', timeout: 8000 });
+        await locator.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(150);
+        
+        const desabilitado = await locator.isDisabled().catch(() => false);
+        if (desabilitado) {
+          console.log(`   ⏳ Botão desabilitado, aguardando...`);
+          await page.waitForTimeout(1000);
+          continue;
+        }
+        
+        await locator.click({ force: tentativa > 1 });
+        await page.waitForTimeout(500);
+        
+        if (verificacao) {
+          const verificado = await verificacao();
+          if (verificado) {
+            console.log(`✅ ${descricao} - clicado e verificado!`);
+            return true;
+          } else {
+            console.log(`   ⚠️ Tentativa ${tentativa}: clique não teve efeito`);
+            await page.waitForTimeout(500);
+          }
+        } else {
+          console.log(`✅ ${descricao} - clicado!`);
+          return true;
+        }
+      } catch (e) {
+        console.log(`   ⚠️ Tentativa ${tentativa} falhou: ${e.message}`);
+        if (tentativa < maxTentativas) await page.waitForTimeout(500);
+      }
+    }
+    
+    console.log(`❌ Falha ao clicar em: ${descricao}`);
+    return false;
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FUNÇÃO AUXILIAR: Aguarda mudança de URL ou elemento
+  // ═══════════════════════════════════════════════════════════════════════════
+  async function aguardarMudanca(opcoes = {}) {
+    const { urlContem, urlNaoContem, elementoVisivel, elementoInvisivel, timeout = 10000 } = opcoes;
+    const inicio = Date.now();
+    
+    while (Date.now() - inicio < timeout) {
+      const urlAtual = page.url();
+      
+      if (urlContem && urlAtual.includes(urlContem)) return true;
+      if (urlNaoContem && !urlAtual.includes(urlNaoContem)) return true;
+      
+      if (elementoVisivel) {
+        const visivel = await elementoVisivel.isVisible().catch(() => false);
+        if (visivel) return true;
+      }
+      
+      if (elementoInvisivel) {
+        const visivel = await elementoInvisivel.isVisible().catch(() => true);
+        if (!visivel) return true;
+      }
+      
+      await page.waitForTimeout(300);
+    }
+    
+    return false;
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FUNÇÃO AUXILIAR: Seleciona opção em react-select com verificação
   // ═══════════════════════════════════════════════════════════════════════════
   async function selecionarOpcao(selectLocator, textoDigitar, opcaoNome, descricao) {
     console.log(`🔽 Selecionando: ${descricao}...`);
     
-    // Aguarda carregamento antes de interagir
     await aguardarCarregandoDesaparecer();
     
-    await selectLocator.waitFor({ state: 'visible', timeout: 30000 });
-    await page.waitForTimeout(500);
-    await selectLocator.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(200);
-    await selectLocator.click();
-    await page.waitForTimeout(500);
-    await page.keyboard.type(textoDigitar, { delay: 50 });
-    await page.waitForTimeout(1000);
-    
-    if (opcaoNome) {
-      const opcao = page.getByRole('option', { name: opcaoNome });
-      await opcao.waitFor({ state: 'visible', timeout: 10000 });
-      await opcao.click();
-    } else {
-      await page.keyboard.press('Enter');
+    for (let tentativa = 1; tentativa <= 2; tentativa++) {
+      try {
+        await selectLocator.waitFor({ state: 'visible', timeout: 15000 });
+        await page.waitForTimeout(200);
+        await selectLocator.scrollIntoViewIfNeeded();
+        await selectLocator.click();
+        await page.waitForTimeout(300);
+        
+        const menuAberto = await page.locator('.react-select__menu').isVisible().catch(() => false);
+        if (!menuAberto) {
+          console.log(`   ⚠️ Menu não abriu, tentativa ${tentativa}...`);
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(300);
+          continue;
+        }
+        
+        await page.keyboard.type(textoDigitar, { delay: 30 });
+        await page.waitForTimeout(800);
+        
+        if (opcaoNome) {
+          const opcao = page.getByRole('option', { name: opcaoNome });
+          await opcao.waitFor({ state: 'visible', timeout: 5000 });
+          await opcao.click();
+        } else {
+          const opcoesDisponiveis = await page.locator('.react-select__option').count();
+          console.log(`   📋 Opções: ${opcoesDisponiveis}`);
+          if (opcoesDisponiveis > 0) {
+            await page.keyboard.press('Enter');
+          } else {
+            console.log(`   ⚠️ Nenhuma opção para "${textoDigitar}"`);
+            await page.keyboard.press('Escape');
+            continue;
+          }
+        }
+        
+        await page.waitForTimeout(500);
+        await aguardarCarregandoDesaparecer();
+        
+        console.log(`✅ ${descricao} selecionado!`);
+        return true;
+        
+      } catch (e) {
+        console.log(`   ⚠️ Erro tentativa ${tentativa}: ${e.message}`);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(300);
+      }
     }
     
-    await page.waitForTimeout(800);
-    
-    // Aguarda possível carregamento após seleção
-    await aguardarCarregandoDesaparecer();
-    
-    console.log(`✅ ${descricao} selecionado!`);
+    console.log(`❌ Falha ao selecionar: ${descricao}`);
+    return false;
   }
   
   console.log('');
@@ -184,7 +279,7 @@ test('test', async ({ page }) => {
   
   // Clica continuar
   await page.getByRole('button', { name: 'Continuar' }).click();
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
   
   // Senha
   const senhaInput = page.getByRole('textbox', { name: 'Senha' });
@@ -195,7 +290,7 @@ test('test', async ({ page }) => {
   // Clica continuar para login
   await page.getByRole('button', { name: 'Continuar' }).click();
   await aguardarCarregamento('Login', 30000);
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(1500);
   
   console.log(`✅ ETAPA 1 CONCLUÍDA - URL: ${page.url()}`);
   console.log('');
@@ -206,25 +301,96 @@ test('test', async ({ page }) => {
   console.log('📌 ETAPA 2: Navegação para Graduação');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  // Verifica se já está na página de graduação
+  // Verifica se já está na página de graduação - com retry
   const urlAtualEtapa2 = page.url();
   if (!urlAtualEtapa2.includes('/graduacao')) {
-    await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      try {
+        console.log(`   Tentativa ${tentativa}/3 de navegar para graduação...`);
+        await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        break;
+      } catch (e) {
+        console.log(`   ⚠️ Erro na tentativa ${tentativa}: ${e.message}`);
+        if (tentativa < 3) {
+          await page.waitForTimeout(2000);
+        } else {
+          throw e;
+        }
+      }
+    }
   }
   await aguardarCarregamento('Página de graduação', 30000);
-  await page.waitForTimeout(3000);
   
-  // Aceita cookies
-  try {
-    await page.getByText('Aceitar todos').click({ timeout: 5000 });
-    console.log('✅ Cookies aceitos');
-  } catch (e) {
-    console.log('ℹ️ Banner de cookies não encontrado');
+  // ACEITAR COOKIES - CRÍTICO: não pode prosseguir sem aceitar
+  console.log('📍 Aguardando banner de cookies...');
+  await page.waitForTimeout(3000); // Espera mais tempo para o banner aparecer
+  
+  // Função para aceitar cookies - tenta várias vezes
+  async function aceitarCookiesObrigatorio() {
+    const MAX_TENTATIVAS = 5;
+    
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+      console.log(`   🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de aceitar cookies...`);
+      
+      // Lista de seletores para tentar
+      const seletores = [
+        { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar todos' }) },
+        { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar Todos' }) },
+        { tipo: 'text', loc: page.getByText('Aceitar todos') },
+        { tipo: 'text', loc: page.getByText('Aceitar Todos') },
+        { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar todos/i }).first() },
+        { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar/i }).first() },
+        { tipo: 'locator', loc: page.locator('[class*="cookie"] button').first() },
+        { tipo: 'locator', loc: page.locator('#onetrust-accept-btn-handler') },
+        { tipo: 'css', loc: page.locator('button:has-text("Aceitar")').first() },
+        { tipo: 'css', loc: page.locator('[class*="lgpd"] button').first() },
+        { tipo: 'css', loc: page.locator('[class*="consent"] button').first() },
+      ];
+      
+      for (const { tipo, loc } of seletores) {
+        try {
+          const count = await loc.count();
+          if (count > 0) {
+            const isVis = await loc.isVisible({ timeout: 2000 });
+            if (isVis) {
+              console.log(`   📍 Encontrou botão de cookies (${tipo})`);
+              await loc.scrollIntoViewIfNeeded();
+              await page.waitForTimeout(500);
+              await loc.click({ force: true, timeout: 5000 });
+              console.log('   ✅ Cookies aceitos!');
+              await page.waitForTimeout(1500);
+              return true;
+            }
+          }
+        } catch (e) {
+          // Continua para próximo seletor
+        }
+      }
+      
+      // Se não encontrou, espera e tenta novamente
+      if (tentativa < MAX_TENTATIVAS) {
+        console.log(`   ⏳ Aguardando mais 2s...`);
+        await page.waitForTimeout(2000);
+        
+        // Tenta scroll para ver se o banner aparece
+        await page.mouse.wheel(0, 100);
+        await page.waitForTimeout(500);
+        await page.mouse.wheel(0, -100);
+      }
+    }
+    
+    return false;
   }
   
-  // Fecha modais
+  const cookieAceito = await aceitarCookiesObrigatorio();
+  
+  if (!cookieAceito) {
+    console.log('⚠️ AVISO: Banner de cookies não encontrado - continuando mesmo assim');
+  }
+  
+  // Fecha modais se existirem
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(1000)
   
   console.log(`✅ ETAPA 2 CONCLUÍDA - URL: ${page.url()}`);
   console.log('');
@@ -248,7 +414,7 @@ test('test', async ({ page }) => {
   const entrarComoCliente = page.getByText('Entrar como cliente').first();
   await entrarComoCliente.waitFor({ state: 'visible', timeout: 15000 });
   await entrarComoCliente.click({ force: true });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
   
   // Fecha modal novamente se necessário
   await page.keyboard.press('Escape');
@@ -260,7 +426,7 @@ test('test', async ({ page }) => {
   
   // Clica em Entrar
   await page.getByRole('button', { name: 'Entrar' }).click({ force: true });
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(1500);
   
   // Tenta clicar novamente se visível
   try {
@@ -270,7 +436,7 @@ test('test', async ({ page }) => {
     }
   } catch (e) {}
   
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(1500);
   console.log(`✅ ETAPA 3 CONCLUÍDA - Cliente logado`);
   console.log('');
   
@@ -284,20 +450,137 @@ test('test', async ({ page }) => {
   await searchInput.waitFor({ state: 'visible', timeout: 15000 });
   await searchInput.click();
   console.log(`🔍 Digitando na busca: "${CLIENTE.curso}"`);
-  await searchInput.type(CLIENTE.curso, { delay: 80 });
+  
+  // Digita mais devagar para garantir que a busca funcione
+  await searchInput.type(CLIENTE.curso, { delay: 100 });
+  await page.waitForTimeout(1000);
   await searchInput.press('Enter');
   
-  await aguardarCarregamento('Resultados da busca');
+  // Aguarda resultados carregarem completamente
+  console.log('⏳ Aguardando resultados da busca...');
+  await page.waitForTimeout(4000);
+  await aguardarCarregandoDesaparecer();
+  await page.waitForTimeout(2000);
   
-  // Clica no primeiro resultado que contém o curso (link com "View product details")
-  const produtoLink = page.getByRole('link', { name: /View product details/i }).first();
-  await produtoLink.waitFor({ state: 'visible', timeout: 15000 });
-  console.log('📍 Produto encontrado, clicando...');
-  await produtoLink.click();
+  // Verifica se está em página de busca ou de produto
+  const urlAposBusca = page.url();
+  console.log(`📍 URL após busca: ${urlAposBusca}`);
+  
+  // Se está em página de busca (contém ?map= ou não tem /p no final)
+  if (urlAposBusca.includes('?map=') || !urlAposBusca.endsWith('/p')) {
+    console.log(`🔍 Página de resultados detectada, procurando curso...`);
+    
+    // Aguarda cards carregarem completamente
+    await page.waitForTimeout(3000);
+    
+    // ESTRATÉGIA: Rolar a tela até encontrar um botão azul e clicar nele
+    console.log('   📜 Rolando a página para encontrar os cards...');
+    
+    // Rola a página para baixo para carregar os cards
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(1000);
+    
+    // Procura pelo PRIMEIRO botão/link azul dentro de um card de curso
+    // O botão azul geralmente é um <a> com classe que contém 'button' ou dentro de um card
+    console.log('   🔍 Procurando botão azul do primeiro card...');
+    
+    // Lista de seletores para o botão azul do card
+    const seletoresBotaoAzul = [
+      // Botões com texto específico de modalidade
+      page.locator('a').filter({ hasText: /^Semipresencial$/i }).first(),
+      page.locator('a').filter({ hasText: /^EAD Digital$/i }).first(),
+      page.locator('a').filter({ hasText: /^EAD$/i }).first(),
+      // Links dentro de articles/cards que levam a /p
+      page.locator('article a[href$="/p"]').first(),
+      page.locator('[class*="product"] a[href$="/p"]').first(),
+      page.locator('[class*="card"] a[href$="/p"]').first(),
+      // Links com grad- no href
+      page.locator('a[href*="grad-"][href$="/p"]').first(),
+      // Qualquer link que parece ser um botão de ação
+      page.locator('a[class*="button"]').first(),
+      page.locator('a[class*="btn"]').first(),
+    ];
+    
+    let clicouNoBotao = false;
+    
+    for (const seletor of seletoresBotaoAzul) {
+      try {
+        const count = await seletor.count();
+        if (count > 0) {
+          const isVisible = await seletor.isVisible({ timeout: 2000 });
+          if (isVisible) {
+            const texto = await seletor.innerText().catch(() => '');
+            const href = await seletor.getAttribute('href').catch(() => '');
+            console.log(`   📍 Encontrou botão: "${texto.trim()}" -> ${href}`);
+            
+            await seletor.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(500);
+            await seletor.click({ force: true });
+            console.log('   ✅ Clicou no botão!');
+            clicouNoBotao = true;
+            break;
+          }
+        }
+      } catch (e) {
+        // Continua para próximo seletor
+      }
+    }
+    
+    // Se ainda não clicou, tenta clicar em qualquer link visível que leve a um produto
+    if (!clicouNoBotao) {
+      console.log('   ⚠️ Tentando fallback: primeiro link de produto...');
+      try {
+        // Pega todos os links visíveis
+        const todosLinks = page.locator('a[href*="/p"]');
+        const count = await todosLinks.count();
+        console.log(`   📋 Total de links /p: ${count}`);
+        
+        for (let i = 0; i < Math.min(count, 10); i++) {
+          const link = todosLinks.nth(i);
+          const isVis = await link.isVisible().catch(() => false);
+          if (isVis) {
+            const href = await link.getAttribute('href');
+            if (href && href.includes('grad-')) {
+              console.log(`   📍 Clicando em: ${href}`);
+              await link.scrollIntoViewIfNeeded();
+              await page.waitForTimeout(300);
+              await link.click({ force: true });
+              clicouNoBotao = true;
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`   ⚠️ Erro no fallback: ${e.message}`);
+      }
+    }
+    
+    // Aguarda navegação
+    await page.waitForTimeout(3000);
+    console.log(`   📍 URL após clique: ${page.url()}`);
+    
+    // Se ainda está em página de busca, tenta de novo com scroll maior
+    if (page.url().includes('?map=') || page.url().includes('?_q=')) {
+      console.log('   ⚠️ Ainda em página de busca, tentando scroll e clique...');
+      await page.mouse.wheel(0, 500);
+      await page.waitForTimeout(1500);
+      
+      // Tenta clicar no primeiro link grad- visível
+      const linkGrad = page.locator('a[href*="grad-"]').first();
+      try {
+        await linkGrad.scrollIntoViewIfNeeded();
+        await linkGrad.click({ force: true, timeout: 5000 });
+      } catch (e) {
+        console.log('   ⚠️ Não conseguiu clicar no link');
+      }
+    }
+  } else {
+    console.log('✅ Já está na página do produto');
+  }
   
   await aguardarCarregamento('Página do produto', 30000);
   console.log(`📍 URL atual: ${page.url()}`);
-  await page.waitForTimeout(5000); // Espera página estabilizar
+  await page.waitForTimeout(1000);
   
   console.log(`✅ ETAPA 4 CONCLUÍDA - Curso selecionado`);
   console.log('');
@@ -317,15 +600,66 @@ test('test', async ({ page }) => {
   } catch (e) {
     console.log('⚠️ Botão Inscreva-se não encontrado, continuando...');
   }
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(1500);
   
-  // Nome completo
+  // Fecha modal/backdrop se existir (pode bloquear cliques)
+  console.log('📍 Verificando se há modal bloqueando...');
+  try {
+    // Tenta fechar com Escape
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+    
+    // Tenta clicar no backdrop para fechar
+    const backdrop = page.locator('[class*="backdrop"], [class*="Backdrop"], [class*="overlay"]').first();
+    if (await backdrop.isVisible({ timeout: 1000 }).catch(() => false)) {
+      console.log('   📍 Backdrop encontrado, fechando...');
+      await backdrop.click({ force: true });
+      await page.waitForTimeout(500);
+    }
+    
+    // Tenta fechar botão X se existir
+    const btnFechar = page.locator('button[class*="close"], [class*="close"] button, button:has-text("×")').first();
+    if (await btnFechar.isVisible({ timeout: 500 }).catch(() => false)) {
+      await btnFechar.click({ force: true });
+      await page.waitForTimeout(500);
+    }
+    
+    // Pressiona Escape novamente
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+  } catch (e) {
+    // Ignora erros ao fechar modal
+  }
+  
+  // Nome completo - usa force para evitar problemas com overlays
   const nomeInput = page.getByRole('textbox', { name: 'Nome completo' });
-  await preencherCampo(nomeInput, CLIENTE.nome, 'Nome completo');
+  console.log('📝 Preenchendo: Nome completo...');
+  try {
+    await nomeInput.waitFor({ state: 'visible', timeout: 15000 });
+    await nomeInput.scrollIntoViewIfNeeded();
+    await nomeInput.click({ force: true });
+    await page.waitForTimeout(100);
+    await nomeInput.fill(CLIENTE.nome);
+    console.log(`✅ Nome completo: "${CLIENTE.nome}"`);
+  } catch (e) {
+    console.log(`⚠️ Erro ao preencher nome: ${e.message}`);
+    // Tenta novamente com force
+    await nomeInput.fill(CLIENTE.nome, { force: true });
+  }
   
-  // Telefone
+  // Telefone - usa force para evitar problemas com overlays
   const telefoneInput = page.getByRole('textbox', { name: '(XX) XXXXX-XXXX' });
-  await preencherCampo(telefoneInput, CLIENTE.telefone, 'Telefone');
+  console.log('📝 Preenchendo: Telefone...');
+  try {
+    await telefoneInput.waitFor({ state: 'visible', timeout: 10000 });
+    await telefoneInput.scrollIntoViewIfNeeded();
+    await telefoneInput.click({ force: true });
+    await page.waitForTimeout(100);
+    await telefoneInput.type(CLIENTE.telefone, { delay: 25 });
+    console.log(`✅ Telefone preenchido`);
+  } catch (e) {
+    console.log(`⚠️ Erro ao preencher telefone: ${e.message}`);
+  }
   
   // Checkbox de termos
   console.log('📝 Marcando checkbox de termos...');
@@ -339,7 +673,7 @@ test('test', async ({ page }) => {
   await checkboxByText.click({ force: true });
   console.log('✅ Checkbox de termos marcado');
   
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
   
   // Aguarda carregamento antes de clicar em Inscreva-se
   await aguardarCarregandoDesaparecer();
@@ -353,7 +687,7 @@ test('test', async ({ page }) => {
   const btnDesabilitado = await inscreverBtn.isDisabled().catch(() => false);
   if (btnDesabilitado) {
     console.log('   ⏳ Botão desabilitado, aguardando...');
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(1500);
     await aguardarCarregandoDesaparecer();
   }
   
@@ -370,7 +704,7 @@ test('test', async ({ page }) => {
     
     await inscreverBtn.click();
     await aguardarCarregamento('Formulário de inscrição', 60000);
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(1000);
     
     // Verifica se os selects de localização existem
     const urlAtual = page.url();
@@ -387,7 +721,7 @@ test('test', async ({ page }) => {
     } else if (tentativaAtual < MAX_TENTATIVAS) {
       console.log(`   ⚠️ Formulário não carregou, recarregando página...`);
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(1500);
       await aguardarCarregandoDesaparecer();
       
       // Re-preenche o formulário inicial
@@ -412,7 +746,7 @@ test('test', async ({ page }) => {
         await checkboxRetry.click({ force: true });
       }
       
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
     } else {
       console.log(`   ❌ Falha após ${MAX_TENTATIVAS} tentativas`);
     }
@@ -437,7 +771,7 @@ test('test', async ({ page }) => {
   // Aguarda formulário estar completamente carregado
   console.log('⏳ Verificando se formulário está pronto...');
   await aguardarCarregandoDesaparecer();
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
   
   // Pega os selects
   const selects = await page.locator('.react-select__input-container').count();
@@ -454,7 +788,7 @@ test('test', async ({ page }) => {
   }
   
   await primeiroSelect.waitFor({ state: 'visible', timeout: 30000 });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
   
   // País
   await selecionarOpcao(
@@ -492,14 +826,38 @@ test('test', async ({ page }) => {
   const cpfInput = page.locator('input[name="userDocument"]');
   await preencherCampo(cpfInput, CLIENTE.cpf, 'CPF');
   
-  // Continuar Inscrição
+  // Continuar Inscrição - com verificação de mudança de estado
+  console.log('📍 Clicando em "Continuar Inscrição" (Etapa 6)...');
   const continuarBtn1 = page.getByRole('button', { name: 'Continuar Inscrição' });
-  await continuarBtn1.scrollIntoViewIfNeeded();
-  await page.waitForTimeout(500);
-  await continuarBtn1.click();
+  
+  // Guarda número de selects antes do clique
+  const selectsAntes = await page.locator('.react-select__control').count();
+  console.log(`   📋 Selects antes do clique: ${selectsAntes}`);
+  
+  const clicouContinuar1 = await clicarComVerificacao(
+    continuarBtn1,
+    'Continuar Inscrição (Etapa 6)',
+    async () => {
+      await page.waitForTimeout(1000);
+      // Verifica se apareceram novos selects (próxima etapa) ou se a URL mudou
+      const selectsDepois = await page.locator('.react-select__control').count();
+      const urlMudou = !page.url().includes('/p');
+      console.log(`   📋 Selects depois: ${selectsDepois}, URL mudou: ${urlMudou}`);
+      return selectsDepois !== selectsAntes || urlMudou;
+    }
+  );
+  
+  if (!clicouContinuar1) {
+    console.log('⚠️ Tentando clicar novamente com força...');
+    await continuarBtn1.click({ force: true });
+  }
   
   await aguardarCarregamento('Próxima etapa', 30000);
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(1500);
+  
+  // Verifica se realmente mudou para próxima etapa
+  const selectsEtapa7 = await page.locator('.react-select__control').count();
+  console.log(`📍 Verificação: ${selectsEtapa7} selects na página atual`);
   
   console.log(`✅ ETAPA 6 CONCLUÍDA`);
   console.log('');
@@ -510,31 +868,75 @@ test('test', async ({ page }) => {
   console.log('📌 ETAPA 7: Vestibular e Condições');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  // Vestibular
+  // Vestibular - determina o texto de busca baseado no tipo
+  let textoBuscaVestibular = 'vest';
+  const tipoLower = CLIENTE.tipoVestibular.toLowerCase();
+  
+  if (tipoLower.includes('redac') || tipoLower.includes('redação')) {
+    textoBuscaVestibular = 'redac';
+  } else if (tipoLower.includes('mult') || tipoLower.includes('múltipla')) {
+    textoBuscaVestibular = 'mult';
+  } else if (tipoLower.includes('enem')) {
+    textoBuscaVestibular = 'enem';
+  }
+  
+  console.log(`   🔍 Buscando vestibular com: "${textoBuscaVestibular}" para encontrar: "${CLIENTE.tipoVestibular}"`);
+  
   await selecionarOpcao(
     page.locator('.react-select__control').filter({ hasText: 'Selecione' }).first(),
-    'vest',
-    CLIENTE.tipoVestibular,
+    textoBuscaVestibular,
+    null, // Deixa selecionar a primeira opção que aparecer
     'Tipo de Vestibular'
   );
   
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
   
   // Condições especiais
   await selecionarOpcao(
     page.locator('.react-select__control').filter({ hasText: 'Selecione' }).first(),
-    'não neces',
-    'Não necessito de condições',
+    'nao neces',
+    null,
     'Condições Especiais'
   );
   
-  // Continuar Inscrição
-  console.log('📍 Clicando em Continuar Inscrição...');
-  await page.getByRole('button', { name: 'Continuar Inscrição' }).click();
+  // Continuar Inscrição - com verificação de mudança de página
+  console.log('📍 Clicando em Continuar Inscrição (Etapa 7)...');
+  const btnContinuarEtapa7 = page.getByRole('button', { name: 'Continuar Inscrição' });
+  const urlAntesEtapa7 = page.url();
   
-  // Aguarda próxima página (sem networkidle que trava)
+  const clicouContinuar7 = await clicarComVerificacao(
+    btnContinuarEtapa7,
+    'Continuar Inscrição (Etapa 7)',
+    async () => {
+      await page.waitForTimeout(1500);
+      const urlDepois = page.url();
+      const mudouUrl = urlDepois !== urlAntesEtapa7;
+      const temCheckout = urlDepois.includes('checkout');
+      const temErro = await page.locator('text=Este CPF já possui uma inscrição').isVisible().catch(() => false);
+      console.log(`   📋 URL mudou: ${mudouUrl}, Checkout: ${temCheckout}, Erro CPF: ${temErro}`);
+      return mudouUrl || temCheckout || temErro;
+    }
+  );
+  
+  if (!clicouContinuar7) {
+    // Verifica se já navegou para o checkout
+    const urlAtual = page.url();
+    if (urlAtual.includes('checkout')) {
+      console.log('✅ Já navegou para o checkout!');
+    } else {
+      console.log('⚠️ Botão pode não ter respondido, tentando novamente...');
+      try {
+        await btnContinuarEtapa7.click({ force: true, timeout: 5000 });
+        await page.waitForTimeout(1000);
+      } catch (e) {
+        console.log('ℹ️ Botão não disponível, verificando se navegou...');
+      }
+    }
+  }
+  
+  // Aguarda próxima página
   console.log('⏳ Aguardando próxima etapa...');
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(1500);
   
   // ═══════════════════════════════════════════════════════════════════════════
   // VERIFICAÇÃO: CPF já possui inscrição?
@@ -575,7 +977,7 @@ test('test', async ({ page }) => {
   
   // Aguarda página de checkout carregar completamente
   console.log('⏳ Aguardando checkout carregar...');
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(1000);
   
   // Aguarda até que existam inputs visíveis na página
   console.log('⏳ Aguardando campos do formulário...');
@@ -589,7 +991,7 @@ test('test', async ({ page }) => {
     await page.waitForTimeout(1000);
   }
   
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
   
   // ═══════════════════════════════════════════════════════════════════════════
   // CHECKOUT ETAPA 1: Dados Pessoais → Ir para o Endereço
@@ -647,7 +1049,7 @@ test('test', async ({ page }) => {
     }
   }
   
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(1000);
   
   // Clica no botão para próxima etapa (pode ser "Ir para o Endereço" ou "Ir para o pagamento")
   console.log('📍 Procurando botão para próxima etapa...');
@@ -684,7 +1086,7 @@ test('test', async ({ page }) => {
         await btn.click();
         clicouProximo = true;
         console.log(`✅ Clicou no botão!`);
-        await page.waitForTimeout(5000);
+        await page.waitForTimeout(1000);
         break;
       }
     } catch (e) {
@@ -702,125 +1104,178 @@ test('test', async ({ page }) => {
   console.log('📌 CHECKOUT: Verificando Endereço...');
   
   // Aguarda seção de endereço
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(1500);
   
-  // Clica em "Sim" se aparecer (usando seletor do codegen original)
-  console.log('📍 Verificando botão "Sim"...');
-  try {
-    const simNao = page.getByText('SimNão');
-    if (await simNao.isVisible({ timeout: 3000 }).catch(() => false)) {
-      console.log('📍 Clicando em "Sim"...');
-      await simNao.click();
-      await page.waitForTimeout(2000);
-      console.log('✅ Clicou em "Sim"!');
+  // Verifica se o endereço já está preenchido (mostrando rua/bairro)
+  const enderecoJaPreenchido = await page.locator('text=Rua ').first().isVisible({ timeout: 2000 }).catch(() => false) ||
+                                await page.locator('text=Avenida ').first().isVisible({ timeout: 1000 }).catch(() => false);
+  
+  if (enderecoJaPreenchido) {
+    console.log('✅ Endereço já está preenchido, verificando se precisa editar...');
+    
+    // Verifica se tem botão de alterar/editar
+    const btnAlterar = page.locator('text=Alterar').first();
+    const precisaEditar = await btnAlterar.isVisible({ timeout: 2000 }).catch(() => false);
+    
+    if (!precisaEditar) {
+      console.log('✅ Endereço OK, pulando para pagamento...');
+    } else {
+      console.log('📝 Botão Alterar disponível, mantendo endereço atual');
     }
-  } catch (e) {
-    console.log('ℹ️ Botão SimNão não encontrado');
-  }
-  
-  await page.waitForTimeout(2000);
-  
-  // Preenche CEP
-  console.log('📝 Preenchendo CEP...');
-  try {
-    const campoCep = page.getByRole('textbox', { name: 'CEP *' });
-    await campoCep.click();
-    await page.waitForTimeout(500);
-    await campoCep.fill(CLIENTE.cep);
-    console.log(`✅ CEP: ${CLIENTE.cep}`);
+  } else {
+    // Clica em "Sim" se aparecer (usando seletor do codegen original)
+    console.log('📍 Verificando botão "Sim"...');
+    try {
+      const simBtn = page.locator('button:has-text("Sim")').first();
+      const simNao = page.getByText('SimNão');
+      
+      if (await simBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log('📍 Clicando em "Sim"...');
+        await simBtn.click();
+        await page.waitForTimeout(1000);
+        console.log('✅ Clicou em "Sim"!');
+      } else if (await simNao.isVisible({ timeout: 1000 }).catch(() => false)) {
+        console.log('📍 Clicando em "Sim" (via SimNão)...');
+        await simNao.click();
+        await page.waitForTimeout(1000);
+        console.log('✅ Clicou em "Sim"!');
+      }
+    } catch (e) {
+      console.log('ℹ️ Botão Sim não encontrado');
+    }
+    
     await page.waitForTimeout(1000);
-    await campoCep.press('Tab');
-    await page.waitForTimeout(5000); // Aguarda busca do CEP
-  } catch (e) {
-    console.log('⚠️ Erro no CEP:', e.message);
   }
   
-  // Verifica se o campo Endereço foi preenchido automaticamente
-  console.log('📝 Verificando campo Endereço...');
-  try {
-    const campoEndereco = page.getByRole('textbox', { name: 'Endereço *' });
-    const enderecoAtual = await campoEndereco.inputValue().catch(() => '');
+  // Verifica se precisa preencher CEP
+  const campoCep = page.getByRole('textbox', { name: 'CEP *' });
+  const cepVisivel = await campoCep.isVisible({ timeout: 2000 }).catch(() => false);
+  
+  if (cepVisivel) {
+    const cepAtual = await campoCep.inputValue().catch(() => '');
+    console.log(`📝 Campo CEP visível, valor atual: "${cepAtual}"`);
     
-    if (!enderecoAtual || enderecoAtual.trim() === '' || enderecoAtual.toLowerCase() === 'null') {
-      console.log('   ℹ️ Endereço não preenchido pelo CEP, inserindo "Null"...');
-      await campoEndereco.click();
-      await page.waitForTimeout(300);
-      await campoEndereco.fill('Null');
-      console.log('✅ Endereço: Null');
+    if (!cepAtual || cepAtual.length < 8) {
+      console.log('📝 Preenchendo CEP...');
+      try {
+        await campoCep.click();
+        await page.waitForTimeout(300);
+        await campoCep.fill(CLIENTE.cep);
+        console.log(`✅ CEP: ${CLIENTE.cep}`);
+        await page.waitForTimeout(500);
+        await campoCep.press('Tab');
+        await page.waitForTimeout(2000); // Aguarda busca do CEP
+      } catch (e) {
+        console.log('⚠️ Erro no CEP:', e.message);
+      }
     } else {
-      console.log(`✅ Endereço já preenchido: "${enderecoAtual}"`);
+      console.log(`✅ CEP já preenchido: ${cepAtual}`);
     }
-  } catch (e) {
-    console.log('⚠️ Erro ao verificar Endereço:', e.message);
+  } else {
+    console.log('ℹ️ Campo CEP não visível (endereço pode já estar preenchido)');
   }
   
-  // Preenche Número
-  console.log('📝 Preenchendo Número...');
-  try {
-    const campoNumero = page.getByRole('textbox', { name: 'Número *' });
-    await campoNumero.click();
-    await page.waitForTimeout(300);
-    await campoNumero.fill(CLIENTE.numero);
-    console.log(`✅ Número: ${CLIENTE.numero}`);
-  } catch (e) {
-    console.log('⚠️ Erro no Número:', e.message);
-  }
+  // Verifica e preenche campos de endereço apenas se visíveis
+  const campoEnderecoVisivel = await page.getByRole('textbox', { name: 'Endereço *' }).isVisible({ timeout: 2000 }).catch(() => false);
   
-  // Verifica se o campo Bairro foi preenchido automaticamente
-  console.log('📝 Verificando campo Bairro...');
-  try {
-    const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
-    const bairroAtual = await campoBairro.inputValue().catch(() => '');
+  if (campoEnderecoVisivel) {
+    // Verifica se o campo Endereço foi preenchido automaticamente
+    console.log('📝 Verificando campo Endereço...');
+    try {
+      const campoEndereco = page.getByRole('textbox', { name: 'Endereço *' });
+      const enderecoAtual = await campoEndereco.inputValue().catch(() => '');
+      
+      if (!enderecoAtual || enderecoAtual.trim() === '' || enderecoAtual.toLowerCase() === 'null') {
+        console.log('   ℹ️ Endereço não preenchido pelo CEP, inserindo "Null"...');
+        await campoEndereco.click();
+        await page.waitForTimeout(200);
+        await campoEndereco.fill('Null');
+        console.log('✅ Endereço: Null');
+      } else {
+        console.log(`✅ Endereço já preenchido: "${enderecoAtual}"`);
+      }
+    } catch (e) {
+      console.log('⚠️ Erro ao verificar Endereço:', e.message);
+    }
     
-    if (!bairroAtual || bairroAtual.trim() === '') {
-      console.log('   ℹ️ Bairro não preenchido pelo CEP, inserindo "Centro"...');
-      await campoBairro.click();
-      await page.waitForTimeout(300);
-      await campoBairro.fill('Centro');
-      console.log('✅ Bairro: Centro');
-    } else {
-      console.log(`✅ Bairro já preenchido: "${bairroAtual}"`);
+    // Verifica e preenche Número
+    console.log('📝 Verificando Número...');
+    try {
+      const campoNumero = page.getByRole('textbox', { name: 'Número *' });
+      const numeroAtual = await campoNumero.inputValue().catch(() => '');
+      
+      if (!numeroAtual || numeroAtual.trim() === '') {
+        await campoNumero.click();
+        await page.waitForTimeout(200);
+        await campoNumero.fill(CLIENTE.numero);
+        console.log(`✅ Número: ${CLIENTE.numero}`);
+      } else {
+        console.log(`✅ Número já preenchido: "${numeroAtual}"`);
+      }
+    } catch (e) {
+      console.log('⚠️ Erro no Número:', e.message);
     }
-  } catch (e) {
-    console.log('⚠️ Erro ao verificar Bairro:', e.message);
+    
+    // Verifica se o campo Bairro foi preenchido automaticamente
+    console.log('📝 Verificando campo Bairro...');
+    try {
+      const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
+      const bairroAtual = await campoBairro.inputValue().catch(() => '');
+      
+      if (!bairroAtual || bairroAtual.trim() === '') {
+        console.log('   ℹ️ Bairro não preenchido pelo CEP, inserindo "Centro"...');
+        await campoBairro.click();
+        await page.waitForTimeout(200);
+        await campoBairro.fill('Centro');
+        console.log('✅ Bairro: Centro');
+      } else {
+        console.log(`✅ Bairro já preenchido: "${bairroAtual}"`);
+      }
+    } catch (e) {
+      console.log('⚠️ Erro ao verificar Bairro:', e.message);
+    }
+  } else {
+    console.log('ℹ️ Campos de endereço não visíveis (já preenchido anteriormente)');
   }
   
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // CLICA EM "IR PARA O PAGAMENTO"
+  // PASSO 1: CLICA EM "IR PARA PAGAMENTO" OU "IR PARA ENDEREÇO"
   // ═══════════════════════════════════════════════════════════════════════════
-  console.log('📍 Procurando botão "Ir para o pagamento"...');
+  console.log('📍 PASSO 1: Procurando "Ir para Pagamento" ou "Ir para Endereço"...');
   
   // Lista botões visíveis para debug
-  const botoesPagamento = await page.locator('button:visible').all();
-  console.log(`   📋 Botões visíveis: ${botoesPagamento.length}`);
-  for (let i = 0; i < Math.min(botoesPagamento.length, 8); i++) {
-    const texto = await botoesPagamento[i].innerText().catch(() => '');
+  const botoesDisponiveis = await page.locator('button:visible').all();
+  console.log(`   📋 Botões visíveis: ${botoesDisponiveis.length}`);
+  for (let i = 0; i < Math.min(botoesDisponiveis.length, 10); i++) {
+    const texto = await botoesDisponiveis[i].innerText().catch(() => '');
     if (texto.trim()) console.log(`      - "${texto.trim().substring(0, 50)}"`);
   }
   
-  const seletoresBtnPagamento = [
-    page.getByRole('button', { name: /Ir para o pagamento/i }),
+  // Primeiro: tenta "Ir para Pagamento" ou "Ir para Endereço"
+  const seletoresPasso1 = [
     page.locator('button:has-text("Ir para o pagamento")'),
-    page.locator('button:has-text("pagamento")'),
+    page.getByRole('button', { name: /Ir para o pagamento/i }),
+    page.locator('button:has-text("Ir para o Endereço")'),
+    page.locator('button:has-text("Ir para o endereço")'),
+    page.getByRole('button', { name: /endereço/i }),
     page.locator('button:has-text("Prosseguir")'),
-    page.getByRole('button', { name: 'Ir para o pagamento Prosseguir' })
   ];
   
-  let clicouPagamento = false;
+  let clicouPasso1 = false;
   
-  for (const btn of seletoresBtnPagamento) {
+  for (const btn of seletoresPasso1) {
     try {
-      if (await btn.isVisible({ timeout: 3000 })) {
+      if (await btn.isVisible({ timeout: 1500 })) {
         const textoBtn = await btn.innerText().catch(() => 'botão');
-        console.log(`📍 Encontrou botão "${textoBtn.trim().substring(0, 30)}", clicando...`);
+        console.log(`📍 Encontrou "${textoBtn.trim().substring(0, 40)}", clicando...`);
         await btn.scrollIntoViewIfNeeded();
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(300);
         await btn.click();
-        clicouPagamento = true;
-        console.log('✅ Clicou em "Ir para o pagamento"!');
-        await page.waitForTimeout(5000);
+        clicouPasso1 = true;
+        console.log(`✅ Clicou!`);
+        await page.waitForTimeout(2000);
         break;
       }
     } catch (e) {
@@ -828,8 +1283,120 @@ test('test', async ({ page }) => {
     }
   }
   
-  if (!clicouPagamento) {
-    console.log('⚠️ Botão "Ir para o pagamento" não encontrado');
+  if (!clicouPasso1) {
+    console.log('⚠️ Botão "Ir para Pagamento/Endereço" não encontrado');
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PASSO 2: VERIFICA SE ENDEREÇO JÁ ESTÁ PREENCHIDO
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('📍 PASSO 2: Verificando se endereço já está preenchido...');
+  await page.waitForTimeout(1000);
+  
+  // Verifica se aparece endereço já preenchido (texto com "Rua" ou número de CEP)
+  const enderecoExibido = await page.locator('text=/Rua |Avenida |Vila |CEP/i').first().isVisible({ timeout: 2000 }).catch(() => false);
+  const campoCepVisivel = await page.getByRole('textbox', { name: 'CEP *' }).isVisible({ timeout: 1000 }).catch(() => false);
+  
+  if (enderecoExibido && !campoCepVisivel) {
+    console.log('✅ Endereço já está preenchido!');
+    
+    // PASSO 3A: Clica em "Continuar Inscrição"
+    console.log('📍 PASSO 3: Clicando em "Continuar Inscrição"...');
+    const btnContinuar = page.locator('button:has-text("Continuar Inscrição")').first();
+    if (await btnContinuar.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await btnContinuar.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      await btnContinuar.click();
+      console.log('✅ Clicou em "Continuar Inscrição"!');
+      await page.waitForTimeout(2000);
+    }
+  } else if (campoCepVisivel) {
+    console.log('📝 Endereço NÃO está preenchido, preenchendo...');
+    
+    // PASSO 3B: Preenche o endereço
+    // CEP
+    try {
+      const campoCep = page.getByRole('textbox', { name: 'CEP *' });
+      const cepAtual = await campoCep.inputValue().catch(() => '');
+      if (!cepAtual || cepAtual.length < 8) {
+        await campoCep.click();
+        await campoCep.fill(CLIENTE.cep);
+        console.log(`✅ CEP: ${CLIENTE.cep}`);
+        await campoCep.press('Tab');
+        await page.waitForTimeout(2000); // Aguarda busca do CEP
+      }
+    } catch (e) {
+      console.log('⚠️ Erro no CEP:', e.message);
+    }
+    
+    // Endereço
+    try {
+      const campoEnd = page.getByRole('textbox', { name: 'Endereço *' });
+      if (await campoEnd.isVisible({ timeout: 1000 }).catch(() => false)) {
+        const endAtual = await campoEnd.inputValue().catch(() => '');
+        if (!endAtual || endAtual.trim() === '') {
+          await campoEnd.fill('Null');
+          console.log('✅ Endereço: Null');
+        }
+      }
+    } catch (e) {}
+    
+    // Número
+    try {
+      const campoNum = page.getByRole('textbox', { name: 'Número *' });
+      if (await campoNum.isVisible({ timeout: 1000 }).catch(() => false)) {
+        const numAtual = await campoNum.inputValue().catch(() => '');
+        if (!numAtual || numAtual.trim() === '') {
+          await campoNum.fill(CLIENTE.numero);
+          console.log(`✅ Número: ${CLIENTE.numero}`);
+        }
+      }
+    } catch (e) {}
+    
+    // Bairro
+    try {
+      const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
+      if (await campoBairro.isVisible({ timeout: 1000 }).catch(() => false)) {
+        const bairroAtual = await campoBairro.inputValue().catch(() => '');
+        if (!bairroAtual || bairroAtual.trim() === '') {
+          await campoBairro.fill('Centro');
+          console.log('✅ Bairro: Centro');
+        }
+      }
+    } catch (e) {}
+    
+    await page.waitForTimeout(500);
+    
+    // Agora clica em "Ir para o Pagamento" ou "Continuar Inscrição"
+    console.log('📍 PASSO 4: Clicando para avançar após preencher endereço...');
+    const seletoresPasso4 = [
+      page.locator('button:has-text("Ir para o pagamento")'),
+      page.getByRole('button', { name: /Ir para o pagamento/i }),
+      page.locator('button:has-text("Continuar Inscrição")'),
+      page.locator('button:has-text("Prosseguir")'),
+    ];
+    
+    for (const btn of seletoresPasso4) {
+      try {
+        if (await btn.isVisible({ timeout: 1500 })) {
+          const textoBtn = await btn.innerText().catch(() => 'botão');
+          console.log(`📍 Clicando em "${textoBtn.trim().substring(0, 30)}"...`);
+          await btn.scrollIntoViewIfNeeded();
+          await btn.click();
+          console.log('✅ Clicou!');
+          await page.waitForTimeout(2000);
+          break;
+        }
+      } catch (e) {}
+    }
+  } else {
+    console.log('ℹ️ Estado do endereço indeterminado, tentando continuar...');
+    // Tenta clicar em qualquer botão de avanço
+    const btnAvancar = page.locator('button:has-text("Continuar"), button:has-text("Prosseguir"), button:has-text("pagamento")').first();
+    if (await btnAvancar.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await btnAvancar.click();
+      await page.waitForTimeout(2000);
+    }
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
@@ -837,7 +1404,7 @@ test('test', async ({ page }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 CHECKOUT: Página de Pagamento...');
   
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(1000);
   
   // Procura botão "Continuar Inscrição" (usando seletor exato)
   console.log('📍 Procurando botão "Continuar Inscrição"...');
@@ -868,7 +1435,7 @@ test('test', async ({ page }) => {
   console.log('─────────────────────────────────────────────────────────────────────────');
   console.log(`📍 URL atual: ${page.url()}`);
   
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(1000);
   
   // Procura pelo link/botão "Continuar Processo"
   const linkContinuarProcesso = page.getByRole('link', { name: 'Continuar Processo' });
@@ -911,54 +1478,64 @@ test('test', async ({ page }) => {
   
   if (novaAba) {
    console.log('⏳ Página aberta, buscando botões...');
-   await novaAba.waitForTimeout(2000); // Espera mínima
+   await novaAba.waitForTimeout(1000); // Espera mínima
    console.log(`📍 URL da nova aba: ${novaAba.url()}`);
    
-   // ═══════════════════════════════════════════════════════════════════════════
-   // PASSO 1: Encontrar e clicar em "Acompanhar Inscrição"
-   // ═══════════════════════════════════════════════════════════════════════════
-   console.log('');
-   console.log('🔍 PASSO 1: Procurando "Acompanhar Inscrição"...');
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PASSO 1: Encontrar e clicar em "Acompanhar Inscrição" (PRIMEIRO da lista)
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('');
+  console.log('🔍 PASSO 1: Procurando "Acompanhar Inscrição" (primeiro da lista)...');
+  
+  let clicouAcompanhar = false;
+  
+  // Aguarda a página carregar as inscrições
+  await novaAba.waitForTimeout(2000);
+  
+  // Conta quantos botões "Acompanhar Inscrição" existem
+  const botoesAcompanhar = novaAba.getByRole('button', { name: 'Acompanhar Inscrição' });
+  const qtdBotoes = await botoesAcompanhar.count().catch(() => 0);
+  console.log(`   📋 Encontrou ${qtdBotoes} botão(ões) "Acompanhar Inscrição"`);
+  
+  // SEMPRE usa o PRIMEIRO botão (inscrição mais recente, no topo)
+  const btnAcompanhar = botoesAcompanhar.first();
+  
+  try {
+    await btnAcompanhar.waitFor({ state: 'visible', timeout: 15000 });
+    console.log('   ✅ ENCONTROU "Acompanhar Inscrição"!');
+    await btnAcompanhar.scrollIntoViewIfNeeded();
+    await novaAba.waitForTimeout(300);
+    await btnAcompanhar.click();
+    console.log('   ✅ Clicou no PRIMEIRO "Acompanhar Inscrição"!');
+    clicouAcompanhar = true;
+    await novaAba.waitForTimeout(2000); // Espera modal abrir
+  } catch (e) {
+    console.log('   ⚠️ "Acompanhar Inscrição" não encontrado');
+    const botoesVisiveis = await novaAba.locator('button:visible').allTextContents().catch(() => []);
+    console.log('   Botões disponíveis:', botoesVisiveis.join(' | '));
+  }
    
-   let clicouAcompanhar = false;
-   
-   // Usa o seletor exato do Codegen
-   const btnAcompanhar = novaAba.getByRole('button', { name: 'Acompanhar Inscrição' });
-   
-   try {
-     await btnAcompanhar.waitFor({ state: 'visible', timeout: 15000 });
-     console.log('   ✅ ENCONTROU "Acompanhar Inscrição"!');
-     await btnAcompanhar.click();
-     console.log('   ✅ Clicou em "Acompanhar Inscrição"!');
-     clicouAcompanhar = true;
-     await novaAba.waitForTimeout(3000); // Espera modal abrir
-   } catch (e) {
-     console.log('   ⚠️ "Acompanhar Inscrição" não encontrado');
-     const botoesVisiveis = await novaAba.locator('button:visible').allTextContents().catch(() => []);
-     console.log('   Botões disponíveis:', botoesVisiveis.join(' | '));
-   }
-   
-   // ═══════════════════════════════════════════════════════════════════════════
-   // PASSO 2: Encontrar "Acessar prova" dentro da MODAL
-   // ═══════════════════════════════════════════════════════════════════════════
-   console.log('');
-   console.log('🔍 PASSO 2: Procurando "Acessar prova" na modal...');
-   
-   // Aguarda a modal abrir completamente (5 segundos)
-   await novaAba.waitForTimeout(5000);
-   
-   // Usa o seletor exato do Codegen - o botão está dentro de um <a>
-   const btnAcessarProva = novaAba.getByRole('button', { name: 'Acessar prova' });
-   let acessarProvaLink = null;
-   
-   try {
-     await btnAcessarProva.waitFor({ state: 'visible', timeout: 10000 });
-     console.log('   ✅ ENCONTROU "Acessar prova" na modal!');
-     // Pega o elemento pai <a> que contém o href
-     acessarProvaLink = novaAba.locator('a:has(button:has-text("Acessar prova"))');
-   } catch (e) {
-     console.log('   ⚠️ Botão "Acessar prova" não encontrado');
-   }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PASSO 2: Encontrar "Acessar prova" dentro da MODAL (PRIMEIRO da lista)
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('');
+  console.log('🔍 PASSO 2: Procurando "Acessar prova" na modal...');
+  
+  // Aguarda a modal abrir completamente
+  await novaAba.waitForTimeout(1500);
+  
+  // SEMPRE usa o PRIMEIRO botão/link "Acessar prova"
+  const btnAcessarProva = novaAba.getByRole('button', { name: 'Acessar prova' }).first();
+  let acessarProvaLink = null;
+  
+  try {
+    await btnAcessarProva.waitFor({ state: 'visible', timeout: 10000 });
+    console.log('   ✅ ENCONTROU "Acessar prova" na modal!');
+    // Pega o elemento pai <a> que contém o href (primeiro da lista)
+    acessarProvaLink = novaAba.locator('a:has(button:has-text("Acessar prova"))').first();
+  } catch (e) {
+    console.log('   ⚠️ Botão "Acessar prova" não encontrado');
+  }
     
    // ═══════════════════════════════════════════════════════════════════════════
    // PASSO 3: Capturar o link da prova (extrair href do <a>)
@@ -981,7 +1558,7 @@ test('test', async ({ page }) => {
            acessarProvaLink.click()
          ]);
          
-         await novaAba.waitForTimeout(3000);
+         await novaAba.waitForTimeout(1500);
          
          if (provaPage) {
            await provaPage.waitForLoadState('domcontentloaded').catch(() => {});
