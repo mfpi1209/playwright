@@ -244,6 +244,10 @@ app.post('/inscricao/sync', async (req, res) => {
     const linkMatch = stdout.match(/🔗\s*(https?:\/\/[^\s]+)/);
     const linkProva = linkMatch ? linkMatch[1] : null;
     
+    // Tenta extrair o número da inscrição do output (formato: Número de Inscrição extraído do token: XXXX)
+    const numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
+    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
+    
     // Verifica se CPF já tinha inscrição
     const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição');
     
@@ -259,9 +263,13 @@ app.post('/inscricao/sync', async (req, res) => {
     // Se capturou o link, considera SUCESSO
     if (linkProva) {
       console.log('✅ SUCESSO - Link capturado!');
+      if (numeroInscricao) {
+        console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
+      }
       return res.json({
         sucesso: true,
         linkProva: linkProva,
+        numeroInscricao: numeroInscricao,
         mensagem: 'Inscrição concluída com sucesso!',
         cliente: { nome, cpf, email }
       });
