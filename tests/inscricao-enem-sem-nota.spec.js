@@ -7,7 +7,7 @@ const CLIENTE = {
   // Dados pessoais
   nome: process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro',
   cpf: process.env.CLIENTE_CPF || '96724754038',
-  email: process.env.CLIENTE_EMAIL || 'ceduardoribeiro@hotmail.com',
+  email: (process.env.CLIENTE_EMAIL || 'ceduardoribeiro@hotmail.com').toLowerCase(),
   telefone: process.env.CLIENTE_TELEFONE || '11974562318',
   nascimento: process.env.CLIENTE_NASCIMENTO || '14/02/1985',
   // Endereço

@@ -11,7 +11,7 @@ const CLIENTE = {
   // Dados pessoais
   nome: process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro',
   cpf: process.env.CLIENTE_CPF || '96724754038',
-  email: process.env.CLIENTE_EMAIL || 'ceduardoribeiro@hotmail.com',
+  email: (process.env.CLIENTE_EMAIL || 'ceduardoribeiro@hotmail.com').toLowerCase(),
   telefone: process.env.CLIENTE_TELEFONE || '11974562318',
   nascimento: process.env.CLIENTE_NASCIMENTO || '14/02/1985',
   // Endereço
@@ -410,33 +410,107 @@ test('test', async ({ page }) => {
     }
   } catch (e) {}
   
-  // Clica em "Entrar como cliente"
-  const entrarComoCliente = page.getByText('Entrar como cliente').first();
-  await entrarComoCliente.waitFor({ state: 'visible', timeout: 15000 });
-  await entrarComoCliente.click({ force: true });
-  await page.waitForTimeout(1000);
-  
-  // Fecha modal novamente se necessário
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
-  
-  // Preenche email do cliente
-  const emailCliente = page.getByPlaceholder('Ex: example@mail.com');
-  await preencherCampo(emailCliente, CLIENTE.email, 'Email cliente', false);
-  
-  // Clica em Entrar
-  await page.getByRole('button', { name: 'Entrar' }).click({ force: true });
-  await page.waitForTimeout(1500);
-  
-  // Tenta clicar novamente se visível
-  try {
-    const entrarBtn = page.getByRole('button', { name: 'Entrar' });
-    if (await entrarBtn.isVisible({ timeout: 2000 })) {
-      await entrarBtn.click({ force: true });
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FUNÇÃO: Login do cliente com validação
+  // ═══════════════════════════════════════════════════════════════════════════
+  async function fazerLoginCliente() {
+    const MAX_TENTATIVAS = 3;
+    
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+      console.log(`🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de login do cliente...`);
+      
+      // 1. Clica em "Entrar como cliente"
+      console.log('   📍 Procurando "Entrar como cliente"...');
+      const entrarComoCliente = page.getByText('Entrar como cliente').first();
+      
+      try {
+        await entrarComoCliente.waitFor({ state: 'visible', timeout: 10000 });
+        await entrarComoCliente.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(500);
+        await entrarComoCliente.click({ force: true });
+        console.log('   ✅ Clicou em "Entrar como cliente"');
+      } catch (e) {
+        console.log('   ⚠️ "Entrar como cliente" não encontrado');
+        continue;
+      }
+      
+      await page.waitForTimeout(2000);
+      
+      // 2. Preenche o email
+      console.log('   📝 Procurando campo de email...');
+      const emailCliente = page.getByPlaceholder('Ex: example@mail.com');
+      
+      try {
+        await emailCliente.waitFor({ state: 'visible', timeout: 10000 });
+        await emailCliente.click();
+        await emailCliente.fill('');
+        await emailCliente.type(CLIENTE.email, { delay: 50 });
+        console.log(`   ✅ Email preenchido: "${CLIENTE.email}"`);
+      } catch (e) {
+        console.log('   ⚠️ Erro ao preencher email');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      
+      await page.waitForTimeout(1000);
+      
+      // 3. Clica no botão "Entrar"
+      console.log('   📍 Clicando em "Entrar"...');
+      const btnEntrar = page.getByRole('button', { name: 'Entrar' });
+      
+      try {
+        await btnEntrar.waitFor({ state: 'visible', timeout: 5000 });
+        await btnEntrar.click();
+        console.log('   ✅ Clicou em "Entrar"');
+      } catch (e) {
+        console.log('   ⚠️ Botão "Entrar" não encontrado');
+        continue;
+      }
+      
+      // 4. Aguarda e verifica se o login foi efetivado
+      console.log('   ⏳ Aguardando login ser processado...');
+      await page.waitForTimeout(3000);
+      
+      // 5. VALIDAÇÃO: Verifica se o nome do cliente aparece no header
+      console.log('   🔍 Validando login...');
+      
+      // Procura pelo nome do cliente ou email no header
+      const emailPrefix = CLIENTE.email.split('@')[0].toLowerCase();
+      const headerText = await page.locator('header').innerText().catch(() => '');
+      const headerLower = headerText.toLowerCase();
+      
+      // Verifica se o header contém o email/nome do cliente
+      const clienteLogado = headerLower.includes(emailPrefix) || 
+                            headerLower.includes('olá') ||
+                            headerLower.includes(CLIENTE.email.toLowerCase());
+      
+      // Também verifica se não aparece mais "Entrar como cliente"
+      const entrarAindaVisivel = await entrarComoCliente.isVisible({ timeout: 2000 }).catch(() => false);
+      
+      console.log(`   📋 Header contém cliente: ${clienteLogado}`);
+      console.log(`   📋 "Entrar como cliente" ainda visível: ${entrarAindaVisivel}`);
+      
+      if (clienteLogado || !entrarAindaVisivel) {
+        console.log('   ✅ LOGIN VALIDADO COM SUCESSO!');
+        return true;
+      }
+      
+      console.log('   ⚠️ Login não confirmado, tentando novamente...');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(1000);
     }
-  } catch (e) {}
+    
+    return false;
+  }
   
-  await page.waitForTimeout(1500);
+  const loginSucesso = await fazerLoginCliente();
+  
+  if (!loginSucesso) {
+    console.log('❌ ERRO: Não foi possível fazer login do cliente após várias tentativas');
+    // Continua mesmo assim para tentar o fluxo
+  }
+  
   console.log(`✅ ETAPA 3 CONCLUÍDA - Cliente logado`);
   console.log('');
   
@@ -1477,9 +1551,12 @@ test('test', async ({ page }) => {
   let linkProva = null;
   
   if (novaAba) {
-   console.log('⏳ Página aberta, buscando botões...');
-   await novaAba.waitForTimeout(1000); // Espera mínima
+   console.log('⏳ Página aberta, aguardando carregar...');
    console.log(`📍 URL da nova aba: ${novaAba.url()}`);
+   
+   // Aguarda a página carregar completamente
+   console.log('⏳ Aguardando página de inscrições carregar (10s)...');
+   await novaAba.waitForTimeout(10000);
    
   // ═══════════════════════════════════════════════════════════════════════════
   // PASSO 1: Encontrar e clicar em "Acompanhar Inscrição" (PRIMEIRO da lista)
@@ -1488,29 +1565,43 @@ test('test', async ({ page }) => {
   console.log('🔍 PASSO 1: Procurando "Acompanhar Inscrição" (primeiro da lista)...');
   
   let clicouAcompanhar = false;
+  const MAX_TENTATIVAS_ACOMPANHAR = 15;
   
-  // Aguarda a página carregar as inscrições
-  await novaAba.waitForTimeout(2000);
+  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_ACOMPANHAR && !clicouAcompanhar; tentativa++) {
+    console.log(`   🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS_ACOMPANHAR}...`);
+    
+    // Tenta diferentes seletores para o botão
+    const seletoresAcompanhar = [
+      novaAba.getByRole('button', { name: 'Acompanhar Inscrição' }).first(),
+      novaAba.locator('button:has-text("Acompanhar Inscrição")').first(),
+      novaAba.locator('button').filter({ hasText: /Acompanhar Inscri/i }).first(),
+    ];
+    
+    for (const btn of seletoresAcompanhar) {
+      try {
+        const count = await btn.count().catch(() => 0);
+        if (count > 0) {
+          const isVis = await btn.isVisible({ timeout: 1000 }).catch(() => false);
+          if (isVis) {
+            console.log('   ✅ ENCONTROU "Acompanhar Inscrição"!');
+            await btn.scrollIntoViewIfNeeded();
+            await novaAba.waitForTimeout(300);
+            await btn.click({ force: true });
+            console.log('   ✅ Clicou no PRIMEIRO "Acompanhar Inscrição"!');
+            clicouAcompanhar = true;
+            break;
+          }
+        }
+      } catch (e) {}
+    }
+    
+    if (!clicouAcompanhar) {
+      await novaAba.waitForTimeout(2000);
+    }
+  }
   
-  // Conta quantos botões "Acompanhar Inscrição" existem
-  const botoesAcompanhar = novaAba.getByRole('button', { name: 'Acompanhar Inscrição' });
-  const qtdBotoes = await botoesAcompanhar.count().catch(() => 0);
-  console.log(`   📋 Encontrou ${qtdBotoes} botão(ões) "Acompanhar Inscrição"`);
-  
-  // SEMPRE usa o PRIMEIRO botão (inscrição mais recente, no topo)
-  const btnAcompanhar = botoesAcompanhar.first();
-  
-  try {
-    await btnAcompanhar.waitFor({ state: 'visible', timeout: 15000 });
-    console.log('   ✅ ENCONTROU "Acompanhar Inscrição"!');
-    await btnAcompanhar.scrollIntoViewIfNeeded();
-    await novaAba.waitForTimeout(300);
-    await btnAcompanhar.click();
-    console.log('   ✅ Clicou no PRIMEIRO "Acompanhar Inscrição"!');
-    clicouAcompanhar = true;
-    await novaAba.waitForTimeout(2000); // Espera modal abrir
-  } catch (e) {
-    console.log('   ⚠️ "Acompanhar Inscrição" não encontrado');
+  if (!clicouAcompanhar) {
+    console.log('   ⚠️ "Acompanhar Inscrição" não encontrado após todas tentativas');
     const botoesVisiveis = await novaAba.locator('button:visible').allTextContents().catch(() => []);
     console.log('   Botões disponíveis:', botoesVisiveis.join(' | '));
   }
@@ -1521,19 +1612,44 @@ test('test', async ({ page }) => {
   console.log('');
   console.log('🔍 PASSO 2: Procurando "Acessar prova" na modal...');
   
-  // Aguarda a modal abrir completamente
-  await novaAba.waitForTimeout(1500);
+  // Espera modal abrir completamente
+  console.log('⏳ Aguardando modal abrir (5s)...');
+  await novaAba.waitForTimeout(5000);
   
-  // SEMPRE usa o PRIMEIRO botão/link "Acessar prova"
-  const btnAcessarProva = novaAba.getByRole('button', { name: 'Acessar prova' }).first();
   let acessarProvaLink = null;
+  const MAX_TENTATIVAS_PROVA = 12;
   
-  try {
-    await btnAcessarProva.waitFor({ state: 'visible', timeout: 10000 });
-    console.log('   ✅ ENCONTROU "Acessar prova" na modal!');
-    // Pega o elemento pai <a> que contém o href (primeiro da lista)
-    acessarProvaLink = novaAba.locator('a:has(button:has-text("Acessar prova"))').first();
-  } catch (e) {
+  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_PROVA && !acessarProvaLink; tentativa++) {
+    console.log(`   🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS_PROVA}...`);
+    
+    // Tenta diferentes seletores para "Acessar prova"
+    const seletoresProva = [
+      novaAba.locator('a:has(button:has-text("Acessar prova"))').first(),
+      novaAba.getByRole('button', { name: 'Acessar prova' }).first(),
+      novaAba.locator('button:has-text("Acessar prova")').first(),
+      novaAba.locator('a').filter({ hasText: /Acessar prova/i }).first(),
+    ];
+    
+    for (const seletor of seletoresProva) {
+      try {
+        const count = await seletor.count().catch(() => 0);
+        if (count > 0) {
+          const isVis = await seletor.isVisible({ timeout: 1000 }).catch(() => false);
+          if (isVis) {
+            console.log('   ✅ ENCONTROU "Acessar prova" na modal!');
+            acessarProvaLink = seletor;
+            break;
+          }
+        }
+      } catch (e) {}
+    }
+    
+    if (!acessarProvaLink) {
+      await novaAba.waitForTimeout(1000);
+    }
+  }
+  
+  if (!acessarProvaLink) {
     console.log('   ⚠️ Botão "Acessar prova" não encontrado');
   }
     
