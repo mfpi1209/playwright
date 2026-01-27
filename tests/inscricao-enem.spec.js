@@ -3,9 +3,16 @@ import { test, expect } from '@playwright/test';
 // ═══════════════════════════════════════════════════════════════════════════
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
 // ═══════════════════════════════════════════════════════════════════════════
+// Função para capitalizar nome (primeira letra maiúscula de cada palavra)
+function capitalizarNome(nome) {
+  return nome.toLowerCase().split(' ').map(palavra => 
+    palavra.charAt(0).toUpperCase() + palavra.slice(1)
+  ).join(' ');
+}
+
 const CLIENTE = {
   // Dados pessoais
-  nome: process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro',
+  nome: capitalizarNome(process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro'),
   cpf: process.env.CLIENTE_CPF || '96724754038',
   email: (process.env.CLIENTE_EMAIL || 'ceduardoribeiro@hotmail.com').toLowerCase(),
   telefone: process.env.CLIENTE_TELEFONE || '11974562318',

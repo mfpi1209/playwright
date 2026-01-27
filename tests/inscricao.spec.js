@@ -7,9 +7,16 @@ import { test, expect } from '@playwright/test';
 // Gera número de residência aleatório entre 1 e 999
 const numeroAleatorio = Math.floor(Math.random() * 999) + 1;
 
+// Função para capitalizar nome (primeira letra maiúscula de cada palavra)
+function capitalizarNome(nome) {
+  return nome.toLowerCase().split(' ').map(palavra => 
+    palavra.charAt(0).toUpperCase() + palavra.slice(1)
+  ).join(' ');
+}
+
 const CLIENTE = {
   // Dados pessoais
-  nome: process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro',
+  nome: capitalizarNome(process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro'),
   cpf: process.env.CLIENTE_CPF || '96724754038',
   email: (process.env.CLIENTE_EMAIL || 'ceduardoribeiro@hotmail.com').toLowerCase(),
   telefone: process.env.CLIENTE_TELEFONE || '11974562318',
