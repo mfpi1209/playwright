@@ -1002,7 +1002,26 @@ test('test-enem', async ({ page }) => {
         console.log(`✅ CEP: ${CLIENTE.cep}`);
         await page.waitForTimeout(500);
         await campoCep.press('Tab');
-        await page.waitForTimeout(2000); // Aguarda busca do CEP
+        await page.waitForTimeout(3000); // Aguarda busca do CEP
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // VERIFICA SE O CEP FOI ENCONTRADO
+        // ═══════════════════════════════════════════════════════════════════════════
+        const cepNaoEncontrado = await page.locator('text=/CEP não foi encontrado|CEP inválido|CEP não localizado/i').isVisible({ timeout: 2000 }).catch(() => false);
+        
+        if (cepNaoEncontrado) {
+          console.log('');
+          console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+          console.log('❌  ERRO: CEP NÃO FOI ENCONTRADO!');
+          console.log(`❌  CEP informado: ${CLIENTE.cep}`);
+          console.log('❌  Verifique se o CEP está correto e tente novamente.');
+          console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+          console.log('');
+          console.log('❌ INSCRIÇÃO ENEM NÃO FINALIZADA - CEP não encontrado');
+          await page.screenshot({ path: 'erro-cep-nao-encontrado.png', fullPage: true });
+          return; // Encerra o teste
+        }
+        
       } catch (e) {
         console.log('⚠️ Erro no CEP:', e.message);
       }

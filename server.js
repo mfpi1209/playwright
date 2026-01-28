@@ -266,6 +266,19 @@ app.post('/inscricao/sync', async (req, res) => {
       });
     }
     
+    // Verifica se houve erro de CEP
+    const erroCep = stdout.includes('CEP NÃO FOI ENCONTRADO') || stdout.includes('CEP não encontrado');
+    
+    if (erroCep) {
+      console.log('❌ ERRO - CEP não foi encontrado');
+      return res.json({
+        sucesso: false,
+        erro: 'CEP não foi encontrado. Verifique se o CEP está correto.',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
+      });
+    }
+    
     // Se capturou o link, considera SUCESSO
     if (linkProva) {
       console.log('✅ SUCESSO - Link capturado!');
@@ -424,6 +437,19 @@ app.post('/inscricao-enem/sync', async (req, res) => {
         sucesso: false,
         erro: 'CPF já possui inscrição',
         cliente: { nome, cpf, email }
+      });
+    }
+    
+    // Verifica se houve erro de CEP
+    const erroCep = stdout.includes('CEP NÃO FOI ENCONTRADO') || stdout.includes('CEP não encontrado');
+    
+    if (erroCep) {
+      console.log('❌ ERRO - CEP não foi encontrado');
+      return res.json({
+        sucesso: false,
+        erro: 'CEP não foi encontrado. Verifique se o CEP está correto.',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
       });
     }
     
@@ -587,6 +613,19 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
         sucesso: false,
         erro: 'CPF já possui inscrição',
         cliente: { nome, cpf, email }
+      });
+    }
+    
+    // Verifica se houve erro de CEP
+    const erroCep = stdout.includes('CEP NÃO FOI ENCONTRADO') || stdout.includes('CEP não encontrado');
+    
+    if (erroCep) {
+      console.log('❌ ERRO - CEP não foi encontrado');
+      return res.json({
+        sucesso: false,
+        erro: 'CEP não foi encontrado. Verifique se o CEP está correto.',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
       });
     }
     
