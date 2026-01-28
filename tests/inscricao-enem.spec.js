@@ -1198,28 +1198,58 @@ test('test-enem', async ({ page }) => {
     console.log(`📍 URL da nova aba: ${novaAba.url()}`);
     
     // ═══════════════════════════════════════════════════════════════════════════
-    // PASSO 1: Encontrar e clicar em "Acompanhar Inscrição"
+    // PASSO 1: Encontrar e clicar em "Acompanhar Inscrição" (PRIMEIRO da lista)
     // ═══════════════════════════════════════════════════════════════════════════
     console.log('');
-    console.log('🔍 PASSO 1: Procurando "Acompanhar Inscrição"...');
+    console.log('🔍 PASSO 1: Procurando "Acompanhar Inscrição" (primeiro da lista)...');
+    
+    // Aguarda página carregar
+    await novaAba.waitForTimeout(5000);
     
     let clicouAcompanhar = false;
+    const MAX_TENTATIVAS_ACOMPANHAR = 15;
     
-    // Usa o seletor exato do Codegen
-    const btnAcompanhar = novaAba.getByRole('button', { name: 'Acompanhar Inscrição' });
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_ACOMPANHAR && !clicouAcompanhar; tentativa++) {
+      console.log(`   🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS_ACOMPANHAR}...`);
+      
+      // Tenta diferentes seletores para o botão - SEMPRE USANDO .first()
+      const seletoresAcompanhar = [
+        novaAba.getByRole('button', { name: 'Acompanhar Inscrição' }).first(),
+        novaAba.locator('button:has-text("Acompanhar Inscrição")').first(),
+        novaAba.locator('button').filter({ hasText: /Acompanhar Inscri/i }).first(),
+      ];
+      
+      for (const btn of seletoresAcompanhar) {
+        try {
+          const count = await btn.count().catch(() => 0);
+          if (count > 0) {
+            const isVis = await btn.isVisible({ timeout: 1000 }).catch(() => false);
+            if (isVis) {
+              console.log('   ✅ ENCONTROU "Acompanhar Inscrição"!');
+              await btn.scrollIntoViewIfNeeded();
+              await novaAba.waitForTimeout(300);
+              await btn.click({ force: true });
+              console.log('   ✅ Clicou no PRIMEIRO "Acompanhar Inscrição"!');
+              clicouAcompanhar = true;
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+      
+      if (!clicouAcompanhar) {
+        await novaAba.waitForTimeout(2000);
+      }
+    }
     
-    try {
-      await btnAcompanhar.waitFor({ state: 'visible', timeout: 15000 });
-      console.log('   ✅ ENCONTROU "Acompanhar Inscrição"!');
-      await btnAcompanhar.click();
-      console.log('   ✅ Clicou em "Acompanhar Inscrição"!');
-      clicouAcompanhar = true;
-      await novaAba.waitForTimeout(3000); // Espera modal abrir
-    } catch (e) {
-      console.log('   ⚠️ "Acompanhar Inscrição" não encontrado');
+    if (!clicouAcompanhar) {
+      console.log('   ⚠️ "Acompanhar Inscrição" não encontrado após todas tentativas');
       const botoesVisiveis = await novaAba.locator('button:visible').allTextContents().catch(() => []);
       console.log('   Botões disponíveis:', botoesVisiveis.join(' | '));
     }
+    
+    // Espera modal abrir
+    await novaAba.waitForTimeout(3000);
     
     // ═══════════════════════════════════════════════════════════════════════════
     // PASSO 2: MODAL ENEM - Preencher notas do ENEM
