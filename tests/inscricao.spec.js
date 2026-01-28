@@ -4,12 +4,36 @@ import { test, expect } from '@playwright/test';
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Função para corrigir caracteres acentuados corrompidos (encoding Windows/PowerShell)
+function corrigirAcentos(texto) {
+  if (!texto) return texto;
+  return texto
+    // Vogais com acento agudo
+    .replace(/Ã¡/g, 'á').replace(/Ã©/g, 'é').replace(/Ã­/g, 'í').replace(/Ã³/g, 'ó').replace(/Ãº/g, 'ú')
+    .replace(/Ã/g, 'Á').replace(/Ã‰/g, 'É').replace(/Ã/g, 'Í').replace(/Ã"/g, 'Ó').replace(/Ãš/g, 'Ú')
+    // Vogais com acento circunflexo
+    .replace(/Ã¢/g, 'â').replace(/Ãª/g, 'ê').replace(/Ã®/g, 'î').replace(/Ã´/g, 'ô').replace(/Ã»/g, 'û')
+    .replace(/Ã‚/g, 'Â').replace(/ÃŠ/g, 'Ê').replace(/ÃŽ/g, 'Î').replace(/Ã"/g, 'Ô').replace(/Ã›/g, 'Û')
+    // Vogais com til
+    .replace(/Ã£/g, 'ã').replace(/Ãµ/g, 'õ')
+    .replace(/Ãƒ/g, 'Ã').replace(/Ã•/g, 'Õ')
+    // Vogais com trema
+    .replace(/Ã¼/g, 'ü').replace(/Ãœ/g, 'Ü')
+    // Cedilha
+    .replace(/Ã§/g, 'ç').replace(/Ã‡/g, 'Ç')
+    // Outros padrões comuns de corrupção UTF-8
+    .replace(/Ã£o/g, 'ão')
+    .replace(/Ã§Ã£o/g, 'ção')
+    .replace(/Ãª/g, 'ê')
+    .replace(/Ã´/g, 'ô');
+}
+
 // Gera número de residência aleatório entre 1 e 999
 const numeroAleatorio = Math.floor(Math.random() * 999) + 1;
 
 // Função para capitalizar nome (primeira letra maiúscula de cada palavra)
 function capitalizarNome(nome) {
-  return nome.toLowerCase().split(' ').map(palavra => 
+  return corrigirAcentos(nome).toLowerCase().split(' ').map(palavra => 
     palavra.charAt(0).toUpperCase() + palavra.slice(1)
   ).join(' ');
 }
@@ -26,12 +50,12 @@ const CLIENTE = {
   numero: process.env.CLIENTE_NUMERO || String(numeroAleatorio),
   complemento: process.env.CLIENTE_COMPLEMENTO || '',
   // Localização
-  estado: process.env.CLIENTE_ESTADO || 'São Paulo',
-  cidade: process.env.CLIENTE_CIDADE || 'São Paulo',
+  estado: corrigirAcentos(process.env.CLIENTE_ESTADO) || 'São Paulo',
+  cidade: corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo',
   // Curso
-  curso: process.env.CLIENTE_CURSO || 'pedagogia',
-  polo: process.env.CLIENTE_POLO || 'vila mariana',
-  tipoVestibular: process.env.CLIENTE_TIPO_VESTIBULAR || 'Vestibular Múltipla Escolha',
+  curso: corrigirAcentos(process.env.CLIENTE_CURSO) || 'pedagogia',
+  polo: corrigirAcentos(process.env.CLIENTE_POLO) || 'vila mariana',
+  tipoVestibular: corrigirAcentos(process.env.CLIENTE_TIPO_VESTIBULAR) || 'Vestibular Múltipla Escolha',
 };
 
 test('test', async ({ page }) => {
