@@ -4,28 +4,42 @@ import { test, expect } from '@playwright/test';
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Função para remover acentos e normalizar texto (resolve problemas de encoding)
+function removerAcentos(texto) {
+  if (!texto) return texto;
+  // Remove caracteres de corrupção de encoding comuns
+  let limpo = texto
+    .replace(/[ÃÁÂÀÄáâàäãÁ£]/g, 'a')
+    .replace(/[ÉÊÈËéêèë]/g, 'e')
+    .replace(/[ÍÎÌÏíîìï]/g, 'i')
+    .replace(/[ÓÔÒÖóôòöõÁ´]/g, 'o')
+    .replace(/[ÚÛÙÜúûùü]/g, 'u')
+    .replace(/[Çç]/g, 'c')
+    .replace(/[Ññ]/g, 'n');
+  
+  // Também usa normalize para casos padrão
+  return limpo.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 // Função para corrigir caracteres acentuados corrompidos (encoding Windows/PowerShell)
 function corrigirAcentos(texto) {
   if (!texto) return texto;
   return texto
-    // Vogais com acento agudo
+    // Padrões de corrupção UTF-8 duplo (Ã seguido de caractere)
     .replace(/Ã¡/g, 'á').replace(/Ã©/g, 'é').replace(/Ã­/g, 'í').replace(/Ã³/g, 'ó').replace(/Ãº/g, 'ú')
-    .replace(/Ã/g, 'Á').replace(/Ã‰/g, 'É').replace(/Ã/g, 'Í').replace(/Ã"/g, 'Ó').replace(/Ãš/g, 'Ú')
-    // Vogais com acento circunflexo
     .replace(/Ã¢/g, 'â').replace(/Ãª/g, 'ê').replace(/Ã®/g, 'î').replace(/Ã´/g, 'ô').replace(/Ã»/g, 'û')
-    .replace(/Ã‚/g, 'Â').replace(/ÃŠ/g, 'Ê').replace(/ÃŽ/g, 'Î').replace(/Ã"/g, 'Ô').replace(/Ã›/g, 'Û')
-    // Vogais com til
     .replace(/Ã£/g, 'ã').replace(/Ãµ/g, 'õ')
-    .replace(/Ãƒ/g, 'Ã').replace(/Ã•/g, 'Õ')
-    // Vogais com trema
-    .replace(/Ã¼/g, 'ü').replace(/Ãœ/g, 'Ü')
-    // Cedilha
-    .replace(/Ã§/g, 'ç').replace(/Ã‡/g, 'Ç')
-    // Outros padrões comuns de corrupção UTF-8
-    .replace(/Ã£o/g, 'ão')
-    .replace(/Ã§Ã£o/g, 'ção')
-    .replace(/Ãª/g, 'ê')
-    .replace(/Ã´/g, 'ô');
+    .replace(/Ã§/g, 'ç')
+    // Padrões de corrupção com Á (Windows-1252 -> UTF-8)
+    .replace(/Á£/g, 'ã').replace(/Á´/g, 'ô').replace(/Á©/g, 'é').replace(/Á¡/g, 'á')
+    .replace(/Áº/g, 'ú').replace(/Á§/g, 'ç').replace(/Áª/g, 'ê').replace(/Á­/g, 'í')
+    .replace(/Á³/g, 'ó').replace(/Áµ/g, 'õ').replace(/Á¢/g, 'â').replace(/Á®/g, 'î')
+    // Se ainda sobrar caracteres estranhos, tenta normalizar
+    .replace(/SÁ£o/g, 'São')
+    .replace(/MecatrÁ´nica/g, 'Mecatrônica')
+    .replace(/PedagÁ³gica/g, 'Pedagógica')
+    .replace(/ContÁ¡beis/g, 'Contábeis')
+    .replace(/AdministraÁ§Á£o/g, 'Administração');
 }
 
 // Gera número de residência aleatório entre 1 e 999
@@ -240,9 +254,9 @@ test('test', async ({ page }) => {
     for (let tentativa = 1; tentativa <= 2; tentativa++) {
       try {
         await selectLocator.waitFor({ state: 'visible', timeout: 15000 });
-        await page.waitForTimeout(200);
+    await page.waitForTimeout(200);
         await selectLocator.scrollIntoViewIfNeeded();
-        await selectLocator.click();
+    await selectLocator.click();
         await page.waitForTimeout(300);
         
         const menuAberto = await page.locator('.react-select__menu').isVisible().catch(() => false);
@@ -255,27 +269,27 @@ test('test', async ({ page }) => {
         
         await page.keyboard.type(textoDigitar, { delay: 30 });
         await page.waitForTimeout(800);
-        
-        if (opcaoNome) {
-          const opcao = page.getByRole('option', { name: opcaoNome });
+    
+    if (opcaoNome) {
+      const opcao = page.getByRole('option', { name: opcaoNome });
           await opcao.waitFor({ state: 'visible', timeout: 5000 });
-          await opcao.click();
-        } else {
+      await opcao.click();
+    } else {
           const opcoesDisponiveis = await page.locator('.react-select__option').count();
           console.log(`   📋 Opções: ${opcoesDisponiveis}`);
           if (opcoesDisponiveis > 0) {
-            await page.keyboard.press('Enter');
+      await page.keyboard.press('Enter');
           } else {
             console.log(`   ⚠️ Nenhuma opção para "${textoDigitar}"`);
             await page.keyboard.press('Escape');
             continue;
           }
-        }
-        
+    }
+    
         await page.waitForTimeout(500);
-        await aguardarCarregandoDesaparecer();
-        
-        console.log(`✅ ${descricao} selecionado!`);
+    await aguardarCarregandoDesaparecer();
+    
+    console.log(`✅ ${descricao} selecionado!`);
         return true;
         
       } catch (e) {
@@ -393,7 +407,7 @@ test('test', async ({ page }) => {
               return true;
             }
           }
-        } catch (e) {
+  } catch (e) {
           // Continua para próximo seletor
         }
       }
@@ -452,21 +466,21 @@ test('test', async ({ page }) => {
       
       // 1. Clica em "Entrar como cliente"
       console.log('   📍 Procurando "Entrar como cliente"...');
-      const entrarComoCliente = page.getByText('Entrar como cliente').first();
+  const entrarComoCliente = page.getByText('Entrar como cliente').first();
       
       try {
         await entrarComoCliente.waitFor({ state: 'visible', timeout: 10000 });
         await entrarComoCliente.scrollIntoViewIfNeeded();
         await page.waitForTimeout(500);
-        await entrarComoCliente.click({ force: true });
+  await entrarComoCliente.click({ force: true });
         console.log('   ✅ Clicou em "Entrar como cliente"');
       } catch (e) {
         console.log('   ⚠️ "Entrar como cliente" não encontrado');
         continue;
       }
       
-      await page.waitForTimeout(2000);
-      
+  await page.waitForTimeout(2000);
+  
       // 2. Preenche o email
       console.log('   📝 Procurando campo de email...');
       const emailCliente = page.getByPlaceholder('Ex: example@mail.com');
@@ -479,7 +493,7 @@ test('test', async ({ page }) => {
         console.log(`   ✅ Email preenchido: "${CLIENTE.email}"`);
       } catch (e) {
         console.log('   ⚠️ Erro ao preencher email');
-        await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
         await page.waitForTimeout(1000);
         continue;
       }
@@ -501,7 +515,7 @@ test('test', async ({ page }) => {
       
       // 4. Aguarda e verifica se o login foi efetivado
       console.log('   ⏳ Aguardando login ser processado...');
-      await page.waitForTimeout(3000);
+  await page.waitForTimeout(3000);
       
       // 5. VALIDAÇÃO: Verifica se o nome do cliente aparece no header
       console.log('   🔍 Validando login...');
@@ -554,10 +568,13 @@ test('test', async ({ page }) => {
   const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
   await searchInput.waitFor({ state: 'visible', timeout: 15000 });
   await searchInput.click();
-  console.log(`🔍 Digitando na busca: "${CLIENTE.curso}"`);
+  
+  // Usa texto sem acentos para a busca (evita problemas de encoding)
+  const cursoParaBusca = removerAcentos(CLIENTE.curso);
+  console.log(`🔍 Digitando na busca: "${cursoParaBusca}" (original: ${CLIENTE.curso})`);
   
   // Digita mais devagar para garantir que a busca funcione
-  await searchInput.type(CLIENTE.curso, { delay: 100 });
+  await searchInput.type(cursoParaBusca, { delay: 100 });
   await page.waitForTimeout(1000);
   await searchInput.press('Enter');
   
@@ -808,7 +825,7 @@ test('test', async ({ page }) => {
     console.log(`🔄 Tentativa ${tentativaAtual}/${MAX_TENTATIVAS} - Clicando em Inscreva-se...`);
     
     await inscreverBtn.click();
-    await aguardarCarregamento('Formulário de inscrição', 60000);
+  await aguardarCarregamento('Formulário de inscrição', 60000);
     await page.waitForTimeout(1000);
     
     // Verifica se os selects de localização existem
@@ -1228,24 +1245,24 @@ test('test', async ({ page }) => {
       console.log('📝 Botão Alterar disponível, mantendo endereço atual');
     }
   } else {
-    // Clica em "Sim" se aparecer (usando seletor do codegen original)
-    console.log('📍 Verificando botão "Sim"...');
-    try {
+  // Clica em "Sim" se aparecer (usando seletor do codegen original)
+  console.log('📍 Verificando botão "Sim"...');
+  try {
       const simBtn = page.locator('button:has-text("Sim")').first();
-      const simNao = page.getByText('SimNão');
+    const simNao = page.getByText('SimNão');
       
       if (await simBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-        console.log('📍 Clicando em "Sim"...');
+      console.log('📍 Clicando em "Sim"...');
         await simBtn.click();
         await page.waitForTimeout(1000);
         console.log('✅ Clicou em "Sim"!');
       } else if (await simNao.isVisible({ timeout: 1000 }).catch(() => false)) {
         console.log('📍 Clicando em "Sim" (via SimNão)...');
-        await simNao.click();
+      await simNao.click();
         await page.waitForTimeout(1000);
-        console.log('✅ Clicou em "Sim"!');
-      }
-    } catch (e) {
+      console.log('✅ Clicou em "Sim"!');
+    }
+  } catch (e) {
       console.log('ℹ️ Botão Sim não encontrado');
     }
     
@@ -1261,17 +1278,17 @@ test('test', async ({ page }) => {
     console.log(`📝 Campo CEP visível, valor atual: "${cepAtual}"`);
     
     if (!cepAtual || cepAtual.length < 8) {
-      console.log('📝 Preenchendo CEP...');
-      try {
-        await campoCep.click();
+  console.log('📝 Preenchendo CEP...');
+  try {
+    await campoCep.click();
         await page.waitForTimeout(300);
-        await campoCep.fill(CLIENTE.cep);
-        console.log(`✅ CEP: ${CLIENTE.cep}`);
+    await campoCep.fill(CLIENTE.cep);
+    console.log(`✅ CEP: ${CLIENTE.cep}`);
         await page.waitForTimeout(500);
-        await campoCep.press('Tab');
+    await campoCep.press('Tab');
         await page.waitForTimeout(2000); // Aguarda busca do CEP
-      } catch (e) {
-        console.log('⚠️ Erro no CEP:', e.message);
+  } catch (e) {
+    console.log('⚠️ Erro no CEP:', e.message);
       }
     } else {
       console.log(`✅ CEP já preenchido: ${cepAtual}`);
@@ -1305,22 +1322,22 @@ test('test', async ({ page }) => {
     
     // Verifica e preenche Número
     console.log('📝 Verificando Número...');
-    try {
-      const campoNumero = page.getByRole('textbox', { name: 'Número *' });
+  try {
+    const campoNumero = page.getByRole('textbox', { name: 'Número *' });
       const numeroAtual = await campoNumero.inputValue().catch(() => '');
       
       if (!numeroAtual || numeroAtual.trim() === '') {
-        await campoNumero.click();
+    await campoNumero.click();
         await page.waitForTimeout(200);
-        await campoNumero.fill(CLIENTE.numero);
-        console.log(`✅ Número: ${CLIENTE.numero}`);
+    await campoNumero.fill(CLIENTE.numero);
+    console.log(`✅ Número: ${CLIENTE.numero}`);
       } else {
         console.log(`✅ Número já preenchido: "${numeroAtual}"`);
       }
-    } catch (e) {
-      console.log('⚠️ Erro no Número:', e.message);
-    }
-    
+  } catch (e) {
+    console.log('⚠️ Erro no Número:', e.message);
+  }
+  
     // Verifica se o campo Bairro foi preenchido automaticamente
     console.log('📝 Verificando campo Bairro...');
     try {
@@ -1589,13 +1606,13 @@ test('test', async ({ page }) => {
    console.log('⏳ Aguardando página de inscrições carregar (10s)...');
    await novaAba.waitForTimeout(10000);
    
-  // ═══════════════════════════════════════════════════════════════════════════
+   // ═══════════════════════════════════════════════════════════════════════════
   // PASSO 1: Encontrar e clicar em "Acompanhar Inscrição" (PRIMEIRO da lista)
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log('');
+   // ═══════════════════════════════════════════════════════════════════════════
+   console.log('');
   console.log('🔍 PASSO 1: Procurando "Acompanhar Inscrição" (primeiro da lista)...');
-  
-  let clicouAcompanhar = false;
+   
+   let clicouAcompanhar = false;
   const MAX_TENTATIVAS_ACOMPANHAR = 15;
   
   for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_ACOMPANHAR && !clicouAcompanhar; tentativa++) {
@@ -1614,12 +1631,12 @@ test('test', async ({ page }) => {
         if (count > 0) {
           const isVis = await btn.isVisible({ timeout: 1000 }).catch(() => false);
           if (isVis) {
-            console.log('   ✅ ENCONTROU "Acompanhar Inscrição"!');
+     console.log('   ✅ ENCONTROU "Acompanhar Inscrição"!');
             await btn.scrollIntoViewIfNeeded();
             await novaAba.waitForTimeout(300);
             await btn.click({ force: true });
             console.log('   ✅ Clicou no PRIMEIRO "Acompanhar Inscrição"!');
-            clicouAcompanhar = true;
+     clicouAcompanhar = true;
             break;
           }
         }
@@ -1633,21 +1650,21 @@ test('test', async ({ page }) => {
   
   if (!clicouAcompanhar) {
     console.log('   ⚠️ "Acompanhar Inscrição" não encontrado após todas tentativas');
-    const botoesVisiveis = await novaAba.locator('button:visible').allTextContents().catch(() => []);
-    console.log('   Botões disponíveis:', botoesVisiveis.join(' | '));
-  }
+     const botoesVisiveis = await novaAba.locator('button:visible').allTextContents().catch(() => []);
+     console.log('   Botões disponíveis:', botoesVisiveis.join(' | '));
+   }
    
-  // ═══════════════════════════════════════════════════════════════════════════
+   // ═══════════════════════════════════════════════════════════════════════════
   // PASSO 2: Encontrar "Acessar prova" dentro da MODAL (PRIMEIRO da lista)
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log('');
-  console.log('🔍 PASSO 2: Procurando "Acessar prova" na modal...');
-  
+   // ═══════════════════════════════════════════════════════════════════════════
+   console.log('');
+   console.log('🔍 PASSO 2: Procurando "Acessar prova" na modal...');
+   
   // Espera modal abrir completamente
   console.log('⏳ Aguardando modal abrir (5s)...');
-  await novaAba.waitForTimeout(5000);
-  
-  let acessarProvaLink = null;
+   await novaAba.waitForTimeout(5000);
+   
+   let acessarProvaLink = null;
   const MAX_TENTATIVAS_PROVA = 12;
   
   for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_PROVA && !acessarProvaLink; tentativa++) {
@@ -1667,7 +1684,7 @@ test('test', async ({ page }) => {
         if (count > 0) {
           const isVis = await seletor.isVisible({ timeout: 1000 }).catch(() => false);
           if (isVis) {
-            console.log('   ✅ ENCONTROU "Acessar prova" na modal!');
+     console.log('   ✅ ENCONTROU "Acessar prova" na modal!');
             acessarProvaLink = seletor;
             break;
           }
@@ -1681,8 +1698,8 @@ test('test', async ({ page }) => {
   }
   
   if (!acessarProvaLink) {
-    console.log('   ⚠️ Botão "Acessar prova" não encontrado');
-  }
+     console.log('   ⚠️ Botão "Acessar prova" não encontrado');
+   }
     
    // ═══════════════════════════════════════════════════════════════════════════
    // PASSO 3: Capturar o link da prova (extrair href do <a>)

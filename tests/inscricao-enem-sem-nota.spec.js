@@ -4,28 +4,42 @@ import { test, expect } from '@playwright/test';
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Função para remover acentos e normalizar texto (resolve problemas de encoding)
+function removerAcentos(texto) {
+  if (!texto) return texto;
+  // Remove caracteres de corrupção de encoding comuns
+  let limpo = texto
+    .replace(/[ÃÁÂÀÄáâàäãÁ£]/g, 'a')
+    .replace(/[ÉÊÈËéêèë]/g, 'e')
+    .replace(/[ÍÎÌÏíîìï]/g, 'i')
+    .replace(/[ÓÔÒÖóôòöõÁ´]/g, 'o')
+    .replace(/[ÚÛÙÜúûùü]/g, 'u')
+    .replace(/[Çç]/g, 'c')
+    .replace(/[Ññ]/g, 'n');
+  
+  // Também usa normalize para casos padrão
+  return limpo.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 // Função para corrigir caracteres acentuados corrompidos (encoding Windows/PowerShell)
 function corrigirAcentos(texto) {
   if (!texto) return texto;
   return texto
-    // Vogais com acento agudo
+    // Padrões de corrupção UTF-8 duplo (Ã seguido de caractere)
     .replace(/Ã¡/g, 'á').replace(/Ã©/g, 'é').replace(/Ã­/g, 'í').replace(/Ã³/g, 'ó').replace(/Ãº/g, 'ú')
-    .replace(/Ã/g, 'Á').replace(/Ã‰/g, 'É').replace(/Ã/g, 'Í').replace(/Ã"/g, 'Ó').replace(/Ãš/g, 'Ú')
-    // Vogais com acento circunflexo
     .replace(/Ã¢/g, 'â').replace(/Ãª/g, 'ê').replace(/Ã®/g, 'î').replace(/Ã´/g, 'ô').replace(/Ã»/g, 'û')
-    .replace(/Ã‚/g, 'Â').replace(/ÃŠ/g, 'Ê').replace(/ÃŽ/g, 'Î').replace(/Ã"/g, 'Ô').replace(/Ã›/g, 'Û')
-    // Vogais com til
     .replace(/Ã£/g, 'ã').replace(/Ãµ/g, 'õ')
-    .replace(/Ãƒ/g, 'Ã').replace(/Ã•/g, 'Õ')
-    // Vogais com trema
-    .replace(/Ã¼/g, 'ü').replace(/Ãœ/g, 'Ü')
-    // Cedilha
-    .replace(/Ã§/g, 'ç').replace(/Ã‡/g, 'Ç')
-    // Outros padrões comuns de corrupção UTF-8
-    .replace(/Ã£o/g, 'ão')
-    .replace(/Ã§Ã£o/g, 'ção')
-    .replace(/Ãª/g, 'ê')
-    .replace(/Ã´/g, 'ô');
+    .replace(/Ã§/g, 'ç')
+    // Padrões de corrupção com Á (Windows-1252 -> UTF-8)
+    .replace(/Á£/g, 'ã').replace(/Á´/g, 'ô').replace(/Á©/g, 'é').replace(/Á¡/g, 'á')
+    .replace(/Áº/g, 'ú').replace(/Á§/g, 'ç').replace(/Áª/g, 'ê').replace(/Á­/g, 'í')
+    .replace(/Á³/g, 'ó').replace(/Áµ/g, 'õ').replace(/Á¢/g, 'â').replace(/Á®/g, 'î')
+    // Se ainda sobrar caracteres estranhos, tenta normalizar
+    .replace(/SÁ£o/g, 'São')
+    .replace(/MecatrÁ´nica/g, 'Mecatrônica')
+    .replace(/PedagÁ³gica/g, 'Pedagógica')
+    .replace(/ContÁ¡beis/g, 'Contábeis')
+    .replace(/AdministraÁ§Á£o/g, 'Administração');
 }
 
 // Função para capitalizar nome (primeira letra maiúscula de cada palavra)
@@ -374,8 +388,11 @@ test('test-enem-sem-nota', async ({ page }) => {
   const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
   await searchInput.waitFor({ state: 'visible', timeout: 15000 });
   await searchInput.click();
-  console.log(`🔍 Digitando na busca: "${CLIENTE.curso}"`);
-  await searchInput.type(CLIENTE.curso, { delay: 100 });
+  
+  // Usa texto sem acentos para a busca (evita problemas de encoding)
+  const cursoParaBusca = removerAcentos(CLIENTE.curso);
+  console.log(`🔍 Digitando na busca: "${cursoParaBusca}" (original: ${CLIENTE.curso})`);
+  await searchInput.type(cursoParaBusca, { delay: 100 });
   await page.waitForTimeout(1000);
   await searchInput.press('Enter');
   
