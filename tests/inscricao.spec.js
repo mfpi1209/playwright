@@ -61,6 +61,18 @@ function corrigirAcentos(texto) {
 // Gera número de residência aleatório entre 1 e 999
 const numeroAleatorio = Math.floor(Math.random() * 999) + 1;
 
+// Função para formatar telefone (remove código do país 55 se presente)
+function formatarTelefone(telefone) {
+  if (!telefone) return telefone;
+  // Remove caracteres não numéricos
+  let numeros = telefone.replace(/\D/g, '');
+  // Se começa com 55 e tem mais de 11 dígitos, remove o 55
+  if (numeros.startsWith('55') && numeros.length > 11) {
+    numeros = numeros.substring(2);
+  }
+  return numeros;
+}
+
 // Função para capitalizar nome (primeira letra maiúscula de cada palavra)
 function capitalizarNome(nome) {
   return corrigirAcentos(nome).toLowerCase().split(' ').map(palavra => 
@@ -73,7 +85,7 @@ const CLIENTE = {
   nome: capitalizarNome(process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro'),
   cpf: process.env.CLIENTE_CPF || '96724754038',
   email: (process.env.CLIENTE_EMAIL || 'ceduardoribeiro@hotmail.com').toLowerCase(),
-  telefone: process.env.CLIENTE_TELEFONE || '11974562318',
+  telefone: formatarTelefone(process.env.CLIENTE_TELEFONE || '11974562318'),
   nascimento: process.env.CLIENTE_NASCIMENTO || '14/02/1985',
   // Endereço
   cep: process.env.CLIENTE_CEP || '05315030',
