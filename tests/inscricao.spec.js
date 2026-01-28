@@ -1776,6 +1776,71 @@ test('test', async ({ page }) => {
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
+  // EXTRAÇÃO DO NÚMERO DE INSCRIÇÃO DO TOKEN JWT
+  // ═══════════════════════════════════════════════════════════════════════════
+  let numeroInscricao = null;
+  
+  if (linkProva && linkProva.includes('token=')) {
+    console.log('');
+    console.log('🔍 Extraindo número de inscrição do token JWT...');
+    
+    try {
+      // Extrai o token do link
+      const urlObj = new URL(linkProva);
+      const token = urlObj.searchParams.get('token');
+      
+      if (token) {
+        // O JWT tem 3 partes: header.payload.signature
+        const partes = token.split('.');
+        
+        if (partes.length >= 2) {
+          // Decodifica o payload (segunda parte) - base64
+          const payloadBase64 = partes[1];
+          
+          // Adiciona padding se necessário (base64 precisa ser múltiplo de 4)
+          const payloadPadded = payloadBase64 + '='.repeat((4 - payloadBase64.length % 4) % 4);
+          
+          // Decodifica base64 para string
+          const payloadJson = Buffer.from(payloadPadded, 'base64').toString('utf-8');
+          
+          // Faz parse do JSON
+          const payload = JSON.parse(payloadJson);
+          
+          console.log('   📋 Payload do token JWT decodificado:');
+          console.log(`      ${JSON.stringify(payload, null, 2).split('\n').join('\n      ')}`);
+          
+          // Procura pelo número de inscrição em diferentes campos possíveis
+          numeroInscricao = payload.inscricao_id || 
+                           payload.inscricaoId || 
+                           payload.id_inscricao ||
+                           payload.numero_inscricao ||
+                           payload.numeroInscricao ||
+                           payload.sub ||
+                           payload.id;
+          
+          if (numeroInscricao) {
+            console.log(`   ✅ Número de Inscrição encontrado: ${numeroInscricao}`);
+            // Imprime no formato esperado pelo server.js
+            console.log(`Número de Inscrição extraído do token: ${numeroInscricao}`);
+          } else {
+            console.log('   ⚠️ Número de inscrição não encontrado no payload');
+            // Tenta extrair qualquer número grande do payload
+            const jsonStr = JSON.stringify(payload);
+            const matchNumero = jsonStr.match(/(\d{8,})/);
+            if (matchNumero) {
+              numeroInscricao = matchNumero[1];
+              console.log(`   ✅ Número extraído (fallback): ${numeroInscricao}`);
+              console.log(`Número de Inscrição extraído do token: ${numeroInscricao}`);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao decodificar token: ${e.message}`);
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════════
   // RESULTADO FINAL
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('');
@@ -1783,6 +1848,9 @@ test('test', async ({ page }) => {
   if (linkProva) {
     console.log('🎉 SUCESSO! LINK DA PROVA CAPTURADO:');
     console.log(`🔗 ${linkProva}`);
+    if (numeroInscricao) {
+      console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
+    }
   } else {
     console.log('⚠️ FINALIZADO SEM LINK DA PROVA');
   }
