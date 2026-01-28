@@ -28,13 +28,16 @@ app.get('/', (req, res) => {
 // ROTA: Iniciar Inscrição
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/inscricao', async (req, res) => {
-  const { nome, cpf, email, telefone, nascimento, cep, numero, complemento, estado, cidade, curso, polo, tipoVestibular } = req.body;
+  const { nome, cpf, email, telefone, cep, numero, complemento, estado, cidade, curso, polo, tipoVestibular } = req.body;
+  
+  // Aceita tanto "nascimento" quanto "data de nascimento"
+  const nascimento = req.body.nascimento || req.body['data de nascimento'] || req.body.dataNascimento;
 
   // Validação básica
   if (!nome || !cpf || !email || !telefone || !nascimento) {
     return res.status(400).json({
       sucesso: false,
-      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento'
+      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento (ou "data de nascimento")'
     });
   }
 
@@ -161,13 +164,16 @@ app.post('/inscricao/sync', async (req, res) => {
   console.log('');
   console.log('📦 BODY RECEBIDO:', JSON.stringify(req.body, null, 2));
   
-  const { nome, cpf, email, telefone, nascimento, cep, numero, complemento, estado, cidade, curso, polo, tipoVestibular } = req.body;
+  const { nome, cpf, email, telefone, cep, numero, complemento, estado, cidade, curso, polo, tipoVestibular } = req.body;
+  
+  // Aceita tanto "nascimento" quanto "data de nascimento"
+  const nascimento = req.body.nascimento || req.body['data de nascimento'] || req.body.dataNascimento;
 
   // Validação básica
   if (!nome || !cpf || !email || !telefone || !nascimento) {
     return res.status(400).json({
       sucesso: false,
-      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento'
+      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento (ou "data de nascimento")'
     });
   }
 
@@ -302,18 +308,21 @@ app.post('/inscricao-enem/sync', async (req, res) => {
   console.log('📦 BODY RECEBIDO (ENEM):', JSON.stringify(req.body, null, 2));
   
   const { 
-    nome, cpf, email, telefone, nascimento, 
+    nome, cpf, email, telefone, 
     cep, numero, complemento, estado, cidade, curso, polo,
     // Notas do ENEM
     enemCienciasHumanas, enemCienciasNatureza, enemLinguagens, 
     enemMatematica, enemRedacao, enemAno
   } = req.body;
+  
+  // Aceita tanto "nascimento" quanto "data de nascimento"
+  const nascimento = req.body.nascimento || req.body['data de nascimento'] || req.body.dataNascimento;
 
   // Validação básica
   if (!nome || !cpf || !email || !telefone || !nascimento) {
     return res.status(400).json({
       sucesso: false,
-      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento'
+      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento (ou "data de nascimento")'
     });
   }
 
@@ -474,15 +483,18 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
   console.log('📦 BODY RECEBIDO (ENEM SEM NOTA):', JSON.stringify(req.body, null, 2));
   
   const { 
-    nome, cpf, email, telefone, nascimento, 
+    nome, cpf, email, telefone, 
     cep, numero, complemento, estado, cidade, curso, polo
   } = req.body;
+  
+  // Aceita tanto "nascimento" quanto "data de nascimento"
+  const nascimento = req.body.nascimento || req.body['data de nascimento'] || req.body.dataNascimento;
 
   // Validação básica
   if (!nome || !cpf || !email || !telefone || !nascimento) {
     return res.status(400).json({
       sucesso: false,
-      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento'
+      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento (ou "data de nascimento")'
     });
   }
 
