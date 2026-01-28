@@ -279,6 +279,19 @@ app.post('/inscricao/sync', async (req, res) => {
       });
     }
     
+    // Verifica se não conseguiu ir para o checkout
+    const erroCheckout = stdout.includes('NÃO CONSEGUIU IR PARA O CHECKOUT') || stdout.includes('Não conseguiu avançar para o checkout');
+    
+    if (erroCheckout) {
+      console.log('❌ ERRO - Não conseguiu ir para o checkout');
+      return res.json({
+        sucesso: false,
+        erro: 'Não conseguiu avançar para o checkout. O botão "Continuar Inscrição" pode não estar funcionando.',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
+      });
+    }
+    
     // Se capturou o link, considera SUCESSO
     if (linkProva) {
       console.log('✅ SUCESSO - Link capturado!');

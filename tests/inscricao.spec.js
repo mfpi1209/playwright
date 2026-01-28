@@ -1110,6 +1110,64 @@ test('test', async ({ page }) => {
   }
   
   console.log('✅ CPF liberado para inscrição');
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VERIFICAÇÃO CRÍTICA: Chegou ao checkout?
+  // ═══════════════════════════════════════════════════════════════════════════
+  let urlAtual = page.url();
+  const MAX_TENTATIVAS_CHECKOUT = 5;
+  
+  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_CHECKOUT; tentativa++) {
+    if (urlAtual.includes('/checkout')) {
+      console.log('✅ Chegou ao checkout!');
+      break;
+    }
+    
+    if (tentativa === 1) {
+      console.log(`⚠️ URL ainda na página do produto: ${urlAtual}`);
+      console.log(`🔄 Tentando novamente clicar em "Continuar Inscrição"...`);
+    }
+    
+    // Tenta clicar novamente no botão
+    try {
+      const btnContinuar = page.getByRole('button', { name: 'Continuar Inscrição' });
+      const btnVisivel = await btnContinuar.isVisible({ timeout: 2000 }).catch(() => false);
+      
+      if (btnVisivel) {
+        console.log(`   🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS_CHECKOUT}...`);
+        await btnContinuar.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(500);
+        await btnContinuar.click({ force: true });
+        await page.waitForTimeout(3000);
+        urlAtual = page.url();
+        
+        if (urlAtual.includes('/checkout')) {
+          console.log('   ✅ Agora chegou ao checkout!');
+          break;
+        }
+      } else {
+        console.log(`   ⚠️ Botão não visível, aguardando...`);
+        await page.waitForTimeout(2000);
+        urlAtual = page.url();
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Erro na tentativa ${tentativa}: ${e.message}`);
+    }
+    
+    if (tentativa === MAX_TENTATIVAS_CHECKOUT && !urlAtual.includes('/checkout')) {
+      console.log('');
+      console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+      console.log('❌  ERRO: NÃO CONSEGUIU IR PARA O CHECKOUT!');
+      console.log(`❌  URL atual: ${urlAtual}`);
+      console.log('❌  O botão "Continuar Inscrição" pode não estar funcionando.');
+      console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+      console.log('');
+      console.log('❌ INSCRIÇÃO NÃO FINALIZADA - Não conseguiu avançar para o checkout');
+      await page.screenshot({ path: 'erro-nao-chegou-checkout.png', fullPage: true });
+      return;
+    }
+  }
+  
   console.log(`✅ ETAPA 7 CONCLUÍDA`);
   console.log('');
   
@@ -1122,7 +1180,7 @@ test('test', async ({ page }) => {
   console.log('📌 ETAPAS FINAIS: Página de Checkout');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  const urlAtual = page.url();
+  urlAtual = page.url();
   console.log(`📍 URL atual: ${urlAtual}`);
   
   // Aguarda página de checkout carregar completamente
