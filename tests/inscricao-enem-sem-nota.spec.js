@@ -1174,10 +1174,61 @@ test('test-enem-sem-nota', async ({ page }) => {
     await page.pause();
   }
   
+  let numeroInscricao = null;
+  
   if (novaAba) {
     console.log('⏳ Página aberta!');
     await novaAba.waitForTimeout(2000);
     console.log(`📍 URL da nova aba: ${novaAba.url()}`);
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Capturar número de inscrição
+    // ═══════════════════════════════════════════════════════════════════════════
+    console.log('');
+    console.log('🔍 Capturando número de inscrição...');
+    
+    try {
+      // Método 1: Procura por texto que contenha número de inscrição
+      const textosPagina = await novaAba.locator('text=/Inscrição.*\\d+|Nº.*\\d+|#\\d+/i').first().textContent({ timeout: 3000 }).catch(() => null);
+      if (textosPagina) {
+        const match = textosPagina.match(/(\d{5,})/);
+        if (match) {
+          numeroInscricao = match[1];
+          console.log(`   ✅ Número de inscrição encontrado (texto): ${numeroInscricao}`);
+        }
+      }
+      
+      // Método 2: Procura na URL do orderPlaced
+      if (!numeroInscricao) {
+        const urlOrderPlaced = page.url();
+        const matchOg = urlOrderPlaced.match(/og=(\d+)/);
+        if (matchOg) {
+          numeroInscricao = matchOg[1];
+          console.log(`   ✅ Número de inscrição encontrado (URL og): ${numeroInscricao}`);
+        }
+      }
+      
+      // Método 3: Procura em spans ou divs com número grande
+      if (!numeroInscricao) {
+        const elementosComNumero = await novaAba.locator('span, div, p').filter({ hasText: /^\d{5,}$/ }).first().textContent({ timeout: 2000 }).catch(() => null);
+        if (elementosComNumero) {
+          const match = elementosComNumero.match(/(\d{5,})/);
+          if (match) {
+            numeroInscricao = match[1];
+            console.log(`   ✅ Número de inscrição encontrado (elemento): ${numeroInscricao}`);
+          }
+        }
+      }
+      
+      if (numeroInscricao) {
+        // Imprime no formato esperado pelo server.js
+        console.log(`Número de Inscrição extraído do token: ${numeroInscricao}`);
+      } else {
+        console.log('   ⚠️ Número de inscrição não encontrado na página');
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao capturar número: ${e.message}`);
+    }
     
     // Screenshot final
     await novaAba.screenshot({ path: 'inscricao-enem-sem-nota-finalizada.png', fullPage: true });
@@ -1190,6 +1241,9 @@ test('test-enem-sem-nota', async ({ page }) => {
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════════════════');
   console.log('🎉 INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA!');
+  if (numeroInscricao) {
+    console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
+  }
   console.log('📋 Notas do ENEM deverão ser preenchidas posteriormente pelo aluno.');
   console.log(`📍 URL final: ${page.url()}`);
   console.log('═══════════════════════════════════════════════════════════════════════════');

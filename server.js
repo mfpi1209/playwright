@@ -422,10 +422,18 @@ app.post('/inscricao-enem/sync', async (req, res) => {
     const inscricaoFinalizada = stdout.includes('INSCRIÇÃO ENEM FINALIZADA');
     const notasEnviadas = stdout.includes('Enviar notas para análise');
     
+    // Tenta extrair o número da inscrição do output
+    const numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
+    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
+    
     if (inscricaoFinalizada || notasEnviadas) {
       console.log('✅ SUCESSO - Inscrição ENEM concluída!');
+      if (numeroInscricao) {
+        console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
+      }
       return res.json({
         sucesso: true,
+        numeroInscricao: numeroInscricao,
         mensagem: 'Inscrição ENEM concluída com sucesso! Notas enviadas para análise.',
         cliente: { nome, cpf, email },
         enem: {
@@ -561,10 +569,18 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
     // Verifica se a inscrição foi finalizada com sucesso
     const inscricaoFinalizada = stdout.includes('INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA');
     
+    // Tenta extrair o número da inscrição do output
+    const numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
+    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
+    
     if (inscricaoFinalizada) {
       console.log('✅ SUCESSO - Inscrição ENEM (sem nota) concluída!');
+      if (numeroInscricao) {
+        console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
+      }
       return res.json({
         sucesso: true,
+        numeroInscricao: numeroInscricao,
         mensagem: 'Inscrição ENEM concluída! Notas deverão ser preenchidas posteriormente pelo aluno.',
         notasPendentes: true,
         cliente: { nome, cpf, email }

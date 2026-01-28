@@ -1013,30 +1013,14 @@ test('test-enem', async ({ page }) => {
     console.log('ℹ️ Campo CEP não visível (endereço pode já estar preenchido)');
   }
   
-  // Verifica e preenche campos de endereço apenas se visíveis
-  const campoEnderecoVisivel = await page.getByRole('textbox', { name: 'Endereço *' }).isVisible({ timeout: 2000 }).catch(() => false);
+  // Aguarda mais tempo para os campos de endereço carregarem após o CEP
+  await page.waitForTimeout(3000);
   
-  if (campoEnderecoVisivel) {
-    // Verifica se o campo Endereço foi preenchido automaticamente
-    console.log('📝 Verificando campo Endereço...');
-    try {
-      const campoEndereco = page.getByRole('textbox', { name: 'Endereço *' });
-      const enderecoAtual = await campoEndereco.inputValue().catch(() => '');
-      
-      if (!enderecoAtual || enderecoAtual.trim() === '' || enderecoAtual.toLowerCase() === 'null') {
-        console.log('   ℹ️ Endereço não preenchido pelo CEP, inserindo "Null"...');
-        await campoEndereco.click();
-        await page.waitForTimeout(300);
-        await campoEndereco.fill('Null');
-        console.log('✅ Endereço: Null');
-      } else {
-        console.log(`✅ Endereço já preenchido: "${enderecoAtual}"`);
-      }
-    } catch (e) {
-      console.log('⚠️ Erro ao verificar Endereço:', e.message);
-    }
-    
-    // Preenche Número
+  // Verifica se o campo Número está visível (campo obrigatório)
+  const campoNumeroVisivel = await page.getByRole('textbox', { name: 'Número *' }).isVisible({ timeout: 3000 }).catch(() => false);
+  
+  if (campoNumeroVisivel) {
+    // Preenche Número PRIMEIRO (campo sempre obrigatório)
     console.log('📝 Preenchendo Número...');
     try {
       const campoNumero = page.getByRole('textbox', { name: 'Número *' });
@@ -1047,26 +1031,54 @@ test('test-enem', async ({ page }) => {
     } catch (e) {
       console.log('⚠️ Erro no Número:', e.message);
     }
+    
+    // Verifica se o campo Endereço foi preenchido automaticamente
+    console.log('📝 Verificando campo Endereço...');
+    try {
+      const campoEndereco = page.getByRole('textbox', { name: 'Endereço *' });
+      const campoEnderecoVisivel = await campoEndereco.isVisible({ timeout: 1000 }).catch(() => false);
+      
+      if (campoEnderecoVisivel) {
+        const enderecoAtual = await campoEndereco.inputValue().catch(() => '');
+        
+        if (!enderecoAtual || enderecoAtual.trim() === '' || enderecoAtual.toLowerCase() === 'null') {
+          console.log('   ℹ️ Endereço não preenchido pelo CEP, inserindo "Null"...');
+          await campoEndereco.click();
+          await page.waitForTimeout(300);
+          await campoEndereco.fill('Null');
+          console.log('✅ Endereço: Null');
+        } else {
+          console.log(`✅ Endereço já preenchido: "${enderecoAtual}"`);
+        }
+      }
+    } catch (e) {
+      console.log('⚠️ Erro ao verificar Endereço:', e.message);
+    }
+    
     // Verifica se o campo Bairro foi preenchido automaticamente
     console.log('📝 Verificando campo Bairro...');
     try {
       const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
-      const bairroAtual = await campoBairro.inputValue().catch(() => '');
+      const campoBairroVisivel = await campoBairro.isVisible({ timeout: 1000 }).catch(() => false);
       
-      if (!bairroAtual || bairroAtual.trim() === '') {
-        console.log('   ℹ️ Bairro não preenchido pelo CEP, inserindo "Centro"...');
-        await campoBairro.click();
-        await page.waitForTimeout(300);
-        await campoBairro.fill('Centro');
-        console.log('✅ Bairro: Centro');
-      } else {
-        console.log(`✅ Bairro já preenchido: "${bairroAtual}"`);
+      if (campoBairroVisivel) {
+        const bairroAtual = await campoBairro.inputValue().catch(() => '');
+        
+        if (!bairroAtual || bairroAtual.trim() === '') {
+          console.log('   ℹ️ Bairro não preenchido pelo CEP, inserindo "Centro"...');
+          await campoBairro.click();
+          await page.waitForTimeout(300);
+          await campoBairro.fill('Centro');
+          console.log('✅ Bairro: Centro');
+        } else {
+          console.log(`✅ Bairro já preenchido: "${bairroAtual}"`);
+        }
       }
     } catch (e) {
       console.log('⚠️ Erro ao verificar Bairro:', e.message);
     }
   } else {
-    console.log('ℹ️ Campos de endereço não visíveis (já preenchidos no cadastro)');
+    console.log('ℹ️ Campo Número não visível (endereço já completo no cadastro)');
   }
   
   await page.waitForTimeout(500);
@@ -1250,6 +1262,73 @@ test('test-enem', async ({ page }) => {
     
     // Espera modal abrir
     await novaAba.waitForTimeout(3000);
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PASSO 1.5: Capturar número de inscrição
+    // ═══════════════════════════════════════════════════════════════════════════
+    console.log('');
+    console.log('🔍 PASSO 1.5: Capturando número de inscrição...');
+    
+    let numeroInscricao = null;
+    
+    // Tenta extrair o número de inscrição da página
+    try {
+      // Método 1: Procura por texto que contenha número de inscrição
+      const textosPagina = await novaAba.locator('text=/Inscrição.*\\d+|Nº.*\\d+|#\\d+/i').first().textContent({ timeout: 3000 }).catch(() => null);
+      if (textosPagina) {
+        const match = textosPagina.match(/(\d{5,})/);
+        if (match) {
+          numeroInscricao = match[1];
+          console.log(`   ✅ Número de inscrição encontrado (texto): ${numeroInscricao}`);
+        }
+      }
+      
+      // Método 2: Procura na URL do orderPlaced
+      if (!numeroInscricao) {
+        const urlOrderPlaced = page.url();
+        const matchOg = urlOrderPlaced.match(/og=(\d+)/);
+        if (matchOg) {
+          numeroInscricao = matchOg[1];
+          console.log(`   ✅ Número de inscrição encontrado (URL og): ${numeroInscricao}`);
+        }
+      }
+      
+      // Método 3: Procura em spans ou divs com número grande
+      if (!numeroInscricao) {
+        const elementosComNumero = await novaAba.locator('span, div, p').filter({ hasText: /^\d{5,}$/ }).first().textContent({ timeout: 2000 }).catch(() => null);
+        if (elementosComNumero) {
+          const match = elementosComNumero.match(/(\d{5,})/);
+          if (match) {
+            numeroInscricao = match[1];
+            console.log(`   ✅ Número de inscrição encontrado (elemento): ${numeroInscricao}`);
+          }
+        }
+      }
+      
+      // Método 4: Procura por "Código" ou "ID" seguido de número
+      if (!numeroInscricao) {
+        const codigoTexto = await novaAba.locator('text=/[Cc]ódigo|ID|Inscrição/').first().evaluate(el => {
+          const parent = el.closest('div, span, p, td');
+          return parent ? parent.textContent : el.textContent;
+        }).catch(() => null);
+        if (codigoTexto) {
+          const match = codigoTexto.match(/(\d{5,})/);
+          if (match) {
+            numeroInscricao = match[1];
+            console.log(`   ✅ Número de inscrição encontrado (código): ${numeroInscricao}`);
+          }
+        }
+      }
+      
+      if (numeroInscricao) {
+        // Imprime no formato esperado pelo server.js
+        console.log(`Número de Inscrição extraído do token: ${numeroInscricao}`);
+      } else {
+        console.log('   ⚠️ Número de inscrição não encontrado na página');
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao capturar número: ${e.message}`);
+    }
     
     // ═══════════════════════════════════════════════════════════════════════════
     // PASSO 2: MODAL ENEM - Preencher notas do ENEM
