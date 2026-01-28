@@ -1233,18 +1233,33 @@ test('test-enem-sem-nota', async ({ page }) => {
     // Screenshot final
     await novaAba.screenshot({ path: 'inscricao-enem-sem-nota-finalizada.png', fullPage: true });
     console.log('📸 Screenshot salvo em: inscricao-enem-sem-nota-finalizada.png');
+    
+    // Verifica se chegou à página correta (minhas-inscricoes)
+    const urlNovaAba = novaAba.url();
+    const chegouNaPaginaCorreta = urlNovaAba.includes('minhas-inscricoes') || urlNovaAba.includes('account');
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RESULTADO FINAL
+    // ═══════════════════════════════════════════════════════════════════════════
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    if (chegouNaPaginaCorreta) {
+      console.log('🎉 INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA COM SUCESSO!');
+      if (numeroInscricao) {
+        console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
+      }
+      console.log('📋 Notas do ENEM deverão ser preenchidas posteriormente pelo aluno.');
+    } else {
+      console.log('❌ INSCRIÇÃO ENEM (SEM NOTA) NÃO FINALIZADA - Não chegou à página de inscrições');
+    }
+    console.log(`📍 URL final: ${page.url()}`);
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+  } else {
+    // Nova aba não foi aberta - inscrição não chegou ao final
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log('❌ INSCRIÇÃO ENEM (SEM NOTA) NÃO FINALIZADA - Não chegou à página de inscrições');
+    console.log(`📍 URL final: ${page.url()}`);
+    console.log('═══════════════════════════════════════════════════════════════════════════');
   }
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // RESULTADO FINAL
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log('');
-  console.log('═══════════════════════════════════════════════════════════════════════════');
-  console.log('🎉 INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA!');
-  if (numeroInscricao) {
-    console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
-  }
-  console.log('📋 Notas do ENEM deverão ser preenchidas posteriormente pelo aluno.');
-  console.log(`📍 URL final: ${page.url()}`);
-  console.log('═══════════════════════════════════════════════════════════════════════════');
 });

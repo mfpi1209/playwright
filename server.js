@@ -428,14 +428,15 @@ app.post('/inscricao-enem/sync', async (req, res) => {
     }
     
     // Verifica se a inscrição ENEM foi finalizada com sucesso
-    const inscricaoFinalizada = stdout.includes('INSCRIÇÃO ENEM FINALIZADA');
-    const notasEnviadas = stdout.includes('Enviar notas para análise');
+    // IMPORTANTE: Verifica a mensagem específica de SUCESSO, não apenas "FINALIZADA"
+    const inscricaoFinalizadaComSucesso = stdout.includes('INSCRIÇÃO ENEM FINALIZADA COM SUCESSO');
+    const inscricaoNaoFinalizada = stdout.includes('INSCRIÇÃO ENEM NÃO FINALIZADA');
     
     // Tenta extrair o número da inscrição do output
     const numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
     const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
     
-    if (inscricaoFinalizada || notasEnviadas) {
+    if (inscricaoFinalizadaComSucesso && !inscricaoNaoFinalizada) {
       console.log('✅ SUCESSO - Inscrição ENEM concluída!');
       if (numeroInscricao) {
         console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
@@ -453,6 +454,17 @@ app.post('/inscricao-enem/sync', async (req, res) => {
           redacao: enemRedacao,
           ano: enemAno
         }
+      });
+    }
+    
+    // Se a inscrição não foi finalizada corretamente
+    if (inscricaoNaoFinalizada) {
+      console.log('❌ ERRO - Inscrição ENEM não foi finalizada');
+      return res.json({
+        sucesso: false,
+        erro: 'Inscrição ENEM não foi finalizada - processo interrompido antes da conclusão',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
       });
     }
     
@@ -579,13 +591,15 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
     }
     
     // Verifica se a inscrição foi finalizada com sucesso
-    const inscricaoFinalizada = stdout.includes('INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA');
+    // IMPORTANTE: Verifica a mensagem específica de SUCESSO
+    const inscricaoFinalizadaComSucesso = stdout.includes('INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA COM SUCESSO');
+    const inscricaoNaoFinalizada = stdout.includes('INSCRIÇÃO ENEM (SEM NOTA) NÃO FINALIZADA');
     
     // Tenta extrair o número da inscrição do output
     const numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
     const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
     
-    if (inscricaoFinalizada) {
+    if (inscricaoFinalizadaComSucesso && !inscricaoNaoFinalizada) {
       console.log('✅ SUCESSO - Inscrição ENEM (sem nota) concluída!');
       if (numeroInscricao) {
         console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
@@ -596,6 +610,17 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
         mensagem: 'Inscrição ENEM concluída! Notas deverão ser preenchidas posteriormente pelo aluno.',
         notasPendentes: true,
         cliente: { nome, cpf, email }
+      });
+    }
+    
+    // Se a inscrição não foi finalizada corretamente
+    if (inscricaoNaoFinalizada) {
+      console.log('❌ ERRO - Inscrição ENEM (sem nota) não foi finalizada');
+      return res.json({
+        sucesso: false,
+        erro: 'Inscrição ENEM (sem nota) não foi finalizada - processo interrompido antes da conclusão',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
       });
     }
     
