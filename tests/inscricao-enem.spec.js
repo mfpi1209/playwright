@@ -86,7 +86,7 @@ const CLIENTE = {
   nascimento: process.env.CLIENTE_NASCIMENTO || '14/02/1985',
   // Endereço
   cep: process.env.CLIENTE_CEP || '05315030',
-  numero: process.env.CLIENTE_NUMERO || '12',
+  numero: process.env.CLIENTE_NUMERO || String(Math.floor(Math.random() * 9000) + 100), // Número aleatório entre 100 e 9099
   complemento: process.env.CLIENTE_COMPLEMENTO || '',
   // Localização
   estado: corrigirAcentos(process.env.CLIENTE_ESTADO) || 'São Paulo',
@@ -1035,21 +1035,43 @@ test('test-enem', async ({ page }) => {
   // Aguarda mais tempo para os campos de endereço carregarem após o CEP
   await page.waitForTimeout(3000);
   
-  // Verifica se o campo Número está visível (campo obrigatório)
-  const campoNumeroVisivel = await page.getByRole('textbox', { name: 'Número *' }).isVisible({ timeout: 3000 }).catch(() => false);
+  // Preenche Número - SEMPRE tenta preencher com múltiplas tentativas
+  console.log('📝 Preenchendo Número...');
+  let numeroPreenchido = false;
   
-  if (campoNumeroVisivel) {
-    // Preenche Número PRIMEIRO (campo sempre obrigatório)
-    console.log('📝 Preenchendo Número...');
+  for (let tentativa = 1; tentativa <= 3 && !numeroPreenchido; tentativa++) {
     try {
       const campoNumero = page.getByRole('textbox', { name: 'Número *' });
-      await campoNumero.click();
-      await page.waitForTimeout(300);
-      await campoNumero.fill(CLIENTE.numero);
-      console.log(`✅ Número: ${CLIENTE.numero}`);
+      const numeroVisivel = await campoNumero.isVisible({ timeout: 3000 }).catch(() => false);
+      
+      if (numeroVisivel) {
+        const valorAtual = await campoNumero.inputValue().catch(() => '');
+        
+        if (!valorAtual || valorAtual.trim() === '') {
+          await campoNumero.click();
+          await page.waitForTimeout(300);
+          await campoNumero.fill(CLIENTE.numero);
+          console.log(`✅ Número: ${CLIENTE.numero}`);
+          numeroPreenchido = true;
+        } else {
+          console.log(`✅ Número já preenchido: "${valorAtual}"`);
+          numeroPreenchido = true;
+        }
+      } else {
+        console.log(`   🔄 Tentativa ${tentativa}: Campo número não visível, aguardando...`);
+        await page.waitForTimeout(2000);
+      }
     } catch (e) {
-      console.log('⚠️ Erro no Número:', e.message);
+      console.log(`   ⚠️ Tentativa ${tentativa} erro: ${e.message}`);
+      await page.waitForTimeout(1000);
     }
+  }
+  
+  if (!numeroPreenchido) {
+    console.log('⚠️ Não conseguiu preencher o número do endereço');
+  }
+  
+  if (numeroPreenchido) {
     
     // Verifica se o campo Endereço foi preenchido automaticamente
     console.log('📝 Verificando campo Endereço...');
