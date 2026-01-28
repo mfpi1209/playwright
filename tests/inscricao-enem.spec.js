@@ -1174,6 +1174,72 @@ test('test-enem', async ({ page }) => {
     console.log('⚠️ Erro ao clicar em "Continuar Inscrição":', e.message);
   }
   
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VERIFICAÇÃO CRÍTICA: Chegou ao orderPlaced?
+  // ═══════════════════════════════════════════════════════════════════════════
+  let urlAposCheckout = page.url();
+  
+  if (!urlAposCheckout.includes('orderPlaced')) {
+    console.log(`⚠️ URL ainda não é orderPlaced: ${urlAposCheckout}`);
+    
+    // Tenta clicar novamente em botões de avanço
+    const MAX_TENTATIVAS = 3;
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+      console.log(`🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de avançar no checkout...`);
+      
+      // Lista botões disponíveis
+      const botoesDisponiveis = await page.locator('button:visible').allTextContents().catch(() => []);
+      console.log(`   📋 Botões: ${botoesDisponiveis.slice(0, 5).join(' | ')}`);
+      
+      // Tenta clicar em botões de avanço
+      const seletoresAvancar = [
+        page.getByRole('button', { name: /Ir para o pagamento/i }),
+        page.locator('button:has-text("Ir para o pagamento")'),
+        page.getByRole('button', { name: 'Continuar Inscrição' }),
+        page.locator('button:has-text("Continuar Inscrição")'),
+        page.locator('button:has-text("Prosseguir")').first(),
+        page.locator('button:has-text("Finalizar")').first()
+      ];
+      
+      for (const btn of seletoresAvancar) {
+        try {
+          if (await btn.isVisible({ timeout: 2000 })) {
+            const textoBtn = await btn.innerText().catch(() => 'botão');
+            console.log(`   📍 Clicando em "${textoBtn.trim().substring(0, 30)}"...`);
+            await btn.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(500);
+            await btn.click({ force: true });
+            await page.waitForTimeout(5000);
+            
+            urlAposCheckout = page.url();
+            if (urlAposCheckout.includes('orderPlaced')) {
+              console.log('   ✅ Chegou ao orderPlaced!');
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+      
+      if (urlAposCheckout.includes('orderPlaced')) break;
+      await page.waitForTimeout(2000);
+    }
+    
+    // Verifica se finalmente chegou
+    urlAposCheckout = page.url();
+    if (!urlAposCheckout.includes('orderPlaced')) {
+      console.log('');
+      console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+      console.log('❌  ERRO: NÃO CONSEGUIU FINALIZAR O CHECKOUT!');
+      console.log(`❌  URL atual: ${urlAposCheckout}`);
+      console.log('❌  O checkout pode ter falhado ou há campos obrigatórios faltando.');
+      console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+      console.log('');
+      console.log('❌ INSCRIÇÃO ENEM NÃO FINALIZADA - Checkout não foi concluído');
+      await page.screenshot({ path: 'erro-checkout-nao-concluido.png', fullPage: true });
+      return;
+    }
+  }
+  
   console.log(`✅ CHECKOUT CONCLUÍDO`);
   console.log('');
   

@@ -466,6 +466,19 @@ app.post('/inscricao-enem/sync', async (req, res) => {
       });
     }
     
+    // Verifica se não conseguiu finalizar o checkout
+    const erroCheckout = stdout.includes('NÃO CONSEGUIU FINALIZAR O CHECKOUT') || stdout.includes('Checkout não foi concluído');
+    
+    if (erroCheckout) {
+      console.log('❌ ERRO - Checkout não foi concluído');
+      return res.json({
+        sucesso: false,
+        erro: 'Checkout não foi concluído. Pode haver campos obrigatórios faltando.',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
+      });
+    }
+    
     // Verifica se a inscrição ENEM foi finalizada com sucesso
     // IMPORTANTE: Verifica a mensagem específica de SUCESSO, não apenas "FINALIZADA"
     const inscricaoFinalizadaComSucesso = stdout.includes('INSCRIÇÃO ENEM FINALIZADA COM SUCESSO');
@@ -642,6 +655,19 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
       });
     }
     
+    // Verifica se não conseguiu finalizar o checkout
+    const erroCheckout = stdout.includes('NÃO CONSEGUIU FINALIZAR O CHECKOUT') || stdout.includes('Checkout não foi concluído');
+    
+    if (erroCheckout) {
+      console.log('❌ ERRO - Checkout não foi concluído');
+      return res.json({
+        sucesso: false,
+        erro: 'Checkout não foi concluído. Pode haver campos obrigatórios faltando.',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
+      });
+    }
+    
     // Verifica se a inscrição foi finalizada com sucesso
     // IMPORTANTE: Verifica a mensagem específica de SUCESSO
     const inscricaoFinalizadaComSucesso = stdout.includes('INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA COM SUCESSO');
@@ -657,11 +683,11 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
         console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
       }
       return res.json({
-        sucesso: true,
+      sucesso: true,
         numeroInscricao: numeroInscricao,
         mensagem: 'Inscrição ENEM concluída! Notas deverão ser preenchidas posteriormente pelo aluno.',
         notasPendentes: true,
-        cliente: { nome, cpf, email }
+      cliente: { nome, cpf, email }
       });
     }
     

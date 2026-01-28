@@ -288,7 +288,7 @@ test('test-enem-sem-nota', async ({ page }) => {
     for (let tentativa = 1; tentativa <= 3; tentativa++) {
       try {
         console.log(`   Tentativa ${tentativa}/3 de navegar para graduação...`);
-        await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
         break;
       } catch (e) {
         console.log(`   ⚠️ Erro na tentativa ${tentativa}: ${e.message}`);
@@ -589,8 +589,8 @@ test('test-enem-sem-nota', async ({ page }) => {
     console.log(`🔄 Tentativa ${tentativaAtual}/${MAX_TENTATIVAS} - Clicando em Inscreva-se...`);
     
     await inscreverBtn.click();
-    await aguardarCarregamento('Formulário de inscrição', 60000);
-    await page.waitForTimeout(5000);
+  await aguardarCarregamento('Formulário de inscrição', 60000);
+  await page.waitForTimeout(5000);
     
     // Verifica se os selects de localização existem
     const urlAtual = page.url();
@@ -942,24 +942,24 @@ test('test-enem-sem-nota', async ({ page }) => {
   if (enderecoJaPreenchido) {
     console.log('✅ Endereço já está preenchido, pulando para próxima etapa...');
   } else {
-    // Clica em "Sim" se aparecer (usando seletor do codegen original)
-    console.log('📍 Verificando botão "Sim"...');
-    try {
+  // Clica em "Sim" se aparecer (usando seletor do codegen original)
+  console.log('📍 Verificando botão "Sim"...');
+  try {
       const simBtn = page.locator('button:has-text("Sim")').first();
-      const simNao = page.getByText('SimNão');
+    const simNao = page.getByText('SimNão');
       
       if (await simBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-        console.log('📍 Clicando em "Sim"...');
+      console.log('📍 Clicando em "Sim"...');
         await simBtn.click();
         await page.waitForTimeout(1000);
         console.log('✅ Clicou em "Sim"!');
       } else if (await simNao.isVisible({ timeout: 1000 }).catch(() => false)) {
         console.log('📍 Clicando em "Sim" (via SimNão)...');
-        await simNao.click();
+      await simNao.click();
         await page.waitForTimeout(1000);
-        console.log('✅ Clicou em "Sim"!');
-      }
-    } catch (e) {
+      console.log('✅ Clicou em "Sim"!');
+    }
+  } catch (e) {
       console.log('ℹ️ Botão Sim não encontrado');
     }
     
@@ -975,14 +975,14 @@ test('test-enem-sem-nota', async ({ page }) => {
     console.log(`📝 Campo CEP visível, valor atual: "${cepAtual}"`);
     
     if (!cepAtual || cepAtual.length < 8) {
-      console.log('📝 Preenchendo CEP...');
-      try {
-        await campoCep.click();
+  console.log('📝 Preenchendo CEP...');
+  try {
+    await campoCep.click();
         await page.waitForTimeout(300);
-        await campoCep.fill(CLIENTE.cep);
-        console.log(`✅ CEP: ${CLIENTE.cep}`);
+    await campoCep.fill(CLIENTE.cep);
+    console.log(`✅ CEP: ${CLIENTE.cep}`);
         await page.waitForTimeout(500);
-        await campoCep.press('Tab');
+    await campoCep.press('Tab');
         await page.waitForTimeout(3000); // Aguarda busca do CEP
         
         // Verifica se o CEP foi encontrado
@@ -1001,8 +1001,8 @@ test('test-enem-sem-nota', async ({ page }) => {
           return; // Encerra o teste
         }
         
-      } catch (e) {
-        console.log('⚠️ Erro no CEP:', e.message);
+  } catch (e) {
+    console.log('⚠️ Erro no CEP:', e.message);
       }
     } else {
       console.log(`✅ CEP já preenchido: ${cepAtual}`);
@@ -1015,54 +1015,54 @@ test('test-enem-sem-nota', async ({ page }) => {
   const campoEnderecoVisivel = await page.getByRole('textbox', { name: 'Endereço *' }).isVisible({ timeout: 2000 }).catch(() => false);
   
   if (campoEnderecoVisivel) {
-    // Verifica se o campo Endereço foi preenchido automaticamente
-    console.log('📝 Verificando campo Endereço...');
-    try {
-      const campoEndereco = page.getByRole('textbox', { name: 'Endereço *' });
-      const enderecoAtual = await campoEndereco.inputValue().catch(() => '');
-      
-      if (!enderecoAtual || enderecoAtual.trim() === '' || enderecoAtual.toLowerCase() === 'null') {
-        console.log('   ℹ️ Endereço não preenchido pelo CEP, inserindo "Null"...');
-        await campoEndereco.click();
-        await page.waitForTimeout(300);
-        await campoEndereco.fill('Null');
-        console.log('✅ Endereço: Null');
-      } else {
-        console.log(`✅ Endereço já preenchido: "${enderecoAtual}"`);
-      }
-    } catch (e) {
-      console.log('⚠️ Erro ao verificar Endereço:', e.message);
-    }
+  // Verifica se o campo Endereço foi preenchido automaticamente
+  console.log('📝 Verificando campo Endereço...');
+  try {
+    const campoEndereco = page.getByRole('textbox', { name: 'Endereço *' });
+    const enderecoAtual = await campoEndereco.inputValue().catch(() => '');
     
-    // Preenche Número
-    console.log('📝 Preenchendo Número...');
-    try {
-      const campoNumero = page.getByRole('textbox', { name: 'Número *' });
-      await campoNumero.click();
+    if (!enderecoAtual || enderecoAtual.trim() === '' || enderecoAtual.toLowerCase() === 'null') {
+      console.log('   ℹ️ Endereço não preenchido pelo CEP, inserindo "Null"...');
+      await campoEndereco.click();
       await page.waitForTimeout(300);
-      await campoNumero.fill(CLIENTE.numero);
-      console.log(`✅ Número: ${CLIENTE.numero}`);
-    } catch (e) {
-      console.log('⚠️ Erro no Número:', e.message);
+      await campoEndereco.fill('Null');
+      console.log('✅ Endereço: Null');
+    } else {
+      console.log(`✅ Endereço já preenchido: "${enderecoAtual}"`);
     }
+  } catch (e) {
+    console.log('⚠️ Erro ao verificar Endereço:', e.message);
+  }
+  
+  // Preenche Número
+  console.log('📝 Preenchendo Número...');
+  try {
+    const campoNumero = page.getByRole('textbox', { name: 'Número *' });
+    await campoNumero.click();
+    await page.waitForTimeout(300);
+    await campoNumero.fill(CLIENTE.numero);
+    console.log(`✅ Número: ${CLIENTE.numero}`);
+  } catch (e) {
+    console.log('⚠️ Erro no Número:', e.message);
+  }
+  
+  // Verifica se o campo Bairro foi preenchido automaticamente
+  console.log('📝 Verificando campo Bairro...');
+  try {
+    const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
+    const bairroAtual = await campoBairro.inputValue().catch(() => '');
     
-    // Verifica se o campo Bairro foi preenchido automaticamente
-    console.log('📝 Verificando campo Bairro...');
-    try {
-      const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
-      const bairroAtual = await campoBairro.inputValue().catch(() => '');
-      
-      if (!bairroAtual || bairroAtual.trim() === '') {
-        console.log('   ℹ️ Bairro não preenchido pelo CEP, inserindo "Centro"...');
-        await campoBairro.click();
-        await page.waitForTimeout(300);
-        await campoBairro.fill('Centro');
-        console.log('✅ Bairro: Centro');
-      } else {
-        console.log(`✅ Bairro já preenchido: "${bairroAtual}"`);
-      }
-    } catch (e) {
-      console.log('⚠️ Erro ao verificar Bairro:', e.message);
+    if (!bairroAtual || bairroAtual.trim() === '') {
+      console.log('   ℹ️ Bairro não preenchido pelo CEP, inserindo "Centro"...');
+      await campoBairro.click();
+      await page.waitForTimeout(300);
+      await campoBairro.fill('Centro');
+      console.log('✅ Bairro: Centro');
+    } else {
+      console.log(`✅ Bairro já preenchido: "${bairroAtual}"`);
+    }
+  } catch (e) {
+    console.log('⚠️ Erro ao verificar Bairro:', e.message);
     }
   } else {
     console.log('ℹ️ Campos de endereço não visíveis (já preenchidos no cadastro)');
@@ -1140,6 +1140,72 @@ test('test-enem-sem-nota', async ({ page }) => {
     await page.waitForTimeout(15000);
   } catch (e) {
     console.log('⚠️ Erro ao clicar em "Continuar Inscrição":', e.message);
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VERIFICAÇÃO CRÍTICA: Chegou ao orderPlaced?
+  // ═══════════════════════════════════════════════════════════════════════════
+  let urlAposCheckout = page.url();
+  
+  if (!urlAposCheckout.includes('orderPlaced')) {
+    console.log(`⚠️ URL ainda não é orderPlaced: ${urlAposCheckout}`);
+    
+    // Tenta clicar novamente em botões de avanço
+    const MAX_TENTATIVAS = 3;
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+      console.log(`🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de avançar no checkout...`);
+      
+      // Lista botões disponíveis
+      const botoesDisponiveis = await page.locator('button:visible').allTextContents().catch(() => []);
+      console.log(`   📋 Botões: ${botoesDisponiveis.slice(0, 5).join(' | ')}`);
+      
+      // Tenta clicar em botões de avanço
+      const seletoresAvancar = [
+        page.getByRole('button', { name: /Ir para o pagamento/i }),
+        page.locator('button:has-text("Ir para o pagamento")'),
+        page.getByRole('button', { name: 'Continuar Inscrição' }),
+        page.locator('button:has-text("Continuar Inscrição")'),
+        page.locator('button:has-text("Prosseguir")').first(),
+        page.locator('button:has-text("Finalizar")').first()
+      ];
+      
+      for (const btn of seletoresAvancar) {
+        try {
+          if (await btn.isVisible({ timeout: 2000 })) {
+            const textoBtn = await btn.innerText().catch(() => 'botão');
+            console.log(`   📍 Clicando em "${textoBtn.trim().substring(0, 30)}"...`);
+            await btn.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(500);
+            await btn.click({ force: true });
+            await page.waitForTimeout(5000);
+            
+            urlAposCheckout = page.url();
+            if (urlAposCheckout.includes('orderPlaced')) {
+              console.log('   ✅ Chegou ao orderPlaced!');
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+      
+      if (urlAposCheckout.includes('orderPlaced')) break;
+      await page.waitForTimeout(2000);
+    }
+    
+    // Verifica se finalmente chegou
+    urlAposCheckout = page.url();
+    if (!urlAposCheckout.includes('orderPlaced')) {
+      console.log('');
+      console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+      console.log('❌  ERRO: NÃO CONSEGUIU FINALIZAR O CHECKOUT!');
+      console.log(`❌  URL atual: ${urlAposCheckout}`);
+      console.log('❌  O checkout pode ter falhado ou há campos obrigatórios faltando.');
+      console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+      console.log('');
+      console.log('❌ INSCRIÇÃO ENEM (SEM NOTA) NÃO FINALIZADA - Checkout não foi concluído');
+      await page.screenshot({ path: 'erro-checkout-nao-concluido.png', fullPage: true });
+      return;
+    }
   }
   
   console.log(`✅ CHECKOUT CONCLUÍDO`);
@@ -1273,10 +1339,10 @@ test('test-enem-sem-nota', async ({ page }) => {
     console.log('═══════════════════════════════════════════════════════════════════════════');
   } else {
     // Nova aba não foi aberta - inscrição não chegou ao final
-    console.log('');
-    console.log('═══════════════════════════════════════════════════════════════════════════');
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════════════════════════');
     console.log('❌ INSCRIÇÃO ENEM (SEM NOTA) NÃO FINALIZADA - Não chegou à página de inscrições');
-    console.log(`📍 URL final: ${page.url()}`);
-    console.log('═══════════════════════════════════════════════════════════════════════════');
+  console.log(`📍 URL final: ${page.url()}`);
+  console.log('═══════════════════════════════════════════════════════════════════════════');
   }
 });
