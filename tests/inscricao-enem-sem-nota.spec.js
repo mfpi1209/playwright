@@ -7,18 +7,34 @@ import { test, expect } from '@playwright/test';
 // Função para remover acentos e normalizar texto (resolve problemas de encoding)
 function removerAcentos(texto) {
   if (!texto) return texto;
-  // Remove caracteres de corrupção de encoding comuns
-  let limpo = texto
-    .replace(/[ÃÁÂÀÄáâàäãÁ£]/g, 'a')
-    .replace(/[ÉÊÈËéêèë]/g, 'e')
-    .replace(/[ÍÎÌÏíîìï]/g, 'i')
-    .replace(/[ÓÔÒÖóôòöõÁ´]/g, 'o')
-    .replace(/[ÚÛÙÜúûùü]/g, 'u')
-    .replace(/[Çç]/g, 'c')
-    .replace(/[Ññ]/g, 'n');
   
-  // Também usa normalize para casos padrão
-  return limpo.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Mapeamento manual de caracteres acentuados para ASCII
+  const mapa = {
+    'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a', 'Á': 'A', 'À': 'A', 'Ã': 'A', 'Â': 'A', 'Ä': 'A',
+    'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e', 'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
+    'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i', 'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
+    'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o', 'Ó': 'O', 'Ò': 'O', 'Õ': 'O', 'Ô': 'O', 'Ö': 'O',
+    'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u', 'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
+    'ç': 'c', 'Ç': 'C', 'ñ': 'n', 'Ñ': 'N'
+  };
+  
+  let resultado = '';
+  for (let i = 0; i < texto.length; i++) {
+    const char = texto[i];
+    const code = char.charCodeAt(0);
+    
+    // Se está no mapa, usa o mapeamento
+    if (mapa[char]) {
+      resultado += mapa[char];
+    }
+    // Se é ASCII imprimível (32-126), mantém
+    else if (code >= 32 && code <= 126) {
+      resultado += char;
+    }
+    // Caso contrário, ignora (remove caracteres corrompidos)
+  }
+  
+  return resultado;
 }
 
 // Função para corrigir caracteres acentuados corrompidos (encoding Windows/PowerShell)
