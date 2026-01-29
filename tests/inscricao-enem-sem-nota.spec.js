@@ -1011,53 +1011,45 @@ test('test-enem-sem-nota', async ({ page }) => {
     console.log('ℹ️ Campo CEP não visível (endereço pode já estar preenchido)');
   }
   
-  // Verifica e preenche campos de endereço apenas se visíveis
-  const campoEnderecoVisivel = await page.getByRole('textbox', { name: 'Endereço *' }).isVisible({ timeout: 2000 }).catch(() => false);
-  
-  if (campoEnderecoVisivel) {
-  // Verifica se o campo Endereço foi preenchido automaticamente
-  console.log('📝 Verificando campo Endereço...');
-  try {
-    const campoEndereco = page.getByRole('textbox', { name: 'Endereço *' });
-    const enderecoAtual = await campoEndereco.inputValue().catch(() => '');
-    
-    if (!enderecoAtual || enderecoAtual.trim() === '' || enderecoAtual.toLowerCase() === 'null') {
-      console.log('   ℹ️ Endereço não preenchido pelo CEP, inserindo "Null"...');
-      await campoEndereco.click();
-      await page.waitForTimeout(300);
-      await campoEndereco.fill('Null');
-      console.log('✅ Endereço: Null');
-    } else {
-      console.log(`✅ Endereço já preenchido: "${enderecoAtual}"`);
-    }
-  } catch (e) {
-    console.log('⚠️ Erro ao verificar Endereço:', e.message);
-  }
-  
-  // Preenche Número - SEMPRE tenta preencher
-  console.log('📝 Preenchendo Número...');
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SEMPRE TENTA PREENCHER O NÚMERO (campo obrigatório)
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('📝 Verificando campo Número...');
   let numeroPreenchido = false;
   
-  for (let tentativa = 1; tentativa <= 3 && !numeroPreenchido; tentativa++) {
+  for (let tentativa = 1; tentativa <= 5 && !numeroPreenchido; tentativa++) {
     try {
-      const campoNumero = page.getByRole('textbox', { name: 'Número *' });
-      const numeroVisivel = await campoNumero.isVisible({ timeout: 3000 }).catch(() => false);
+      // Tenta múltiplos seletores para o campo Número
+      const seletoresNumero = [
+        page.getByRole('textbox', { name: 'Número *' }),
+        page.locator('input[name*="number"]'),
+        page.locator('input[placeholder*="Número"]'),
+        page.locator('input').filter({ hasText: /número/i }).first()
+      ];
       
-      if (numeroVisivel) {
-        const valorAtual = await campoNumero.inputValue().catch(() => '');
+      for (const campoNumero of seletoresNumero) {
+        const numeroVisivel = await campoNumero.isVisible({ timeout: 2000 }).catch(() => false);
         
-        if (!valorAtual || valorAtual.trim() === '') {
-          await campoNumero.click();
-          await page.waitForTimeout(300);
-          await campoNumero.fill(CLIENTE.numero);
-          console.log(`✅ Número: ${CLIENTE.numero}`);
-          numeroPreenchido = true;
-        } else {
-          console.log(`✅ Número já preenchido: "${valorAtual}"`);
-          numeroPreenchido = true;
+        if (numeroVisivel) {
+          const valorAtual = await campoNumero.inputValue().catch(() => '');
+          
+          if (!valorAtual || valorAtual.trim() === '') {
+            await campoNumero.click();
+            await page.waitForTimeout(300);
+            await campoNumero.fill(CLIENTE.numero);
+            console.log(`✅ Número preenchido: ${CLIENTE.numero}`);
+            numeroPreenchido = true;
+            break;
+          } else {
+            console.log(`✅ Número já preenchido: "${valorAtual}"`);
+            numeroPreenchido = true;
+            break;
+          }
         }
-      } else {
-        console.log(`   🔄 Tentativa ${tentativa}: Campo número não visível, aguardando...`);
+      }
+      
+      if (!numeroPreenchido) {
+        console.log(`   🔄 Tentativa ${tentativa}/5: Campo número não encontrado, aguardando...`);
         await page.waitForTimeout(2000);
       }
     } catch (e) {
@@ -1067,29 +1059,55 @@ test('test-enem-sem-nota', async ({ page }) => {
   }
   
   if (!numeroPreenchido) {
-    console.log('⚠️ Não conseguiu preencher o número do endereço');
+    console.log('⚠️ ATENÇÃO: Não conseguiu preencher o número do endereço');
+    // Tenta screenshot para debug
+    await page.screenshot({ path: 'debug-numero-nao-preenchido.png', fullPage: true }).catch(() => {});
   }
   
-  // Verifica se o campo Bairro foi preenchido automaticamente
-  console.log('📝 Verificando campo Bairro...');
-  try {
-    const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
-    const bairroAtual = await campoBairro.inputValue().catch(() => '');
-    
-    if (!bairroAtual || bairroAtual.trim() === '') {
-      console.log('   ℹ️ Bairro não preenchido pelo CEP, inserindo "Centro"...');
-      await campoBairro.click();
-      await page.waitForTimeout(300);
-      await campoBairro.fill('Centro');
-      console.log('✅ Bairro: Centro');
-    } else {
-      console.log(`✅ Bairro já preenchido: "${bairroAtual}"`);
+  // Verifica e preenche campo Endereço se necessário
+  const campoEnderecoVisivel = await page.getByRole('textbox', { name: 'Endereço *' }).isVisible({ timeout: 2000 }).catch(() => false);
+  
+  if (campoEnderecoVisivel) {
+    console.log('📝 Verificando campo Endereço...');
+    try {
+      const campoEndereco = page.getByRole('textbox', { name: 'Endereço *' });
+      const enderecoAtual = await campoEndereco.inputValue().catch(() => '');
+      
+      if (!enderecoAtual || enderecoAtual.trim() === '' || enderecoAtual.toLowerCase() === 'null') {
+        console.log('   ℹ️ Endereço não preenchido pelo CEP, inserindo "Null"...');
+        await campoEndereco.click();
+        await page.waitForTimeout(300);
+        await campoEndereco.fill('Null');
+        console.log('✅ Endereço: Null');
+      } else {
+        console.log(`✅ Endereço já preenchido: "${enderecoAtual}"`);
+      }
+    } catch (e) {
+      console.log('⚠️ Erro ao verificar Endereço:', e.message);
     }
-  } catch (e) {
-    console.log('⚠️ Erro ao verificar Bairro:', e.message);
+  }
+  
+  // Verifica e preenche campo Bairro se necessário
+  const campoBairroVisivel = await page.getByRole('textbox', { name: 'Bairro *' }).isVisible({ timeout: 2000 }).catch(() => false);
+  
+  if (campoBairroVisivel) {
+    console.log('📝 Verificando campo Bairro...');
+    try {
+      const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
+      const bairroAtual = await campoBairro.inputValue().catch(() => '');
+      
+      if (!bairroAtual || bairroAtual.trim() === '') {
+        console.log('   ℹ️ Bairro não preenchido pelo CEP, inserindo "Centro"...');
+        await campoBairro.click();
+        await page.waitForTimeout(300);
+        await campoBairro.fill('Centro');
+        console.log('✅ Bairro: Centro');
+      } else {
+        console.log(`✅ Bairro já preenchido: "${bairroAtual}"`);
+      }
+    } catch (e) {
+      console.log('⚠️ Erro ao verificar Bairro:', e.message);
     }
-  } else {
-    console.log('ℹ️ Campos de endereço não visíveis (já preenchidos no cadastro)');
   }
   
   await page.waitForTimeout(500);
