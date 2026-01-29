@@ -964,22 +964,66 @@ test('test', async ({ page }) => {
     'Cidade'
   );
   
-  // Polo
-  const poloSelecionado = await selecionarOpcao(
+  // Polo - tenta o polo solicitado primeiro, depois fallbacks em ordem de prioridade
+  const polosFallback = [
+    'sapopemba',
+    'vila prudente 2',
+    'vila mariana',
+    'santana 2',
+    'morumbi'
+  ];
+  
+  let poloSelecionado = false;
+  let poloUsado = CLIENTE.polo;
+  
+  // Primeiro tenta o polo solicitado
+  console.log(`🔽 Tentando polo solicitado: "${CLIENTE.polo}"`);
+  poloSelecionado = await selecionarOpcao(
     page.locator('.react-select__input-container').nth(3),
     CLIENTE.polo,
     null,
     'Polo'
   );
+  
+  // Se não encontrou, tenta os polos de fallback em ordem
+  if (!poloSelecionado) {
+    console.log('');
+    console.log('⚠️ Polo solicitado não encontrado, tentando polos alternativos...');
+    
+    for (const poloAlternativo of polosFallback) {
+      // Pula se for o mesmo que já tentou
+      if (poloAlternativo.toLowerCase() === CLIENTE.polo.toLowerCase()) {
+        continue;
+      }
+      
+      console.log(`   🔄 Tentando polo: "${poloAlternativo}"...`);
+      
+      // Aguarda um pouco e tenta o próximo polo
+      await page.waitForTimeout(500);
+      
+      poloSelecionado = await selecionarOpcao(
+        page.locator('.react-select__input-container').nth(3),
+        poloAlternativo,
+        null,
+        `Polo (${poloAlternativo})`
+      );
+      
+      if (poloSelecionado) {
+        poloUsado = poloAlternativo;
+        console.log(`   ✅ POLO ALTERNATIVO SELECIONADO: "${poloAlternativo}"`);
+        break;
+      }
+    }
+  }
 
-  // Verifica se o polo foi encontrado
+  // Verifica se algum polo foi encontrado
   if (!poloSelecionado) {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════════════════');
-    console.log(`❌ ERRO: POLO NÃO ENCONTRADO`);
+    console.log(`❌ ERRO: NENHUM POLO DISPONÍVEL`);
     console.log(`   Polo solicitado: "${CLIENTE.polo}"`);
-    console.log(`   O polo pode não estar disponível para o curso "${CLIENTE.curso}"`);
-    console.log(`   Verifique se o nome do polo está correto ou escolha outro polo.`);
+    console.log(`   Polos tentados: ${polosFallback.join(', ')}`);
+    console.log(`   O curso "${CLIENTE.curso}" não está disponível em nenhum dos polos listados.`);
     console.log('═══════════════════════════════════════════════════════════════════════════');
     console.log('');
     
@@ -988,6 +1032,16 @@ test('test', async ({ page }) => {
     console.log('📸 Screenshot salvo: erro-polo-nao-encontrado.png');
     
     return; // Encerra o teste
+  }
+  
+  // Se usou polo diferente do solicitado, loga isso
+  if (poloUsado.toLowerCase() !== CLIENTE.polo.toLowerCase()) {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log(`📍 POLO ALTERNATIVO UTILIZADO: "${poloUsado}"`);
+    console.log(`   (Polo original solicitado: "${CLIENTE.polo}")`);
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log('');
   }
 
   // CPF

@@ -279,8 +279,8 @@ app.post('/inscricao/sync', async (req, res) => {
       });
     }
     
-    // Verifica se houve erro de polo não encontrado
-    const erroPolo = stdout.includes('POLO NÃO ENCONTRADO');
+    // Verifica se houve erro de polo não encontrado (nenhum disponível)
+    const erroPolo = stdout.includes('NENHUM POLO DISPONÍVEL') || stdout.includes('POLO NÃO ENCONTRADO');
     
     if (erroPolo) {
       // Tenta extrair o nome do polo solicitado
@@ -290,11 +290,15 @@ app.post('/inscricao/sync', async (req, res) => {
       console.log('❌ ERRO - Polo não foi encontrado');
       return res.json({
         sucesso: false,
-        erro: `Polo "${poloSolicitado}" não foi encontrado. O polo pode não estar disponível para este curso ou o nome está incorreto.`,
+        erro: `Polo "${poloSolicitado}" não foi encontrado e nenhum polo alternativo está disponível para este curso.`,
         cliente: { nome, cpf, email },
         logs: stdout.slice(-2000)
       });
     }
+    
+    // Verifica se usou polo alternativo (para incluir na resposta de sucesso)
+    const poloAlternativoMatch = stdout.match(/POLO ALTERNATIVO UTILIZADO:\s*"([^"]+)"/);
+    const poloUtilizado = poloAlternativoMatch ? poloAlternativoMatch[1] : polo;
     
     // Verifica se não conseguiu ir para o checkout
     const erroCheckout = stdout.includes('NÃO CONSEGUIU IR PARA O CHECKOUT') || stdout.includes('Não conseguiu avançar para o checkout');
@@ -315,11 +319,17 @@ app.post('/inscricao/sync', async (req, res) => {
       if (numeroInscricao) {
         console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
       }
+      if (poloUtilizado && poloUtilizado !== polo) {
+        console.log(`📍 Polo utilizado: ${poloUtilizado} (solicitado: ${polo})`);
+      }
       return res.json({
         sucesso: true,
         linkProva: linkProva,
         numeroInscricao: numeroInscricao,
-        mensagem: 'Inscrição concluída com sucesso!',
+        poloUtilizado: poloUtilizado || polo,
+        mensagem: poloUtilizado && poloUtilizado !== polo 
+          ? `Inscrição concluída com sucesso! (Polo alternativo: ${poloUtilizado})`
+          : 'Inscrição concluída com sucesso!',
         cliente: { nome, cpf, email }
       });
     }
