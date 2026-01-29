@@ -300,6 +300,23 @@ app.post('/inscricao/sync', async (req, res) => {
     const poloAlternativoMatch = stdout.match(/POLO ALTERNATIVO UTILIZADO:\s*"([^"]+)"/);
     const poloUtilizado = poloAlternativoMatch ? poloAlternativoMatch[1] : polo;
     
+    // Verifica se usou vestibular alternativo (para incluir na resposta de sucesso)
+    const vestibularAlternativoMatch = stdout.match(/VESTIBULAR ALTERNATIVO UTILIZADO:\s*"([^"]+)"/);
+    const vestibularUtilizado = vestibularAlternativoMatch ? vestibularAlternativoMatch[1] : tipoVestibular;
+    
+    // Verifica se CPF já possui inscrição em ambos os tipos
+    const cpfJaInscritoAmbos = stdout.includes('CPF JÁ POSSUI INSCRIÇÃO EM AMBOS OS TIPOS');
+    
+    if (cpfJaInscritoAmbos) {
+      console.log('❌ ERRO - CPF já possui inscrição em ambos os tipos de vestibular');
+      return res.json({
+        sucesso: false,
+        erro: 'CPF já possui inscrição em ambos os tipos de vestibular (Múltipla Escolha e Redação). Não é possível realizar nova inscrição.',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
+      });
+    }
+    
     // Verifica se não conseguiu ir para o checkout
     const erroCheckout = stdout.includes('NÃO CONSEGUIU IR PARA O CHECKOUT') || stdout.includes('Não conseguiu avançar para o checkout');
     
@@ -319,17 +336,34 @@ app.post('/inscricao/sync', async (req, res) => {
       if (numeroInscricao) {
         console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
       }
-      if (poloUtilizado && poloUtilizado !== polo) {
+      
+      // Monta mensagem com alterações
+      let mensagemFinal = 'Inscrição concluída com sucesso!';
+      const alteracoes = [];
+      
+      if (poloUtilizado && poloUtilizado.toLowerCase() !== (polo || '').toLowerCase()) {
         console.log(`📍 Polo utilizado: ${poloUtilizado} (solicitado: ${polo})`);
+        alteracoes.push(`Polo: ${poloUtilizado}`);
       }
+      
+      if (vestibularUtilizado && vestibularUtilizado.toLowerCase() !== (tipoVestibular || '').toLowerCase()) {
+        console.log(`📝 Vestibular utilizado: ${vestibularUtilizado} (solicitado: ${tipoVestibular})`);
+        alteracoes.push(`Vestibular: ${vestibularUtilizado}`);
+      }
+      
+      if (alteracoes.length > 0) {
+        mensagemFinal = `Inscrição concluída com sucesso! (Alterações: ${alteracoes.join(', ')})`;
+      }
+      
       return res.json({
         sucesso: true,
         linkProva: linkProva,
         numeroInscricao: numeroInscricao,
         poloUtilizado: poloUtilizado || polo,
-        mensagem: poloUtilizado && poloUtilizado !== polo 
-          ? `Inscrição concluída com sucesso! (Polo alternativo: ${poloUtilizado})`
-          : 'Inscrição concluída com sucesso!',
+        vestibularUtilizado: vestibularUtilizado || tipoVestibular,
+        poloSolicitado: polo,
+        vestibularSolicitado: tipoVestibular,
+        mensagem: mensagemFinal,
         cliente: { nome, cpf, email }
       });
     }
