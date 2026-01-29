@@ -981,7 +981,6 @@ test('test', async ({ page }) => {
   ];
   
   let poloSelecionado = false;
-  let poloUsado = CLIENTE.polo;
   
   // Primeiro tenta o polo solicitado
   console.log(`🔽 Tentando polo solicitado: "${CLIENTE.polo}"`);
@@ -1181,7 +1180,7 @@ test('test', async ({ page }) => {
       console.log('⚠️ ════════════════════════════════════════════════════════════════════════════');
       console.log('⚠️  CPF JÁ POSSUI INSCRIÇÃO COM ESTE TIPO DE VESTIBULAR!');
       console.log(`⚠️  Tipo atual: "${vestibularUsado}"`);
-      console.log('⚠️  Tentando com vestibular alternativo...');
+      console.log('⚠️  Alterando para vestibular alternativo...');
       console.log('⚠️ ════════════════════════════════════════════════════════════════════════════');
       console.log('');
       
@@ -1199,172 +1198,48 @@ test('test', async ({ page }) => {
         vestibularAlternativo = 'Vestibular Múltipla Escolha';
         textoBuscaAlternativo = 'mult';
       } else {
-        // Se não é múltipla nem redação, tenta redação como padrão
         vestibularAlternativo = 'Vestibular Redação';
         textoBuscaAlternativo = 'redac';
       }
       
-      console.log(`🔄 Tentando com: "${vestibularAlternativo}"...`);
-      console.log('');
+      console.log(`🔄 Alterando para: "${vestibularAlternativo}"...`);
       
-      // Fecha o modal de erro se houver
-      try {
-        const btnFechar = page.locator('button:has-text("Fechar"), button:has-text("OK"), .modal-close, [aria-label="Close"]').first();
-        if (await btnFechar.isVisible({ timeout: 1000 })) {
-          await btnFechar.click();
-          await page.waitForTimeout(500);
-        }
-      } catch (e) {
-        // Ignora se não encontrar botão de fechar
-      }
-      
-      // Tenta pressionar Escape para fechar qualquer modal
-      await page.keyboard.press('Escape');
+      // Rola para cima para ver o dropdown de forma de ingresso
+      await page.evaluate(() => window.scrollTo(0, 0));
       await page.waitForTimeout(500);
       
-      // Volta para a página do curso
-      console.log('📍 Voltando para a página do curso...');
-      const urlCurso = page.url().split('?')[0]; // Remove query params se houver
+      // Procura o dropdown que contém "Múltipla" ou "Redação" (já selecionado)
+      const selectVestibular = page.locator('.react-select__control').filter({ hasText: /Múltipla|Redação|Vestibular/i }).first();
+      await selectVestibular.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      await selectVestibular.click();
+      await page.waitForTimeout(500);
       
-      // Se estamos na página do produto, vamos recarregar
-      if (urlCurso.includes('/p')) {
-        await page.goto(urlCurso);
-        await aguardarCarregamento('Página do curso (retry)');
-      } else {
-        // Se não, navega de volta para graduação e busca o curso novamente
-        await page.goto('https://cruzeirodosul.myvtex.com/graduacao');
-        await aguardarCarregamento('Página de graduação (retry)');
-        
-        // Busca o curso novamente
-        const searchInput = page.getByPlaceholder('O que você quer estudar');
-        await searchInput.waitFor({ state: 'visible', timeout: 15000 });
-        await searchInput.click();
-        await searchInput.fill('');
-        await page.waitForTimeout(300);
-        
-        const cursoParaBusca = removerAcentos(CLIENTE.curso);
-        await searchInput.type(cursoParaBusca, { delay: 30 });
+      // Digita para buscar o vestibular alternativo
+      await page.keyboard.type(textoBuscaAlternativo, { delay: 30 });
+      await page.waitForTimeout(800);
+      
+      // Seleciona a primeira opção
+      const opcoesDisponiveis = await page.locator('.react-select__option').count();
+      console.log(`   📋 Opções encontradas: ${opcoesDisponiveis}`);
+      
+      if (opcoesDisponiveis > 0) {
         await page.keyboard.press('Enter');
-        await page.waitForTimeout(3000);
-        
-        // Clica no primeiro resultado
-        const primeiroResultado = page.locator('a[href*="/grad-"][href$="/p"]').first();
-        if (await primeiroResultado.isVisible({ timeout: 5000 })) {
-          await primeiroResultado.click();
-          await aguardarCarregamento('Página do curso (retry)');
-        }
+        vestibularUsado = vestibularAlternativo;
+        console.log(`✅ Vestibular alterado para: "${vestibularAlternativo}"`);
+      } else {
+        console.log('❌ Não foi possível encontrar vestibular alternativo');
+        await page.keyboard.press('Escape');
       }
-      
-      // Aguarda formulário
-      await page.waitForTimeout(2000);
-      
-      // Preenche formulário inicial novamente
-      console.log('📝 Preenchendo formulário inicial novamente...');
-      
-      // Nome
-      const nomeInput2 = page.locator('input[name="nomecompleto"], input[name="userName"]').first();
-      if (await nomeInput2.isVisible({ timeout: 3000 })) {
-        await nomeInput2.fill('');
-        await nomeInput2.type(CLIENTE.nome, { delay: 20 });
-      }
-      
-      // Telefone
-      const telInput2 = page.locator('input[name="telefone"], input[name="userPhone"]').first();
-      if (await telInput2.isVisible({ timeout: 2000 })) {
-        await telInput2.fill('');
-        await telInput2.type(CLIENTE.telefone, { delay: 20 });
-      }
-      
-      // Checkbox termos
-      const checkbox2 = page.locator('input[type="checkbox"]').first();
-      if (await checkbox2.isVisible({ timeout: 2000 })) {
-        const isChecked = await checkbox2.isChecked();
-        if (!isChecked) {
-          await checkbox2.click({ force: true });
-        }
-      }
-      
-      // Clica em Inscreva-se
-      const btnInscrever2 = page.getByRole('button', { name: 'Inscreva-se' });
-      if (await btnInscrever2.isVisible({ timeout: 3000 })) {
-        await btnInscrever2.click();
-        await aguardarCarregamento('Formulário de localização (retry)');
-      }
-      
-      await page.waitForTimeout(2000);
-      
-      // Seleciona localização novamente
-      console.log('📍 Selecionando localização novamente...');
-      
-      // País
-      await selecionarOpcao(
-        page.locator('.react-select__input-container').first(),
-        'brasil',
-        'Brasil',
-        'País (retry)'
-      );
-      
-      // Estado
-      await selecionarOpcao(
-        page.locator('.react-select__input-container').nth(1),
-        CLIENTE.estado,
-        null,
-        'Estado (retry)'
-      );
-      
-      // Cidade
-      await selecionarOpcao(
-        page.locator('.react-select__input-container').nth(2),
-        CLIENTE.cidade,
-        null,
-        'Cidade (retry)'
-      );
-      
-      // Polo - usa o polo que funcionou antes
-      await selecionarOpcao(
-        page.locator('.react-select__input-container').nth(3),
-        poloUsado,
-        null,
-        `Polo (retry: ${poloUsado})`
-      );
-      
-      // CPF
-      const cpfInput2 = page.locator('input[name="userDocument"]');
-      if (await cpfInput2.isVisible({ timeout: 3000 })) {
-        await cpfInput2.fill('');
-        await cpfInput2.type(CLIENTE.cpf, { delay: 20 });
-      }
-      
-      // Continuar para vestibular
-      const btnContinuar2 = page.getByRole('button', { name: 'Continuar Inscrição' });
-      await btnContinuar2.click();
-      await page.waitForTimeout(2000);
-      
-      // Agora seleciona o vestibular ALTERNATIVO
-      console.log(`📝 Selecionando vestibular alternativo: "${vestibularAlternativo}"...`);
-      
-      await selecionarOpcao(
-        page.locator('.react-select__control').filter({ hasText: 'Selecione' }).first(),
-        textoBuscaAlternativo,
-        null,
-        'Tipo de Vestibular (alternativo)'
-      );
-      
-      vestibularUsado = vestibularAlternativo;
       
       await page.waitForTimeout(1000);
       
-      // Condições especiais
-      await selecionarOpcao(
-        page.locator('.react-select__control').filter({ hasText: 'Selecione' }).first(),
-        'nao neces',
-        null,
-        'Condições Especiais (retry)'
-      );
-      
-      // Continuar para checkout
-      const btnContinuar3 = page.getByRole('button', { name: 'Continuar Inscrição' });
-      await btnContinuar3.click();
+      // Rola para baixo e clica em Continuar Inscrição
+      console.log('📍 Clicando em Continuar Inscrição novamente...');
+      const btnContinuarRetry = page.getByRole('button', { name: 'Continuar Inscrição' });
+      await btnContinuarRetry.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      await btnContinuarRetry.click();
       await page.waitForTimeout(2000);
       
       // Verifica novamente se há erro de CPF
@@ -1387,7 +1262,7 @@ test('test', async ({ page }) => {
       
       console.log('');
       console.log('═══════════════════════════════════════════════════════════════════════════');
-      console.log(`✅ VESTIBULAR ALTERNATIVO FUNCIONOU: "${vestibularAlternativo}"`);
+      console.log(`✅ VESTIBULAR ALTERNATIVO UTILIZADO: "${vestibularAlternativo}"`);
       console.log(`   (Vestibular original solicitado: "${CLIENTE.tipoVestibular}")`);
       console.log('═══════════════════════════════════════════════════════════════════════════');
       console.log('');
@@ -1396,7 +1271,7 @@ test('test', async ({ page }) => {
       // Já tentou alternativo e ainda assim deu erro
       console.log('');
       console.log('❌ ════════════════════════════════════════════════════════════════════════════');
-      console.log('❌  CPF JÁ POSSUI INSCRIÇÃO!');
+      console.log('❌  CPF JÁ POSSUI INSCRIÇÃO EM AMBOS OS TIPOS!');
       console.log('❌  Este CPF já possui inscrição em ambos os tipos de vestibular.');
       console.log('❌ ════════════════════════════════════════════════════════════════════════════');
       console.log('');
