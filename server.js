@@ -279,6 +279,23 @@ app.post('/inscricao/sync', async (req, res) => {
       });
     }
     
+    // Verifica se houve erro de polo não encontrado
+    const erroPolo = stdout.includes('POLO NÃO ENCONTRADO');
+    
+    if (erroPolo) {
+      // Tenta extrair o nome do polo solicitado
+      const poloMatch = stdout.match(/Polo solicitado:\s*"([^"]+)"/);
+      const poloSolicitado = poloMatch ? poloMatch[1] : polo;
+      
+      console.log('❌ ERRO - Polo não foi encontrado');
+      return res.json({
+        sucesso: false,
+        erro: `Polo "${poloSolicitado}" não foi encontrado. O polo pode não estar disponível para este curso ou o nome está incorreto.`,
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
+      });
+    }
+    
     // Verifica se não conseguiu ir para o checkout
     const erroCheckout = stdout.includes('NÃO CONSEGUIU IR PARA O CHECKOUT') || stdout.includes('Não conseguiu avançar para o checkout');
     

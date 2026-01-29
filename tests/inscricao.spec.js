@@ -965,13 +965,31 @@ test('test', async ({ page }) => {
   );
   
   // Polo
-  await selecionarOpcao(
+  const poloSelecionado = await selecionarOpcao(
     page.locator('.react-select__input-container').nth(3),
     CLIENTE.polo,
     null,
     'Polo'
   );
-  
+
+  // Verifica se o polo foi encontrado
+  if (!poloSelecionado) {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log(`❌ ERRO: POLO NÃO ENCONTRADO`);
+    console.log(`   Polo solicitado: "${CLIENTE.polo}"`);
+    console.log(`   O polo pode não estar disponível para o curso "${CLIENTE.curso}"`);
+    console.log(`   Verifique se o nome do polo está correto ou escolha outro polo.`);
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log('');
+    
+    // Tira screenshot do erro
+    await page.screenshot({ path: 'erro-polo-nao-encontrado.png', fullPage: true });
+    console.log('📸 Screenshot salvo: erro-polo-nao-encontrado.png');
+    
+    return; // Encerra o teste
+  }
+
   // CPF
   const cpfInput = page.locator('input[name="userDocument"]');
   await preencherCampo(cpfInput, CLIENTE.cpf, 'CPF');
