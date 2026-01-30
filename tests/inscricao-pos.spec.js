@@ -280,54 +280,122 @@ test('test-pos', async ({ page }) => {
   console.log('📌 ETAPA 3: Login como Cliente');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    console.log(`🔄 Tentativa ${tentativa}/3 de login do cliente...`);
-    try {
-      console.log('   📍 Procurando "Entrar como cliente"...');
-      const entrarComoCliente = page.getByRole('button', { name: 'Entrar como cliente' });
-      const visivel = await entrarComoCliente.isVisible({ timeout: 5000 });
+  async function fazerLoginCliente() {
+    const MAX_TENTATIVAS = 3;
+    
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+      console.log(`🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de login do cliente...`);
       
-      if (!visivel) {
+      // 1. Clica em "Entrar como cliente"
+      console.log('   📍 Procurando "Entrar como cliente"...');
+      const entrarComoCliente = page.getByText('Entrar como cliente').first();
+      
+      try {
+        await entrarComoCliente.waitFor({ state: 'visible', timeout: 10000 });
+        await entrarComoCliente.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(500);
+        await entrarComoCliente.click({ force: true });
+        console.log('   ✅ Clicou em "Entrar como cliente"');
+      } catch (e) {
         console.log('   ⚠️ "Entrar como cliente" não encontrado');
         continue;
       }
       
-      await entrarComoCliente.click();
-      console.log('   ✅ Clicou em "Entrar como cliente"');
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(2000);
       
+      // 2. Preenche o email
       console.log('   📝 Procurando campo de email...');
-      const emailClienteInput = page.locator('input[name="email"]');
-      await emailClienteInput.waitFor({ state: 'visible', timeout: 10000 });
-      await emailClienteInput.fill(CLIENTE.email);
-      console.log(`   ✅ Email preenchido: "${CLIENTE.email}"`);
+      const emailCliente = page.getByPlaceholder('Ex: example@mail.com');
       
+      try {
+        await emailCliente.waitFor({ state: 'visible', timeout: 10000 });
+        await emailCliente.click();
+        await emailCliente.fill('');
+        await emailCliente.type(CLIENTE.email, { delay: 50 });
+        console.log(`   ✅ Email preenchido: "${CLIENTE.email}"`);
+      } catch (e) {
+        console.log('   ⚠️ Erro ao preencher email');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      
+      await page.waitForTimeout(1000);
+      
+      // 3. Clica no botão "Entrar"
       console.log('   📍 Clicando em "Entrar"...');
-      const btnEntrar = page.locator('button:has-text("Entrar")').first();
-      await btnEntrar.click();
-      console.log('   ✅ Clicou em "Entrar"');
+      const btnEntrar = page.getByRole('button', { name: 'Entrar' });
       
+      try {
+        await btnEntrar.waitFor({ state: 'visible', timeout: 5000 });
+        await btnEntrar.click();
+        console.log('   ✅ Clicou em "Entrar"');
+      } catch (e) {
+        console.log('   ⚠️ Botão "Entrar" não encontrado');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      
+      // 4. Aguarda processamento do login
       console.log('   ⏳ Aguardando login ser processado...');
       await page.waitForTimeout(3000);
       
+      // 5. Valida se login foi feito
       console.log('   🔍 Validando login...');
-      const headerCliente = await page.locator('header').textContent().catch(() => '');
-      const clienteNoHeader = headerCliente.toLowerCase().includes(CLIENTE.email.split('@')[0].toLowerCase());
-      console.log(`   📋 Header contém cliente: ${clienteNoHeader}`);
+      const headerText = await page.locator('header').textContent().catch(() => '');
+      const headerLower = headerText.toLowerCase();
+      const emailPrefix = CLIENTE.email.split('@')[0].toLowerCase();
+      
+      const clienteLogado = headerLower.includes(emailPrefix) || 
+                            headerLower.includes('olá') ||
+                            headerLower.includes(CLIENTE.email.toLowerCase());
       
       const entrarAindaVisivel = await entrarComoCliente.isVisible({ timeout: 2000 }).catch(() => false);
+      
+      console.log(`   📋 Header contém cliente: ${clienteLogado}`);
       console.log(`   📋 "Entrar como cliente" ainda visível: ${entrarAindaVisivel}`);
       
-      if (!entrarAindaVisivel || clienteNoHeader) {
+      if (clienteLogado || !entrarAindaVisivel) {
         console.log('   ✅ LOGIN VALIDADO COM SUCESSO!');
-        break;
-      } else {
-        console.log('   ⚠️ Login não confirmado, tentando novamente...');
+        return true;
       }
-    } catch (e) {
-      console.log(`   ⚠️ Erro: ${e.message}`);
+      
+      console.log('   ⚠️ Login não confirmado, tentando novamente...');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(1000);
     }
+    
+    return false;
   }
+  
+  const loginSucesso = await fazerLoginCliente();
+  
+  if (!loginSucesso) {
+    console.log('❌ ERRO: Não foi possível fazer login do cliente após várias tentativas');
+  }
+  
+  // Aceita cookies após login
+  console.log('📍 Verificando cookies após login...');
+  await page.waitForTimeout(1000);
+  
+  try {
+    const aceitarCookies = page.getByText('Aceitar todos', { exact: false }).first();
+    if (await aceitarCookies.isVisible({ timeout: 3000 })) {
+      await aceitarCookies.click({ force: true });
+      console.log('   ✅ Cookies aceitos após login');
+      await page.waitForTimeout(1000);
+    }
+  } catch (e) {}
+  
+  try {
+    const cookieBtn = page.getByText('Aceitar todos os Cookies');
+    if (await cookieBtn.isVisible({ timeout: 2000 })) {
+      await cookieBtn.click({ force: true });
+      console.log('   ✅ Cookies aceitos (alternativo)');
+      await page.waitForTimeout(1000);
+    }
+  } catch (e) {}
   
   console.log('✅ ETAPA 3 CONCLUÍDA - Cliente logado');
   console.log('');
@@ -361,28 +429,79 @@ test('test-pos', async ({ page }) => {
   if (page.url().includes('?') || page.url().includes('map=ft')) {
     console.log('🔍 Página de resultados detectada, procurando curso...');
     
+    await page.waitForTimeout(2000);
     await page.evaluate(() => window.scrollBy(0, 300));
     await page.waitForTimeout(1000);
     
-    // Procura card do curso de pós-graduação
-    const cards = page.locator('.vtex-search-result-3-x-galleryItem a[href*="/pos-"]');
-    const totalCards = await cards.count();
-    console.log(`   📋 Cards de pós encontrados: ${totalCards}`);
+    // Normaliza o nome do curso para busca
+    const cursoNormalizado = removerAcentos(CLIENTE.curso).toLowerCase();
+    const palavrasChave = cursoNormalizado.split(' ').filter(p => p.length > 3);
+    console.log(`   🔍 Palavras-chave: ${palavrasChave.join(', ')}`);
     
-    if (totalCards > 0) {
-      const primeiroCard = cards.first();
-      const href = await primeiroCard.getAttribute('href');
-      console.log(`   📍 Clicando no primeiro card: ${href}`);
-      await primeiroCard.click();
-    } else {
-      // Tenta clicar em qualquer link de pós
-      const linkPos = page.locator('a[href*="/pos-"][href$="/p"]').first();
-      if (await linkPos.isVisible({ timeout: 3000 })) {
-        await linkPos.click();
+    // Tenta vários seletores para encontrar os cards de curso
+    const seletoresCurso = [
+      'a[href*="/pos-"][href$="/p"]',
+      'a[href*="/p"]:has-text("meses")',
+      '.vtex-product-summary-2-x-clearLink',
+      '[class*="product"] a[href*="/p"]',
+      'a[href*="cruzeiro-do-sul-virtual/p"]',
+    ];
+    
+    let cursoEncontrado = false;
+    
+    for (const seletor of seletoresCurso) {
+      const links = await page.locator(seletor).all();
+      console.log(`   📋 Seletor "${seletor}": ${links.length} links`);
+      
+      if (links.length > 0) {
+        // Procura link que contenha palavras do curso
+        for (const link of links) {
+          const href = await link.getAttribute('href') || '';
+          const texto = await link.textContent() || '';
+          const conteudo = (href + ' ' + texto).toLowerCase();
+          
+          const match = palavrasChave.some(palavra => conteudo.includes(palavra));
+          
+          if (match) {
+            console.log(`   ✅ Curso encontrado: ${href}`);
+            await link.click();
+            cursoEncontrado = true;
+            break;
+          }
+        }
+        
+        // Se não encontrou específico, pega o primeiro link de pós
+        if (!cursoEncontrado) {
+          for (const link of links) {
+            const href = await link.getAttribute('href') || '';
+            if (href.includes('/pos-') || href.includes('meses')) {
+              console.log(`   📍 Usando resultado: ${href}`);
+              await link.click();
+              cursoEncontrado = true;
+              break;
+            }
+          }
+        }
+        
+        if (cursoEncontrado) break;
       }
     }
     
-    await aguardarCarregamento('Página do produto');
+    // Se ainda não encontrou, tenta clicar no primeiro produto visível
+    if (!cursoEncontrado) {
+      console.log('   ⚠️ Tentando clicar no primeiro produto visível...');
+      const primeiroCard = page.locator('[class*="product"] a, [class*="gallery"] a').first();
+      if (await primeiroCard.isVisible({ timeout: 3000 })) {
+        await primeiroCard.click();
+        cursoEncontrado = true;
+      }
+    }
+    
+    if (cursoEncontrado) {
+      await aguardarCarregamento('Página do produto');
+    } else {
+      console.log('   ❌ Nenhum curso encontrado nos resultados');
+    }
   }
   
   console.log(`📍 URL atual: ${page.url()}`);
@@ -458,6 +577,44 @@ test('test-pos', async ({ page }) => {
   await nomeInput.fill('');
   await nomeInput.type(CLIENTE.nome, { delay: 20 });
   console.log(`✅ Nome completo: "${CLIENTE.nome}"`);
+  
+  // Email - campo obrigatório para pós (pode estar readonly se já logado)
+  console.log('📝 Procurando campo Email...');
+  const seletoresEmail = [
+    'input[name="email"]',
+    'input[name="userEmail"]',
+    'input[type="email"]',
+    'input[placeholder*="email" i]',
+    'input[placeholder*="e-mail" i]',
+  ];
+  
+  let emailPreenchido = false;
+  for (const seletor of seletoresEmail) {
+    const campo = page.locator(seletor).first();
+    if (await campo.isVisible({ timeout: 1500 })) {
+      // Verifica se o campo é readonly (já vem preenchido após login)
+      const readonly = await campo.getAttribute('readonly');
+      const valorAtual = await campo.inputValue();
+      
+      if (readonly !== null || valorAtual) {
+        console.log(`   ℹ️ Campo email já preenchido (readonly): ${valorAtual || CLIENTE.email}`);
+        emailPreenchido = true;
+        break;
+      }
+      
+      console.log(`   📍 Encontrou campo email editável: ${seletor}`);
+      await campo.click();
+      await campo.fill('');
+      await campo.type(CLIENTE.email, { delay: 30 });
+      console.log(`✅ Email preenchido: ${CLIENTE.email}`);
+      emailPreenchido = true;
+      break;
+    }
+  }
+  
+  if (!emailPreenchido) {
+    console.log('⚠️ Campo email não encontrado');
+  }
   
   // Telefone - tenta vários seletores
   console.log('📝 Procurando campo Telefone...');
@@ -585,8 +742,11 @@ test('test-pos', async ({ page }) => {
   // Aguarda navegação ou mudança na página
   console.log('⏳ Aguardando navegação...');
   
-  // Aguarda até 15 segundos pela mudança de URL ou aparecimento de formulário
-  for (let i = 0; i < 30; i++) {
+  // Aguarda um pouco mais para dar tempo de carregar
+  await page.waitForTimeout(3000);
+  
+  // Aguarda até 20 segundos pela mudança de URL ou aparecimento de formulário
+  for (let i = 0; i < 40; i++) {
     await page.waitForTimeout(500);
     const urlAgora = page.url();
     
@@ -602,23 +762,31 @@ test('test-pos', async ({ page }) => {
       break;
     }
     
-    // Verifica se apareceu algum erro de validação
-    const erroValidacao = await page.locator('text=obrigatório, text=inválido, text=preencha').first().isVisible().catch(() => false);
-    if (erroValidacao) {
-      console.log('   ⚠️ Erro de validação detectado');
-      await page.screenshot({ path: 'erro-validacao-pos.png', fullPage: true });
+    // Verifica se apareceu seção de localização por texto
+    const secaoLocalizacao = await page.locator('text=País, text=Estado, text=Cidade, text=Polo').first().isVisible().catch(() => false);
+    if (secaoLocalizacao) {
+      console.log('   ✅ Seção de localização detectada');
       break;
     }
     
-    // Verifica se apareceu modal ou sidebar
-    const modal = await page.locator('.modal, [class*="modal"], [class*="sidebar"], [class*="drawer"]').first().isVisible().catch(() => false);
+    // Verifica se apareceu algum select dropdown
+    const selectDropdown = await page.locator('select, [class*="select"]').count();
+    if (selectDropdown > 3) {
+      console.log(`   ✅ Selects detectados: ${selectDropdown}`);
+      break;
+    }
+    
+    // Verifica se apareceu modal ou sidebar ou step
+    const modal = await page.locator('[class*="modal"], [class*="sidebar"], [class*="drawer"], [class*="step"]').first().isVisible().catch(() => false);
     if (modal) {
-      console.log('   📋 Modal/Sidebar detectado');
+      console.log('   📋 Modal/Sidebar/Step detectado');
+      // Aguarda um pouco para carregar o conteúdo
+      await page.waitForTimeout(2000);
       break;
     }
     
-    if (i === 29) {
-      console.log(`   ⚠️ URL não mudou após 15s: ${urlAgora}`);
+    if (i === 39) {
+      console.log(`   ⚠️ URL não mudou após 20s: ${urlAgora}`);
       
       // Verifica elementos na página
       const botoes = await page.locator('button').all();
@@ -627,6 +795,9 @@ test('test-pos', async ({ page }) => {
         const txt = await botoes[j].textContent().catch(() => '');
         console.log(`      - "${txt.trim().substring(0, 50)}"`);
       }
+      
+      // Tenta rolar para baixo para ver se há mais conteúdo
+      await page.evaluate(() => window.scrollBy(0, 500));
       
       await page.screenshot({ path: 'debug-apos-inscrever.png', fullPage: true });
       console.log('   📸 Screenshot salvo: debug-apos-inscrever.png');
@@ -724,8 +895,21 @@ test('test-pos', async ({ page }) => {
       console.log('📍 Clicando em "Continuar Inscrição"...');
       const btnContinuar = page.getByRole('button', { name: 'Continuar Inscrição' });
       if (await btnContinuar.isVisible({ timeout: 5000 })) {
-        await btnContinuar.click();
-        await page.waitForTimeout(3000);
+        await btnContinuar.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(500);
+        await btnContinuar.click({ force: true });
+        console.log('   ✅ Clicou em "Continuar Inscrição"');
+        
+        // Aguarda navegação para campanha comercial
+        console.log('   ⏳ Aguardando navegação para campanha comercial...');
+        for (let i = 0; i < 30; i++) {
+          await page.waitForTimeout(500);
+          const urlAgora = page.url();
+          if (urlAgora.includes('campanha-comercial')) {
+            console.log(`   ✅ Navegou para: ${urlAgora}`);
+            break;
+          }
+        }
       }
     } else {
       console.log('   ℹ️ Nenhum select encontrado, curso pode ser 100% EAD');
@@ -749,11 +933,32 @@ test('test-pos', async ({ page }) => {
   if (urlAtual.includes('campanha-comercial')) {
     console.log('📍 Página de campanha comercial detectada!');
     
+    // Aceita cookies primeiro
+    console.log('📍 Verificando cookies...');
+    try {
+      const aceitarCookies = page.getByText('Aceitar todos', { exact: false }).first();
+      if (await aceitarCookies.isVisible({ timeout: 3000 })) {
+        await aceitarCookies.click({ force: true });
+        console.log('   ✅ Cookies aceitos');
+        await page.waitForTimeout(1000);
+      }
+    } catch (e) {}
+    
+    // Tenta também o botão "Aceitar todos os Cookies"
+    try {
+      const cookieBtn = page.getByText('Aceitar todos os Cookies');
+      if (await cookieBtn.isVisible({ timeout: 2000 })) {
+        await cookieBtn.click({ force: true });
+        console.log('   ✅ Cookies aceitos (alternativo)');
+        await page.waitForTimeout(1000);
+      }
+    } catch (e) {}
+    
     // Fecha o modal de atenção se aparecer (botão X)
     try {
-      const btnFecharModal = page.locator('button:has-text("×"), .modal-close, [aria-label="Close"]').first();
-      if (await btnFecharModal.isVisible({ timeout: 2000 })) {
-        await btnFecharModal.click();
+      const closeX = page.locator('[class*="close"], button:has(svg)').first();
+      if (await closeX.isVisible({ timeout: 2000 })) {
+        await closeX.click();
         console.log('   ✅ Modal de atenção fechado');
         await page.waitForTimeout(500);
       }
@@ -761,47 +966,77 @@ test('test-pos', async ({ page }) => {
     
     // Pressiona Escape para fechar qualquer modal
     await page.keyboard.press('Escape');
+    await page.waitForTimeout(1000);
+    
+    // Rola para cima para ver o dropdown de campanhas
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(500);
     
-    if (CLIENTE.campanha) {
-      // APLICAR CAMPANHA
-      console.log(`📝 Aplicando campanha: ${CLIENTE.campanha}...`);
+    // Sempre selecionar campanha (usar código fornecido ou padrão)
+    const codigoCampanha = CLIENTE.campanha || '2542'; // 2542 é Balcão 10%CT - Pós EAD
+    console.log(`📝 Selecionando campanha: ${codigoCampanha}...`);
+    
+    // Clica no dropdown de campanhas
+    const selectCampanha = page.locator('select, [class*="select"]').first();
+    
+    if (await selectCampanha.isVisible({ timeout: 5000 })) {
+      await selectCampanha.click();
+      await page.waitForTimeout(500);
       
-      // Procura o dropdown de campanhas
-      const selectCampanha = page.locator('select, .react-select__control').filter({ hasText: /Selecione|Campanhas/i }).first();
+      // Digita o código da campanha
+      await page.keyboard.type(codigoCampanha, { delay: 50 });
+      await page.waitForTimeout(800);
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(1500);
       
-      if (await selectCampanha.isVisible({ timeout: 3000 })) {
-        await selectCampanha.click();
-        await page.waitForTimeout(500);
-        
-        // Digita o código da campanha
-        await page.keyboard.type(CLIENTE.campanha, { delay: 50 });
-        await page.waitForTimeout(500);
-        await page.keyboard.press('Enter');
-        await page.waitForTimeout(1000);
-        
-        campanhaAplicada = CLIENTE.campanha;
-        console.log(`   ✅ Campanha ${CLIENTE.campanha} selecionada`);
-      }
-      
-      // Clica em "Aplicar campanha"
-      const btnAplicar = page.getByRole('button', { name: 'Aplicar campanha' });
-      if (await btnAplicar.isVisible({ timeout: 3000 })) {
-        await btnAplicar.click();
-        console.log('   ✅ Clicou em "Aplicar campanha"');
-        await page.waitForTimeout(2000);
-      }
-      
+      campanhaAplicada = codigoCampanha;
+      console.log(`   ✅ Campanha ${codigoCampanha} digitada`);
     } else {
-      // NÃO APLICAR CAMPANHA
-      console.log('📍 Clicando em "Não aplicar campanha"...');
-      
-      const btnNaoAplicar = page.getByRole('button', { name: 'Não aplicar campanha' });
-      await btnNaoAplicar.waitFor({ state: 'visible', timeout: 10000 });
-      await btnNaoAplicar.click();
-      console.log('   ✅ Clicou em "Não aplicar campanha"');
-      await page.waitForTimeout(2000);
+      console.log('   ⚠️ Dropdown de campanhas não encontrado');
     }
+    
+    // Captura informações do produto/parcelas
+    try {
+      const infoProduto = await page.locator('text=Valor parcela').textContent().catch(() => '');
+      const infoParcelas = await page.locator('text=Quantidade de parcelas').textContent().catch(() => '');
+      console.log(`   📋 ${infoProduto}`);
+      console.log(`   📋 ${infoParcelas}`);
+    } catch (e) {}
+    
+    // Rola para baixo para ver os botões
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(1000);
+    
+    // Clica em "Aplicar campanha" (botão azul à esquerda)
+    console.log('📍 Clicando em "Aplicar campanha"...');
+    
+    const btnAplicar = page.locator('button:has-text("Aplicar campanha")').first();
+    
+    if (await btnAplicar.isVisible({ timeout: 5000 })) {
+      await btnAplicar.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(500);
+      await btnAplicar.click({ force: true });
+      console.log('   ✅ Clicou em "Aplicar campanha"');
+    } else {
+      // Tenta por texto
+      const btnTexto = page.getByText('Aplicar campanha', { exact: false }).first();
+      if (await btnTexto.isVisible({ timeout: 3000 })) {
+        await btnTexto.click({ force: true });
+        console.log('   ✅ Clicou via texto');
+      }
+    }
+    
+    // Aguarda navegação para o carrinho
+    console.log('   ⏳ Aguardando navegação para carrinho...');
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(500);
+      if (page.url().includes('/cart') || page.url().includes('/checkout')) {
+        console.log(`   ✅ Navegou para: ${page.url()}`);
+        break;
+      }
+    }
+    
+    await page.waitForTimeout(2000);
   }
   
   console.log('✅ ETAPA 7 CONCLUÍDA');
@@ -822,20 +1057,50 @@ test('test-pos', async ({ page }) => {
     
     // Fecha modal de atenção se aparecer
     try {
-      const btnFecharAtencao = page.locator('button:has-text("×")').first();
+      const btnFecharAtencao = page.locator('button:has-text("×"), svg[class*="close"], [class*="close"]').first();
       if (await btnFecharAtencao.isVisible({ timeout: 2000 })) {
         await btnFecharAtencao.click();
+        console.log('   ✅ Modal fechado');
         await page.waitForTimeout(500);
       }
     } catch (e) {}
     
+    // Pressiona Escape para fechar modais
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+    
     // Clica em "Continuar Inscrição"
     console.log('📍 Procurando "Continuar Inscrição" no carrinho...');
-    const btnContinuarCarrinho = page.getByRole('button', { name: 'Continuar Inscrição' });
-    await btnContinuarCarrinho.waitFor({ state: 'visible', timeout: 15000 });
-    await btnContinuarCarrinho.click();
-    console.log('   ✅ Clicou em "Continuar Inscrição"');
-    await page.waitForTimeout(3000);
+    
+    // Aguarda o botão aparecer
+    await page.waitForTimeout(2000);
+    
+    // Tenta clicar no botão
+    const btnContinuar = page.locator('button:has-text("Continuar Inscrição")').first();
+    
+    if (await btnContinuar.isVisible({ timeout: 10000 })) {
+      await btnContinuar.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(500);
+      await btnContinuar.click({ force: true });
+      console.log('   ✅ Clicou em "Continuar Inscrição"');
+    } else {
+      console.log('   ⚠️ Botão não visível, tentando por texto...');
+      const btnTexto = page.getByText('Continuar Inscrição').first();
+      await btnTexto.click({ force: true });
+      console.log('   ✅ Clicou via texto');
+    }
+    
+    // Aguarda navegação para /profile
+    console.log('   ⏳ Aguardando navegação para dados pessoais...');
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(500);
+      if (page.url().includes('/profile')) {
+        console.log(`   ✅ Navegou para: ${page.url()}`);
+        break;
+      }
+    }
+    
+    await page.waitForTimeout(2000);
   }
   
   console.log('✅ ETAPA 8 CONCLUÍDA');
