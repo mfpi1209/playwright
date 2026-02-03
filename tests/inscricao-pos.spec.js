@@ -794,11 +794,18 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log('📌 ETAPA 7: Campanha Comercial');
   
   // Aguarda página de campanha
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
+  
+  const urlAtualEtapa7 = page.url();
+  console.log(`   📍 URL atual: ${urlAtualEtapa7}`);
   
   let campanhaEscolhida = null;
   
-  if (page.url().includes('campanha-comercial')) {
+  // Verifica se está na página de campanha
+  const estaNaPaginaCampanha = urlAtualEtapa7.includes('campanha-comercial');
+  console.log(`   📍 Está na página de campanha? ${estaNaPaginaCampanha}`);
+  
+  if (estaNaPaginaCampanha) {
     console.log('   📍 Página de campanha detectada');
     console.log(`   🎯 Buscando: Matrícula R$ ${CLIENTE.matricula},00 | Mensalidade R$ ${CLIENTE.mensalidade},00`);
     
@@ -876,13 +883,71 @@ test('inscricao-pos', async ({ page, context }) => {
     };
     
     // Abre o dropdown de campanhas para obter todas as opções
-    const selectCampanha = page.locator('.react-select__control').first();
-    await selectCampanha.click();
-    await page.waitForTimeout(1500);
+    console.log('   📝 Buscando dropdown de campanhas...');
+    
+    let selectCampanha = page.locator('.react-select__control').first();
+    
+    // Verifica se o dropdown existe
+    const dropdownVisivel = await selectCampanha.isVisible({ timeout: 5000 }).catch(() => false);
+    console.log(`   📍 Dropdown visível: ${dropdownVisivel}`);
+    
+    if (!dropdownVisivel) {
+      // Tenta seletores alternativos
+      console.log('   🔄 Tentando seletores alternativos...');
+      
+      const seletoresAlternativos = [
+        'div[class*="select__control"]',
+        'div[class*="select-container"]',
+        '[class*="campanha"] select',
+        'select[name*="campanha"]',
+        '.css-1s2u09g-control', // classe comum do react-select
+        '[class*="indicatorContainer"]'
+      ];
+      
+      for (const sel of seletoresAlternativos) {
+        const alt = page.locator(sel).first();
+        if (await alt.isVisible({ timeout: 1000 }).catch(() => false)) {
+          selectCampanha = alt;
+          console.log(`   ✅ Dropdown encontrado via: ${sel}`);
+          break;
+        }
+      }
+    }
+    
+    // Tira screenshot para debug
+    try {
+      await page.screenshot({ path: 'debug-campanha-antes-click.png', fullPage: true });
+      console.log('   📸 Screenshot salvo: debug-campanha-antes-click.png');
+    } catch (e) {}
+    
+    await selectCampanha.click({ force: true });
+    await page.waitForTimeout(2000);
     
     // Obtém todas as opções de campanha disponíveis
-    const opcoes = page.locator('.react-select__option');
-    const qtdOpcoes = await opcoes.count();
+    let opcoes = page.locator('.react-select__option');
+    let qtdOpcoes = await opcoes.count();
+    
+    // Se não encontrou opções, tenta outros seletores
+    if (qtdOpcoes === 0) {
+      console.log('   🔄 Nenhuma opção encontrada, tentando seletores alternativos...');
+      const seletoresOpcoes = [
+        'div[class*="option"]',
+        '[class*="menu"] [class*="option"]',
+        '.css-1n7v3ny-option',
+        'li[role="option"]'
+      ];
+      
+      for (const sel of seletoresOpcoes) {
+        opcoes = page.locator(sel);
+        qtdOpcoes = await opcoes.count();
+        if (qtdOpcoes > 0) {
+          console.log(`   ✅ Opções encontradas via: ${sel} (${qtdOpcoes})`);
+          break;
+        }
+      }
+    }
+    
+    console.log(`   📋 ${qtdOpcoes} opções de campanha encontradas`);
     
     // Coleta todos os textos das opções primeiro
     const listaCampanhas = [];
