@@ -1843,6 +1843,81 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log(`📸 Screenshot aprovação: ${screenshotPath}`);
   console.log(`📄 Boleto: ${boletoPath}`);
   console.log('═══════════════════════════════════════════════════════════════════════════');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ETAPA 15: ENVIAR ARQUIVOS PARA N8N/WEBHOOK
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log('');
+  console.log('📤 ETAPA 15: Enviando arquivos para n8n...');
+  
+  const webhookUrl = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/upload-boleto';
+  const leadId = process.env.LEAD_ID || '';
+  
+  if (webhookUrl && webhookUrl !== 'http://localhost:5678/webhook/upload-boleto') {
+    try {
+      const FormData = require('form-data');
+      const axios = require('axios');
+      
+      const formData = new FormData();
+      
+      // Adiciona dados JSON
+      formData.append('lead_id', leadId);
+      formData.append('cpf', CLIENTE.cpf);
+      formData.append('numero_inscricao', numeroInscricao || '');
+      formData.append('campanha', CLIENTE.campanha || '');
+      formData.append('curso', CLIENTE.curso || '');
+      formData.append('linha_digitavel', linhaDigitavel || '');
+      
+      // Adiciona screenshot de aprovação
+      if (fs.existsSync(screenshotPath)) {
+        formData.append('screenshot', fs.createReadStream(screenshotPath), {
+          filename: screenshotPath,
+          contentType: 'image/png'
+        });
+        console.log(`   📸 Anexando screenshot: ${screenshotPath}`);
+      }
+      
+      // Adiciona boleto PDF
+      if (fs.existsSync(boletoPath)) {
+        formData.append('boleto', fs.createReadStream(boletoPath), {
+          filename: boletoPath,
+          contentType: 'application/pdf'
+        });
+        console.log(`   📄 Anexando boleto: ${boletoPath}`);
+      } else {
+        // Tenta anexar PNG se PDF não existir
+        const boletoPngPath = boletoPath.replace('.pdf', '.png');
+        if (fs.existsSync(boletoPngPath)) {
+          formData.append('boleto', fs.createReadStream(boletoPngPath), {
+            filename: boletoPngPath,
+            contentType: 'image/png'
+          });
+          console.log(`   📄 Anexando boleto (PNG): ${boletoPngPath}`);
+        }
+      }
+      
+      // Envia para o webhook
+      const response = await axios.post(webhookUrl, formData, {
+        headers: {
+          ...formData.getHeaders()
+        },
+        timeout: 30000
+      });
+      
+      console.log(`   ✅ Arquivos enviados para n8n!`);
+      console.log(`   📊 Status: ${response.status}`);
+      if (response.data) {
+        console.log(`   📊 Resposta: ${JSON.stringify(response.data)}`);
+      }
+    } catch (webhookError) {
+      console.log(`   ⚠️ Erro ao enviar para n8n: ${webhookError.message}`);
+    }
+  } else {
+    console.log('   ⏭️ N8N_WEBHOOK_URL não configurado, pulando envio.');
+  }
+  
+  console.log('✅ ETAPA 15 CONCLUÍDA');
+  console.log('');
   
   // Fecha as páginas adicionais
   if (boletoPage) {

@@ -782,6 +782,212 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Inscrição PÓS-GRADUAÇÃO Síncrona (aguarda resultado)
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/inscricao-pos/sync', async (req, res) => {
+  // Debug: mostra o body completo recebido
+  console.log('');
+  console.log('📦 BODY RECEBIDO (PÓS-GRADUAÇÃO):', JSON.stringify(req.body, null, 2));
+  
+  const { 
+    nome, cpf, email, telefone, 
+    cep, numero, complemento, estado, cidade, 
+    curso, duracao, polo, campanha, matricula, mensalidade,
+    leadId, webhookUrl
+  } = req.body;
+  
+  // Aceita tanto "nascimento" quanto "data de nascimento"
+  const nascimento = req.body.nascimento || req.body['data de nascimento'] || req.body.dataNascimento;
+
+  // Validação básica
+  if (!nome || !cpf || !email || !telefone || !nascimento) {
+    return res.status(400).json({
+      sucesso: false,
+      erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento'
+    });
+  }
+
+  // Validação de campos obrigatórios de pós-graduação
+  if (!curso) {
+    return res.status(400).json({
+      sucesso: false,
+      erro: 'Campo obrigatório para pós-graduação: curso'
+    });
+  }
+
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('📥 NOVA REQUISIÇÃO DE INSCRIÇÃO PÓS-GRADUAÇÃO (SÍNCRONA)');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log(`   Nome: ${nome}`);
+  console.log(`   CPF: ${cpf}`);
+  console.log(`   Email: ${email}`);
+  console.log(`   Telefone: ${telefone}`);
+  console.log(`   Nascimento: ${nascimento}`);
+  console.log(`   CEP: ${cep || '(padrão)'}`);
+  console.log(`   Número: ${numero || '(padrão)'}`);
+  console.log(`   Estado: ${estado || '(padrão)'}`);
+  console.log(`   Cidade: ${cidade || '(padrão)'}`);
+  console.log('   --- DADOS PÓS-GRADUAÇÃO ---');
+  console.log(`   Curso: ${curso}`);
+  console.log(`   Duração: ${duracao || '(padrão)'} meses`);
+  console.log(`   Polo: ${polo || '(padrão)'}`);
+  console.log(`   Campanha: ${campanha || '(auto)'}`);
+  console.log(`   Matrícula: R$ ${matricula || '(padrão)'}`);
+  console.log(`   Mensalidade: R$ ${mensalidade || '(padrão)'}`);
+  console.log('   --- INTEGRAÇÃO N8N ---');
+  console.log(`   Lead ID: ${leadId || '(não informado)'}`);
+  console.log(`   Webhook URL: ${webhookUrl || '(não informado)'}`);
+  console.log('');
+
+  // Define variáveis de ambiente para o Playwright
+  const env = {
+    ...process.env,
+    CLIENTE_NOME: nome,
+    CLIENTE_CPF: cpf,
+    CLIENTE_EMAIL: email,
+    CLIENTE_TELEFONE: telefone,
+    CLIENTE_NASCIMENTO: nascimento,
+    CLIENTE_CEP: cep || '',
+    CLIENTE_NUMERO: numero || '',
+    CLIENTE_COMPLEMENTO: complemento || '',
+    CLIENTE_ESTADO: estado || '',
+    CLIENTE_CIDADE: cidade || '',
+    // Variáveis específicas de pós-graduação
+    CLIENTE_CURSO: curso,
+    CLIENTE_DURACAO: duracao || '',
+    CLIENTE_POLO: polo || '',
+    CLIENTE_CAMPANHA: campanha || '',
+    CLIENTE_MATRICULA: matricula || '',
+    CLIENTE_MENSALIDADE: mensalidade || '',
+    // Variáveis de integração n8n
+    LEAD_ID: leadId || '',
+    N8N_WEBHOOK_URL: webhookUrl || ''
+  };
+
+  // Executa o Playwright com spawn para logs em tempo real
+  console.log('🚀 Iniciando Playwright (PÓS-GRADUAÇÃO)...');
+  console.log('');
+  
+  // IMPORTANTE: Usa o script inscricao-pos.spec.js
+  const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao-pos.spec.js', '--config=playwright.config.server.js'], {
+    env,
+    cwd: __dirname,
+    shell: true
+  });
+
+  let stdout = '';
+  let stderr = '';
+
+  // Mostra logs em tempo real
+  processo.stdout.on('data', (data) => {
+    const texto = data.toString();
+    stdout += texto;
+    process.stdout.write(texto);
+  });
+
+  processo.stderr.on('data', (data) => {
+    const texto = data.toString();
+    stderr += texto;
+    process.stderr.write(texto);
+  });
+
+  processo.on('close', (code) => {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log(`📤 PROCESSO PÓS-GRADUAÇÃO FINALIZADO (código: ${code})`);
+    console.log('═══════════════════════════════════════════════════════════════');
+    
+    // Verifica se CPF já tinha inscrição
+    const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição') || stdout.includes('cpf já cadastrado');
+    
+    if (cpfJaInscrito) {
+      console.log('⚠️ CPF já possui inscrição');
+      return res.json({
+        sucesso: false,
+        erro: 'CPF já possui inscrição',
+        cliente: { nome, cpf, email }
+      });
+    }
+    
+    // Verifica se houve erro de CEP
+    const erroCep = stdout.includes('CEP NÃO FOI ENCONTRADO') || stdout.includes('CEP não encontrado');
+    
+    if (erroCep) {
+      console.log('❌ ERRO - CEP não foi encontrado');
+      return res.json({
+        sucesso: false,
+        erro: 'CEP não foi encontrado. Verifique se o CEP está correto.',
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
+      });
+    }
+    
+    // Verifica se o processo foi concluído com sucesso
+    const processoCompleto = stdout.includes('PROCESSO COMPLETO DE INSCRIÇÃO PÓS-GRADUAÇÃO');
+    
+    // Extrai informações do output
+    const numeroInscricaoMatch = stdout.match(/Número de Inscrição:\s*(\d+)/);
+    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
+    
+    const linhaDigitavelMatch = stdout.match(/Linha digitável:\s*([\d.\s]+)/);
+    const linhaDigitavel = linhaDigitavelMatch ? linhaDigitavelMatch[1].trim() : null;
+    
+    const screenshotMatch = stdout.match(/Screenshot aprovação:\s*(\S+)/);
+    const screenshotPath = screenshotMatch ? screenshotMatch[1] : null;
+    
+    const boletoMatch = stdout.match(/Boleto:\s*(\S+)/);
+    const boletoPath = boletoMatch ? boletoMatch[1] : null;
+    
+    const campanhaMatch = stdout.match(/Campanha:\s*(.+)/);
+    const campanhaUsada = campanhaMatch ? campanhaMatch[1].trim() : campanha;
+    
+    if (processoCompleto) {
+      console.log('✅ SUCESSO - Inscrição Pós-Graduação concluída!');
+      if (numeroInscricao) {
+        console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
+      }
+      if (linhaDigitavel) {
+        console.log(`📊 Linha Digitável: ${linhaDigitavel}`);
+      }
+      
+      return res.json({
+        sucesso: true,
+        numeroInscricao: numeroInscricao,
+        linhaDigitavel: linhaDigitavel,
+        screenshotPath: screenshotPath,
+        boletoPath: boletoPath,
+        campanhaUsada: campanhaUsada,
+        mensagem: 'Inscrição Pós-Graduação concluída com sucesso!',
+        cliente: { nome, cpf, email },
+        curso: {
+          nome: curso,
+          duracao: duracao,
+          matricula: matricula,
+          mensalidade: mensalidade
+        }
+      });
+    }
+    
+    // Se NÃO encontrou mensagem de finalização, é ERRO
+    console.log('❌ ERRO - Inscrição Pós-Graduação não foi finalizada corretamente');
+    return res.json({
+      sucesso: false,
+      erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição Pós-Graduação não foi finalizada corretamente',
+      logs: stdout.slice(-2000)
+    });
+  });
+
+  processo.on('error', (err) => {
+    console.log('❌ ERRO ao iniciar processo PÓS-GRADUAÇÃO:', err.message);
+    res.json({
+      sucesso: false,
+      erro: err.message
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // INICIA SERVIDOR
 // ═══════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
@@ -796,6 +1002,7 @@ app.listen(PORT, () => {
   console.log('   POST /inscricao/sync           - Inicia inscrição vestibular (aguarda resultado)');
   console.log('   POST /inscricao-enem/sync      - Inicia inscrição ENEM com notas');
   console.log('   POST /inscricao-enem-sem-nota/sync - Inicia inscrição ENEM sem notas');
+  console.log('   POST /inscricao-pos/sync       - Inicia inscrição PÓS-GRADUAÇÃO');
   console.log('   GET  /status                   - Status da execução atual');
   console.log('');
 });
