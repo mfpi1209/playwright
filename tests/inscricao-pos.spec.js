@@ -1332,114 +1332,126 @@ test('inscricao-pos', async ({ page, context }) => {
   
   await page.waitForTimeout(1000);
   
-  // Ir para Endereço - O checkout VTEX usa um "fake-button" especial
-  console.log('   📝 Clicando em Ir para o Endereço...');
-  let avancouEndereco = false;
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NAVEGAÇÃO NO CHECKOUT VTEX (SPA - Single Page Application)
+  // O checkout VTEX tem todas as seções na mesma página, com steps/accordion
+  // ═══════════════════════════════════════════════════════════════════════════
   
-  // Primeiro tenta o botão específico do VTEX (fake-button)
-  try {
-    const fakeBtn = page.locator('#fake-button-go-to-shipping');
-    if (await fakeBtn.isVisible({ timeout: 3000 })) {
-      console.log('   📍 Encontrou fake-button-go-to-shipping');
-      // O fake-button pode ter múltiplos elementos, clica no primeiro link/span dentro dele
-      const linkEndereco = fakeBtn.locator('a, span, div').filter({ hasText: /Ir para o Endereço/i }).first();
-      if (await linkEndereco.isVisible({ timeout: 2000 })) {
-        await linkEndereco.click({ force: true });
-        console.log('   ✅ Link "Ir para o Endereço" dentro do fake-button clicado');
-        avancouEndereco = true;
-      } else {
-        // Clica no próprio fake-button
-        await fakeBtn.click({ force: true });
-        console.log('   ✅ fake-button-go-to-shipping clicado');
-        avancouEndereco = true;
-      }
-    }
-  } catch (e) {
-    console.log(`   ⚠️ Erro no fake-button: ${e.message}`);
-  }
+  console.log('   📝 Navegando no checkout VTEX...');
   
-  // Fallback: link com ID específico do VTEX
-  if (!avancouEndereco) {
-    try {
-      const linkShipping = page.locator('#go-to-shipping, a[id*="shipping"], .link-shipping');
-      if (await linkShipping.first().isVisible({ timeout: 2000 })) {
-        await linkShipping.first().click({ force: true });
-        console.log('   ✅ Link shipping clicado');
-        avancouEndereco = true;
-      }
-    } catch (e) {}
-  }
-  
-  // Fallback: botão/link com texto
-  if (!avancouEndereco) {
-    const seletoresBtnEndereco = [
-      page.getByRole('link', { name: /Ir para o Endereço/i }),
-      page.getByRole('button', { name: /Ir para o Endereço/i }),
-      page.locator('a:has-text("Ir para o Endereço")'),
-      page.locator('button:has-text("Ir para o Endereço")')
-    ];
+  // Usa JavaScript para entender e navegar no checkout VTEX
+  const statusCheckout = await page.evaluate(() => {
+    // Verifica quais seções existem e estão visíveis
+    const sections = {
+      profile: document.querySelector('#client-profile-data'),
+      shipping: document.querySelector('#shipping-data'),
+      payment: document.querySelector('#payment-data')
+    };
     
-    for (const seletor of seletoresBtnEndereco) {
-      try {
-        if (await seletor.isVisible({ timeout: 1500 })) {
-          await seletor.scrollIntoViewIfNeeded();
-          await seletor.click({ force: true });
-          console.log('   ✅ Botão/Link Ir para o Endereço clicado');
-          avancouEndereco = true;
-          break;
+    // Verifica se cada seção está ativa/expandida
+    const isActive = (section) => {
+      if (!section) return false;
+      return section.classList.contains('active') || 
+             section.classList.contains('accordion-inner-show') ||
+             section.querySelector('.accordion-inner-show') !== null;
+    };
+    
+    // Procura o link real para ir para shipping (não o fake-button)
+    const linkShipping = document.querySelector('#go-to-shipping') ||
+                         document.querySelector('a[href="#/shipping"]') ||
+                         document.querySelector('.link-box-edit[data-i18n*="shipping"]');
+    
+    // Procura campos de endereço
+    const campoCep = document.querySelector('#ship-postalCode') ||
+                     document.querySelector('input[name="postalCode"]') ||
+                     document.querySelector('input[id*="postalCode"]');
+    
+    return {
+      hasProfile: !!sections.profile,
+      hasShipping: !!sections.shipping,
+      hasPayment: !!sections.payment,
+      profileActive: isActive(sections.profile),
+      shippingActive: isActive(sections.shipping),
+      paymentActive: isActive(sections.payment),
+      hasLinkShipping: !!linkShipping,
+      hasCampoCep: !!campoCep,
+      campoCepVisible: campoCep ? campoCep.offsetParent !== null : false
+    };
+  });
+  
+  console.log(`   📊 Status checkout: Profile=${statusCheckout.profileActive}, Shipping=${statusCheckout.shippingActive}, Payment=${statusCheckout.paymentActive}`);
+  console.log(`   📊 Campo CEP existe: ${statusCheckout.hasCampoCep}, visível: ${statusCheckout.campoCepVisible}`);
+  
+  // Se o campo CEP já está visível, não precisa clicar em "Ir para Endereço"
+  if (statusCheckout.campoCepVisible) {
+    console.log('   ✅ Campos de endereço já estão visíveis');
+  } else {
+    // Tenta expandir a seção de shipping
+    console.log('   📝 Tentando expandir seção de endereço...');
+    
+    const expanded = await page.evaluate(() => {
+      // Método 1: Clica no link #go-to-shipping
+      const linkShipping = document.querySelector('#go-to-shipping');
+      if (linkShipping) {
+        linkShipping.click();
+        return { method: 'go-to-shipping', success: true };
+      }
+      
+      // Método 2: Clica no header da seção shipping para expandir
+      const shippingHeader = document.querySelector('#shipping-data .accordion-toggle') ||
+                             document.querySelector('#shipping-data .link-box-edit') ||
+                             document.querySelector('[data-bind*="goToShipping"]');
+      if (shippingHeader) {
+        shippingHeader.click();
+        return { method: 'shipping-header', success: true };
+      }
+      
+      // Método 3: Usa a API do VTEX checkout se disponível
+      if (window.vtexjs && window.vtexjs.checkout) {
+        try {
+          // Simula navegação para step de shipping
+          window.location.hash = '#/shipping';
+          return { method: 'vtexjs-hash', success: true };
+        } catch (e) {}
+      }
+      
+      // Método 4: Clica em qualquer elemento que contenha "Ir para o Endereço"
+      const elements = document.querySelectorAll('a, button, span, p');
+      for (const el of elements) {
+        if (el.textContent?.includes('Ir para o Endereço') && el.offsetParent !== null) {
+          el.click();
+          return { method: 'text-match', success: true };
         }
+      }
+      
+      return { method: 'none', success: false };
+    });
+    
+    console.log(`   📍 Método usado: ${expanded.method}, sucesso: ${expanded.success}`);
+    
+    // Aguarda a seção expandir
+    await page.waitForTimeout(3000);
+    
+    // Verifica se agora o campo CEP está visível
+    const cepVisivelAgora = await page.evaluate(() => {
+      const campoCep = document.querySelector('#ship-postalCode') ||
+                       document.querySelector('input[name="postalCode"]');
+      return campoCep ? campoCep.offsetParent !== null : false;
+    });
+    
+    if (cepVisivelAgora) {
+      console.log('   ✅ Seção de endereço expandida com sucesso');
+    } else {
+      console.log('   ⚠️ Seção de endereço não expandiu, tentando navegar por hash...');
+      // Tenta navegar diretamente para a seção de shipping
+      try {
+        await page.evaluate(() => { window.location.hash = '#/shipping'; });
+        await page.waitForTimeout(3000);
       } catch (e) {}
     }
   }
   
-  // Fallback: JavaScript - clica no link específico
-  if (!avancouEndereco) {
-    try {
-      const clicked = await page.evaluate(() => {
-        // Procura especificamente por links/botões com "Ir para o Endereço"
-        const elements = document.querySelectorAll('a, button, span');
-        for (const el of elements) {
-          const txt = el.textContent?.trim() || '';
-          // Busca texto exato para evitar clicar no errado
-          if (txt === 'Ir para o Endereço' || txt.startsWith('Ir para o Endereço')) {
-            el.click();
-            return { success: true, text: txt };
-          }
-        }
-        // Tenta pelo ID
-        const goShipping = document.querySelector('#go-to-shipping');
-        if (goShipping) {
-          goShipping.click();
-          return { success: true, text: 'go-to-shipping' };
-        }
-        return { success: false };
-      });
-      if (clicked.success) {
-        console.log(`   ✅ Elemento "${clicked.text}" clicado (via JavaScript)`);
-        avancouEndereco = true;
-      }
-    } catch (e) {}
-  }
-  
-  if (!avancouEndereco) {
-    console.log('   ⚠️ Botão Ir para o Endereço não encontrado');
-    await page.screenshot({ path: 'debug-checkout-profile.png', fullPage: true });
-  }
-  
-  // Aguarda a seção de endereço aparecer
-  await page.waitForTimeout(3000);
-  
-  // Verifica se a seção de endereço/shipping está visível
-  try {
-    const secaoEndereco = page.locator('#shipping-data, .shipping-data, [data-i18n*="shipping"]');
-    if (await secaoEndereco.isVisible({ timeout: 5000 })) {
-      console.log('   ✅ Seção de endereço visível');
-    } else {
-      console.log('   ⚠️ Seção de endereço não visível');
-    }
-  } catch (e) {}
-  
-  console.log(`   📍 URL após clicar: ${page.url()}`);
+  console.log(`   📍 URL após navegação: ${page.url()}`);
   
   console.log('✅ ETAPA 9 CONCLUÍDA');
   console.log('');
@@ -1452,59 +1464,79 @@ test('inscricao-pos', async ({ page, context }) => {
   
   await page.waitForTimeout(2000);
   
-  // Preenche CEP - com múltiplos seletores
-  let cepPreenchido = false;
+  // Screenshot para debug
+  try {
+    await page.screenshot({ path: 'debug-etapa10-endereco.png', fullPage: true });
+    console.log('   📸 Screenshot: debug-etapa10-endereco.png');
+  } catch (e) {}
   
-  const seletoresCep = [
-    page.getByRole('textbox', { name: 'CEP *' }),
-    page.locator('input[name="postalCode"]'),
-    page.locator('input#ship-postalCode'),
-    page.locator('input[placeholder*="CEP" i]'),
-    page.locator('input[id*="postal" i]')
-  ];
+  // Usa JavaScript para preencher os campos de endereço diretamente
+  const resultadoEndereco = await page.evaluate((dados) => {
+    const result = { cep: false, numero: false, logs: [] };
+    
+    // Procura campo CEP
+    const campoCep = document.querySelector('#ship-postalCode') ||
+                     document.querySelector('input[name="postalCode"]') ||
+                     document.querySelector('input[id*="postalCode"]') ||
+                     document.querySelector('input[placeholder*="CEP" i]');
+    
+    if (campoCep && campoCep.offsetParent !== null) {
+      campoCep.focus();
+      campoCep.value = dados.cep;
+      campoCep.dispatchEvent(new Event('input', { bubbles: true }));
+      campoCep.dispatchEvent(new Event('change', { bubbles: true }));
+      campoCep.dispatchEvent(new Event('blur', { bubbles: true }));
+      result.cep = true;
+      result.logs.push(`CEP preenchido: ${dados.cep}`);
+    } else {
+      result.logs.push('Campo CEP não encontrado ou não visível');
+    }
+    
+    // Procura campo Número
+    const campoNumero = document.querySelector('#ship-number') ||
+                        document.querySelector('input[name="number"]') ||
+                        document.querySelector('input[id*="number"]') ||
+                        document.querySelector('input[placeholder*="Número" i]');
+    
+    if (campoNumero && campoNumero.offsetParent !== null) {
+      campoNumero.focus();
+      campoNumero.value = dados.numero;
+      campoNumero.dispatchEvent(new Event('input', { bubbles: true }));
+      campoNumero.dispatchEvent(new Event('change', { bubbles: true }));
+      campoNumero.dispatchEvent(new Event('blur', { bubbles: true }));
+      result.numero = true;
+      result.logs.push(`Número preenchido: ${dados.numero}`);
+    } else {
+      result.logs.push('Campo Número não encontrado ou não visível');
+    }
+    
+    // Lista todos os inputs visíveis para debug
+    const inputs = document.querySelectorAll('input[type="text"], input:not([type])');
+    result.inputsVisiveis = Array.from(inputs)
+      .filter(i => i.offsetParent !== null)
+      .map(i => ({ id: i.id, name: i.name, placeholder: i.placeholder?.substring(0, 30) }))
+      .slice(0, 10);
+    
+    return result;
+  }, { cep: CLIENTE.cep, numero: CLIENTE.numero });
   
-  for (const seletor of seletoresCep) {
-    try {
-      if (await seletor.isVisible({ timeout: 2000 })) {
-        await seletor.click();
-        await seletor.fill(CLIENTE.cep);
-        await page.waitForTimeout(2000);
-        console.log(`   ✅ CEP: ${CLIENTE.cep}`);
-        cepPreenchido = true;
-        break;
-      }
-    } catch (e) {}
-  }
+  resultadoEndereco.logs.forEach(log => console.log(`   📝 ${log}`));
   
-  if (!cepPreenchido) {
+  if (resultadoEndereco.cep) {
+    console.log(`   ✅ CEP: ${CLIENTE.cep}`);
+  } else {
     console.log('   ⚠️ Campo CEP não encontrado');
+    console.log('   📋 Inputs visíveis:', JSON.stringify(resultadoEndereco.inputsVisiveis));
   }
   
-  // Preenche Número - com múltiplos seletores
-  let numeroPreenchido = false;
-  
-  const seletoresNumero = [
-    page.getByRole('textbox', { name: 'Número *' }),
-    page.locator('input[name="number"]'),
-    page.locator('input#ship-number'),
-    page.locator('input[placeholder*="Número" i]')
-  ];
-  
-  for (const seletor of seletoresNumero) {
-    try {
-      if (await seletor.isVisible({ timeout: 2000 })) {
-        await seletor.click();
-        await seletor.fill(CLIENTE.numero);
-        console.log(`   ✅ Número: ${CLIENTE.numero}`);
-        numeroPreenchido = true;
-        break;
-      }
-    } catch (e) {}
-  }
-  
-  if (!numeroPreenchido) {
+  if (resultadoEndereco.numero) {
+    console.log(`   ✅ Número: ${CLIENTE.numero}`);
+  } else {
     console.log('   ⚠️ Campo Número não encontrado');
   }
+  
+  // Aguarda o CEP ser processado (autocomplete de endereço)
+  await page.waitForTimeout(3000);
   
   await page.waitForTimeout(1000);
   
