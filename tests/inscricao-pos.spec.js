@@ -1525,48 +1525,125 @@ test('inscricao-pos', async ({ page, context }) => {
     console.log('   ⚠️ Opção de pagamento não encontrada, continuando...');
   }
   
-  // Clica no botão "Finalizar compra"
-  console.log('   📝 Clicando em Finalizar compra...');
+  // DEBUG: Lista todos os botões visíveis na página
+  console.log('   📋 Listando botões disponíveis na página...');
+  try {
+    const botoesDisponiveis = await page.evaluate(() => {
+      const btns = document.querySelectorAll('button, a.btn, input[type="submit"]');
+      return Array.from(btns).map(b => ({
+        tag: b.tagName,
+        text: b.textContent?.trim().substring(0, 60) || '',
+        id: b.id || '',
+        className: b.className?.substring(0, 60) || '',
+        visible: b.offsetParent !== null,
+        disabled: b.disabled || false
+      })).filter(b => b.visible && b.text.length > 0);
+    });
+    
+    console.log(`   📋 ${botoesDisponiveis.length} botões/links encontrados:`);
+    botoesDisponiveis.forEach((b, i) => {
+      console.log(`      ${i + 1}. [${b.tag}] "${b.text}" (id: ${b.id || 'N/A'}, disabled: ${b.disabled})`);
+    });
+  } catch (e) {
+    console.log(`   ⚠️ Erro ao listar botões: ${e.message}`);
+  }
+  
+  // Screenshot para debug
+  try {
+    await page.screenshot({ path: 'debug-etapa11-pagamento.png', fullPage: true });
+    console.log('   📸 Screenshot: debug-etapa11-pagamento.png');
+  } catch (e) {}
+  
+  // Clica no botão de finalização (pode ser "Continuar Inscrição", "Finalizar compra", etc)
+  console.log('   📝 Procurando botão de finalização...');
   
   let finalizou = false;
   
-  // Tenta pelo ID específico do botão
+  // Lista de textos possíveis para o botão (em ordem de prioridade)
+  const textosFinalizacao = [
+    'Continuar Inscrição',
+    'Continuar Inscricao',
+    'Finalizar compra',
+    'Finalizar Compra',
+    'Confirmar',
+    'Concluir',
+    'Prosseguir',
+    'Avançar'
+  ];
+  
+  // Tenta pelo ID específico do botão VTEX
   try {
     const btnFinalizar = page.locator('#payment-data-submit').last();
     if (await btnFinalizar.isVisible({ timeout: 3000 })) {
+      const textoBtn = await btnFinalizar.textContent();
+      console.log(`   📍 Botão #payment-data-submit encontrado: "${textoBtn?.trim()}"`);
       await btnFinalizar.scrollIntoViewIfNeeded();
-      await btnFinalizar.click();
-      console.log('   ✅ Botão "Finalizar compra" clicado (via ID)');
+      await btnFinalizar.click({ force: true });
+      console.log(`   ✅ Botão clicado (via ID)`);
       finalizou = true;
     }
   } catch (e) {}
   
-  // Fallback: pelo texto
+  // Tenta por cada texto possível
   if (!finalizou) {
-    try {
-      const btn = page.getByRole('button', { name: /Finalizar compra/i });
-      if (await btn.isVisible({ timeout: 2000 })) {
-        await btn.click();
-        console.log('   ✅ Botão "Finalizar compra" clicado (via texto)');
-        finalizou = true;
-      }
-    } catch (e) {}
+    for (const texto of textosFinalizacao) {
+      try {
+        const btn = page.getByRole('button', { name: new RegExp(texto, 'i') });
+        if (await btn.isVisible({ timeout: 1000 })) {
+          const textoReal = await btn.textContent();
+          console.log(`   📍 Botão encontrado: "${textoReal?.trim()}"`);
+          await btn.scrollIntoViewIfNeeded();
+          await btn.click({ force: true });
+          console.log(`   ✅ Botão "${texto}" clicado`);
+          finalizou = true;
+          break;
+        }
+      } catch (e) {}
+    }
   }
   
-  // Fallback: botão submit com classe específica
+  // Fallback: botão submit com classe específica do VTEX
   if (!finalizou) {
     try {
-      const btn = page.locator('button.btn-success.btn-large.btn-block').last();
+      const btn = page.locator('button.btn-success.btn-large.btn-block, button.btn-success.btn-block, button.submit-button').last();
       if (await btn.isVisible({ timeout: 2000 })) {
-        await btn.click();
+        const textoBtn = await btn.textContent();
+        console.log(`   📍 Botão encontrado via classe: "${textoBtn?.trim()}"`);
+        await btn.scrollIntoViewIfNeeded();
+        await btn.click({ force: true });
         console.log('   ✅ Botão finalizar clicado (via classe)');
         finalizou = true;
       }
     } catch (e) {}
   }
   
+  // Fallback: qualquer botão que contenha os textos de finalização via JavaScript
   if (!finalizou) {
-    console.log('   ⚠️ Botão Finalizar compra não encontrado');
+    try {
+      const clicked = await page.evaluate((textos) => {
+        const btns = document.querySelectorAll('button, input[type="submit"]');
+        for (const btn of btns) {
+          const txt = btn.textContent?.toLowerCase() || btn.value?.toLowerCase() || '';
+          for (const t of textos) {
+            if (txt.includes(t.toLowerCase())) {
+              btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              btn.click();
+              return { success: true, text: btn.textContent?.trim() || btn.value };
+            }
+          }
+        }
+        return { success: false };
+      }, textosFinalizacao);
+      
+      if (clicked.success) {
+        console.log(`   ✅ Botão "${clicked.text}" clicado (via JavaScript)`);
+        finalizou = true;
+      }
+    } catch (e) {}
+  }
+  
+  if (!finalizou) {
+    console.log('   ⚠️ Nenhum botão de finalização encontrado');
     await page.screenshot({ path: 'erro-finalizar-compra.png', fullPage: true });
   }
   
