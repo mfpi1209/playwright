@@ -18,9 +18,9 @@ export default defineConfig({
     headless: true,
     screenshot: 'off', // Desabilitado no servidor
     video: 'off', // Desabilitado no servidor
-    slowMo: 300, // Delay entre ações para parecer humano
-    actionTimeout: 30000,
-    navigationTimeout: 60000,
+    slowMo: 500, // Delay entre ações para parecer humano (aumentado para servidor)
+    actionTimeout: 45000,
+    navigationTimeout: 90000,
     // Configurações para parecer mais humano
     viewport: { width: 1920, height: 1080 },
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',

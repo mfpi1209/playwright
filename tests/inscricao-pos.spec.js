@@ -349,7 +349,7 @@ test('inscricao-pos', async ({ page, context }) => {
   
   // Aguarda aparecer os cards de resultado
   try {
-    await page.waitForSelector('a[href*="/pos-"][href$="/p"]', { timeout: 10000 });
+    await page.waitForSelector('a[href*="/pos-"][href$="/p"]', { timeout: 20000 });
     console.log('   ✅ Resultados carregados');
   } catch (e) {
     console.log('   ⚠️ Timeout aguardando resultados');
@@ -783,18 +783,119 @@ test('inscricao-pos', async ({ page, context }) => {
   
   // Continuar Inscrição
   console.log('   📝 Clicando em Continuar Inscrição...');
-  await page.getByRole('button', { name: 'Continuar Inscrição' }).click();
+  
+  // Primeiro, fecha qualquer modal/overlay que possa estar bloqueando
+  try {
+    // Fecha modal de cookies
+    const cookieSelectors = [
+      'button:has-text("Aceitar")',
+      'button:has-text("Aceito")',
+      'button:has-text("OK")',
+      'button:has-text("Entendi")',
+      '[id*="cookie"] button',
+      '.cookie-banner button',
+      '.consent button',
+      '#onetrust-accept-btn-handler'
+    ];
+    
+    for (const sel of cookieSelectors) {
+      const btnCookie = page.locator(sel).first();
+      if (await btnCookie.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await btnCookie.click();
+        console.log('   ✅ Modal de cookies fechado');
+        await page.waitForTimeout(1000);
+        break;
+      }
+    }
+    
+    // Fecha o formulário de download/contato que bloqueia a página
+    const formBackdrop = page.locator('.sectionContactFormNewsDownloadFormBackdrop, [class*="Backdrop"], [class*="backdrop"]').first();
+    if (await formBackdrop.isVisible({ timeout: 1000 }).catch(() => false)) {
+      console.log('   📍 Backdrop de formulário detectado, removendo...');
+      await page.evaluate(() => {
+        // Remove backdrops
+        document.querySelectorAll('[class*="Backdrop"], [class*="backdrop"]').forEach(el => el.remove());
+        // Remove formulários overlay
+        document.querySelectorAll('[class*="ContactForm"], [class*="DownloadForm"]').forEach(el => {
+          if (el.style) el.style.display = 'none';
+        });
+        // Remove overlays
+        document.querySelectorAll('.overlay, .modal-backdrop').forEach(el => el.remove());
+      });
+      console.log('   ✅ Overlay removido via JavaScript');
+      await page.waitForTimeout(500);
+    }
+  } catch (e) {
+    console.log(`   ⚠️ Erro ao fechar modais: ${e.message}`);
+  }
+  
+  // Pressiona Escape para fechar qualquer modal
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(500);
+  
+  // Scroll para o botão de Continuar Inscrição para evitar overlays
+  await page.evaluate(() => {
+    const btns = document.querySelectorAll('button');
+    for (const btn of btns) {
+      if (btn.textContent && btn.textContent.includes('Continuar')) {
+        btn.scrollIntoView({ block: 'center' });
+        break;
+      }
+    }
+  });
+  await page.waitForTimeout(500);
+  
+  // Tenta clicar no botão
+  const btnContinuarInscricao = page.getByRole('button', { name: 'Continuar Inscrição' });
+  if (await btnContinuarInscricao.isVisible({ timeout: 5000 })) {
+    await btnContinuarInscricao.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
+    await btnContinuarInscricao.click();
+    console.log('   ✅ Botão "Continuar Inscrição" clicado');
+  } else {
+    console.log('   ⚠️ Botão "Continuar Inscrição" não visível, tentando alternativas...');
+    // Tenta outros seletores
+    const btnAlt = page.locator('button:has-text("Continuar")').first();
+    if (await btnAlt.isVisible({ timeout: 3000 })) {
+      await btnAlt.click();
+      console.log('   ✅ Botão alternativo clicado');
+    }
+  }
+  
+  // Aguarda um momento para verificar se há mensagem de erro
+  await page.waitForTimeout(3000);
+  
+  // Verifica se há mensagem de erro (CPF já cadastrado, etc)
+  try {
+    const erroMsg = page.locator('text=/já cadastrado|já existe|CPF inválido|erro|falha/i').first();
+    if (await erroMsg.isVisible({ timeout: 2000 })) {
+      const textoErro = await erroMsg.textContent();
+      console.log(`   ❌ ERRO DETECTADO: ${textoErro}`);
+      await page.screenshot({ path: 'erro-cpf-cadastrado.png', fullPage: true });
+    }
+  } catch (e) {}
+  
+  // Verifica se há modal de erro
+  try {
+    const modalErro = page.locator('.modal, [role="dialog"], .alert, .error-message').first();
+    if (await modalErro.isVisible({ timeout: 1000 })) {
+      const textoModal = await modalErro.textContent();
+      console.log(`   ⚠️ Modal detectado: ${textoModal?.substring(0, 100)}...`);
+    }
+  } catch (e) {}
   
   // Aguarda navegação para página de campanha
   console.log('   ⏳ Aguardando navegação para página de campanha...');
   try {
-    await page.waitForURL('**/campanha-comercial**', { timeout: 15000 });
+    await page.waitForURL('**/campanha-comercial**', { timeout: 30000 });
     console.log('   ✅ Navegou para página de campanha');
   } catch (e) {
     console.log('   ⚠️ Timeout esperando página de campanha, verificando URL...');
+    // Screenshot para debug
+    await page.screenshot({ path: 'debug-apos-continuar-inscricao.png', fullPage: true });
   }
   
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(5000);
   console.log(`   📍 URL após clique: ${page.url()}`);
   
   console.log('✅ ETAPA 6 CONCLUÍDA');
@@ -806,7 +907,7 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log('📌 ETAPA 7: Campanha Comercial');
   
   // Aguarda página de campanha carregar completamente
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(5000);
   
   let urlAtualEtapa7 = page.url();
   console.log(`   📍 URL atual: ${urlAtualEtapa7}`);
@@ -1010,7 +1111,7 @@ test('inscricao-pos', async ({ page, context }) => {
       
       // Seleciona a opção
       await page.keyboard.press('Enter');
-      await page.waitForTimeout(3000); // Aguarda valores atualizarem
+      await page.waitForTimeout(5000); // Aguarda valores atualizarem
       
       // Lê os valores da campanha
       let valores = await lerValoresCampanha();
@@ -1087,7 +1188,7 @@ test('inscricao-pos', async ({ page, context }) => {
     
     // Clica em Aplicar campanha
     await page.getByRole('button', { name: 'Aplicar campanha' }).click();
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
     console.log(`   ✅ Campanha ${campanhaEscolhida} aplicada`);
   }
   
@@ -1204,8 +1305,16 @@ test('inscricao-pos', async ({ page, context }) => {
   }
   
   // Aguarda navegação para o checkout
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(8000);
   await manterCursorNaTela(page);
+  
+  // Tenta esperar pelo checkout
+  try {
+    await page.waitForURL('**/checkout/**', { timeout: 15000 });
+    console.log('   ✅ Navegou para checkout');
+  } catch (e) {
+    console.log('   ⚠️ Timeout esperando checkout, continuando...');
+  }
   
   // Verifica se realmente saiu da página de campanha
   const urlAposClique = page.url();
@@ -1228,7 +1337,7 @@ test('inscricao-pos', async ({ page, context }) => {
           continuar.click();
         }
       });
-      await page.waitForTimeout(5000);
+      await page.waitForTimeout(8000);
       console.log(`   📍 URL após segunda tentativa: ${page.url()}`);
     } catch (e) {
       console.log(`   ⚠️ Segunda tentativa falhou: ${e.message}`);
@@ -1245,11 +1354,11 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log(`   📍 URL: ${page.url()}`);
   
   // Aguarda a página de checkout carregar completamente
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(5000);
   
   // Aguarda o checkout VTEX carregar (espera o DOM estar pronto)
   try {
-    await page.waitForLoadState('networkidle', { timeout: 15000 });
+    await page.waitForLoadState('networkidle', { timeout: 30000 });
     console.log('   ✅ Página carregada (networkidle)');
   } catch (e) {
     console.log('   ⚠️ Timeout esperando networkidle, continuando...');
@@ -1382,14 +1491,60 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log(`   📊 Status checkout: Profile=${statusCheckout.profileActive}, Shipping=${statusCheckout.shippingActive}, Payment=${statusCheckout.paymentActive}`);
   console.log(`   📊 Campo CEP existe: ${statusCheckout.hasCampoCep}, visível: ${statusCheckout.campoCepVisible}`);
   
-  // Se o campo CEP já está visível, não precisa clicar em "Ir para Endereço"
-  if (statusCheckout.campoCepVisible) {
+  // Verifica se o botão "Ir para o Pagamento" ou "fake-button-go-to-shipping" está visível
+  const btnFakeShipping = page.locator('#fake-button-go-to-shipping').first();
+  const btnPagamento = page.locator('button:has-text("Ir para o Pagamento")').first();
+  
+  const fakeVisivel = await btnFakeShipping.isVisible({ timeout: 2000 }).catch(() => false);
+  const pagamentoVisivel = await btnPagamento.isVisible({ timeout: 2000 }).catch(() => false);
+  
+  console.log(`   📍 Botão fake-button visível: ${fakeVisivel}, Botão Pagamento visível: ${pagamentoVisivel}`);
+  
+  if (fakeVisivel || pagamentoVisivel) {
+    console.log('   ✅ Dados já preenchidos! Tentando navegar para Pagamento...');
+    
+    // Tenta via JavaScript diretamente (mais confiável)
+    await page.evaluate(() => {
+      // Método 1: Clica na seção de pagamento para expandir
+      const paymentSection = document.querySelector('#payment-data');
+      if (paymentSection) {
+        const editLink = paymentSection.querySelector('.link-box-edit');
+        if (editLink) {
+          console.log('Clicando em link-box-edit do payment');
+          editLink.click();
+          return;
+        }
+        const accordionToggle = paymentSection.querySelector('.accordion-toggle');
+        if (accordionToggle) {
+          console.log('Clicando em accordion-toggle do payment');
+          accordionToggle.click();
+          return;
+        }
+      }
+      
+      // Método 2: Navega para #/payment
+      if (window.location.hash !== '#/payment') {
+        console.log('Navegando para #/payment via hash');
+        window.location.hash = '#/payment';
+      }
+    });
+    
+    await page.waitForTimeout(5000);
+    console.log(`   📍 URL após tentar navegar para Pagamento: ${page.url()}`);
+  } else if (statusCheckout.campoCepVisible) {
     console.log('   ✅ Campos de endereço já estão visíveis');
   } else {
     // Tenta expandir a seção de shipping
     console.log('   📝 Tentando expandir seção de endereço...');
     
     const expanded = await page.evaluate(() => {
+      // Método 0: Clica no botão fake-button-go-to-shipping (específico do VTEX)
+      const fakeButton = document.querySelector('#fake-button-go-to-shipping');
+      if (fakeButton && fakeButton.offsetParent !== null) {
+        fakeButton.click();
+        return { method: 'fake-button-go-to-shipping', success: true };
+      }
+      
       // Método 1: Clica no link #go-to-shipping
       const linkShipping = document.querySelector('#go-to-shipping');
       if (linkShipping) {
@@ -1429,8 +1584,18 @@ test('inscricao-pos', async ({ page, context }) => {
     
     console.log(`   📍 Método usado: ${expanded.method}, sucesso: ${expanded.success}`);
     
-    // Aguarda a seção expandir
-    await page.waitForTimeout(3000);
+    // Se usou o fake-button, aguarda mais tempo para a navegação
+    if (expanded.method === 'fake-button-go-to-shipping') {
+      console.log('   ⏳ Aguardando navegação do fake-button...');
+      await page.waitForTimeout(5000);
+      
+      // Verifica se a URL mudou
+      const urlAtual = page.url();
+      console.log(`   📍 URL após fake-button: ${urlAtual}`);
+    } else {
+      // Aguarda a seção expandir
+      await page.waitForTimeout(3000);
+    }
     
     // Verifica se agora o campo CEP está visível
     const cepVisivelAgora = await page.evaluate(() => {
@@ -1470,73 +1635,84 @@ test('inscricao-pos', async ({ page, context }) => {
     console.log('   📸 Screenshot: debug-etapa10-endereco.png');
   } catch (e) {}
   
-  // Usa JavaScript para preencher os campos de endereço diretamente
-  const resultadoEndereco = await page.evaluate((dados) => {
-    const result = { cep: false, numero: false, logs: [] };
+  // Verifica se o endereço já está preenchido (seção de endereço mostra dados)
+  const enderecoJaPreenchido = await page.evaluate(() => {
+    // Verifica se há texto de endereço visível na seção de endereço
+    const secaoEndereco = document.querySelector('#shipping-data, .shipping-data');
+    if (secaoEndereco) {
+      const texto = secaoEndereco.textContent || '';
+      // Se tiver CEP ou nome de cidade, o endereço já está preenchido
+      if (texto.match(/\d{5}-?\d{3}/) || texto.includes('São Paulo') || texto.includes('Brasil')) {
+        return true;
+      }
+    }
+    // Verifica se a seção de pagamento está visível (significa que endereço já foi preenchido)
+    const secaoPagamento = document.querySelector('#payment-data');
+    if (secaoPagamento && secaoPagamento.offsetParent !== null) {
+      return true;
+    }
+    return false;
+  });
+  
+  if (enderecoJaPreenchido) {
+    console.log('   ✅ Endereço já preenchido anteriormente');
+  } else {
+    console.log('   📝 Tentando preencher campos de endereço...');
+    // Usa JavaScript para preencher os campos de endereço diretamente
+    const resultadoEndereco = await page.evaluate((dados) => {
+      const result = { cep: false, numero: false, logs: [] };
+      
+      // Procura campo CEP
+      const campoCep = document.querySelector('#ship-postalCode') ||
+                       document.querySelector('input[name="postalCode"]') ||
+                       document.querySelector('input[id*="postalCode"]') ||
+                       document.querySelector('input[placeholder*="CEP" i]');
+      
+      if (campoCep && campoCep.offsetParent !== null) {
+        campoCep.focus();
+        campoCep.value = dados.cep;
+        campoCep.dispatchEvent(new Event('input', { bubbles: true }));
+        campoCep.dispatchEvent(new Event('change', { bubbles: true }));
+        campoCep.dispatchEvent(new Event('blur', { bubbles: true }));
+        result.cep = true;
+        result.logs.push(`CEP preenchido: ${dados.cep}`);
+      } else {
+        result.logs.push('Campo CEP não encontrado ou não visível');
+      }
+      
+      // Procura campo Número
+      const campoNumero = document.querySelector('#ship-number') ||
+                          document.querySelector('input[name="number"]') ||
+                          document.querySelector('input[id*="number"]') ||
+                          document.querySelector('input[placeholder*="Número" i]');
+      
+      if (campoNumero && campoNumero.offsetParent !== null) {
+        campoNumero.focus();
+        campoNumero.value = dados.numero;
+        campoNumero.dispatchEvent(new Event('input', { bubbles: true }));
+        campoNumero.dispatchEvent(new Event('change', { bubbles: true }));
+        campoNumero.dispatchEvent(new Event('blur', { bubbles: true }));
+        result.numero = true;
+        result.logs.push(`Número preenchido: ${dados.numero}`);
+      } else {
+        result.logs.push('Campo Número não encontrado ou não visível');
+      }
+      
+      return result;
+    }, { cep: CLIENTE.cep, numero: CLIENTE.numero });
     
-    // Procura campo CEP
-    const campoCep = document.querySelector('#ship-postalCode') ||
-                     document.querySelector('input[name="postalCode"]') ||
-                     document.querySelector('input[id*="postalCode"]') ||
-                     document.querySelector('input[placeholder*="CEP" i]');
+    resultadoEndereco.logs.forEach(log => console.log(`   📝 ${log}`));
     
-    if (campoCep && campoCep.offsetParent !== null) {
-      campoCep.focus();
-      campoCep.value = dados.cep;
-      campoCep.dispatchEvent(new Event('input', { bubbles: true }));
-      campoCep.dispatchEvent(new Event('change', { bubbles: true }));
-      campoCep.dispatchEvent(new Event('blur', { bubbles: true }));
-      result.cep = true;
-      result.logs.push(`CEP preenchido: ${dados.cep}`);
-    } else {
-      result.logs.push('Campo CEP não encontrado ou não visível');
+    if (resultadoEndereco.cep) {
+      console.log(`   ✅ CEP: ${CLIENTE.cep}`);
+    }
+    if (resultadoEndereco.numero) {
+      console.log(`   ✅ Número: ${CLIENTE.numero}`);
     }
     
-    // Procura campo Número
-    const campoNumero = document.querySelector('#ship-number') ||
-                        document.querySelector('input[name="number"]') ||
-                        document.querySelector('input[id*="number"]') ||
-                        document.querySelector('input[placeholder*="Número" i]');
-    
-    if (campoNumero && campoNumero.offsetParent !== null) {
-      campoNumero.focus();
-      campoNumero.value = dados.numero;
-      campoNumero.dispatchEvent(new Event('input', { bubbles: true }));
-      campoNumero.dispatchEvent(new Event('change', { bubbles: true }));
-      campoNumero.dispatchEvent(new Event('blur', { bubbles: true }));
-      result.numero = true;
-      result.logs.push(`Número preenchido: ${dados.numero}`);
-    } else {
-      result.logs.push('Campo Número não encontrado ou não visível');
-    }
-    
-    // Lista todos os inputs visíveis para debug
-    const inputs = document.querySelectorAll('input[type="text"], input:not([type])');
-    result.inputsVisiveis = Array.from(inputs)
-      .filter(i => i.offsetParent !== null)
-      .map(i => ({ id: i.id, name: i.name, placeholder: i.placeholder?.substring(0, 30) }))
-      .slice(0, 10);
-    
-    return result;
-  }, { cep: CLIENTE.cep, numero: CLIENTE.numero });
-  
-  resultadoEndereco.logs.forEach(log => console.log(`   📝 ${log}`));
-  
-  if (resultadoEndereco.cep) {
-    console.log(`   ✅ CEP: ${CLIENTE.cep}`);
-  } else {
-    console.log('   ⚠️ Campo CEP não encontrado');
-    console.log('   📋 Inputs visíveis:', JSON.stringify(resultadoEndereco.inputsVisiveis));
+    // Aguarda o CEP ser processado (autocomplete de endereço)
+    await page.waitForTimeout(3000);
   }
-  
-  if (resultadoEndereco.numero) {
-    console.log(`   ✅ Número: ${CLIENTE.numero}`);
-  } else {
-    console.log('   ⚠️ Campo Número não encontrado');
-  }
-  
-  // Aguarda o CEP ser processado (autocomplete de endereço)
-  await page.waitForTimeout(3000);
   
   await page.waitForTimeout(1000);
   
@@ -2178,15 +2354,21 @@ test('inscricao-pos', async ({ page, context }) => {
     await siaaPage.screenshot({ path: screenshotPath, fullPage: false });
   }
   
+  console.log('   📝 Preparando para gerar boleto...');
+  
   // Verifica se há um modal de seleção de inscrição aberto
   try {
+    console.log('   📍 Verificando modais...');
     const modalOverlay = siaaPage.locator('.ui-widget-overlay.ui-dialog-mask');
-    if (await modalOverlay.isVisible({ timeout: 2000 })) {
+    const modalVisible = await modalOverlay.isVisible({ timeout: 2000 }).catch(() => false);
+    console.log(`   📍 Modal overlay visível: ${modalVisible}`);
+    
+    if (modalVisible) {
       console.log('   📍 Modal de seleção detectado');
       
       // Tenta fechar clicando fora ou no botão fechar
       const btnFechar = siaaPage.locator('.ui-dialog-titlebar-close, button:has-text("Fechar"), .ui-icon-closethick').first();
-      if (await btnFechar.isVisible({ timeout: 1000 })) {
+      if (await btnFechar.isVisible({ timeout: 1000 }).catch(() => false)) {
         await btnFechar.click();
         console.log('   ✅ Modal fechado');
         await siaaPage.waitForTimeout(1000);
@@ -2196,12 +2378,18 @@ test('inscricao-pos', async ({ page, context }) => {
         await siaaPage.waitForTimeout(1000);
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    console.log(`   ⚠️ Erro verificando modal: ${e.message}`);
+  }
   
   // Verifica se há um dropdown para selecionar a inscrição e seleciona a mais recente
   try {
+    console.log('   📍 Verificando dropdown de inscrições...');
     const selectInscricao = siaaPage.locator('#formulario\\:inscricao_candidato, select[id*="inscricao"]').first();
-    if (await selectInscricao.isVisible({ timeout: 2000 })) {
+    const dropdownVisible = await selectInscricao.isVisible({ timeout: 2000 }).catch(() => false);
+    console.log(`   📍 Dropdown visível: ${dropdownVisible}`);
+    
+    if (dropdownVisible) {
       console.log('   📍 Dropdown de inscrições detectado');
       // Seleciona a primeira opção (mais recente)
       await selectInscricao.click();
@@ -2209,51 +2397,81 @@ test('inscricao-pos', async ({ page, context }) => {
       await siaaPage.keyboard.press('Enter');
       await siaaPage.waitForTimeout(1000);
     }
-  } catch (e) {}
+  } catch (e) {
+    console.log(`   ⚠️ Erro verificando dropdown: ${e.message}`);
+  }
   
   // Scroll para encontrar o botão de Emitir Boleto
+  console.log('   📍 Fazendo scroll para botão Emitir Boleto...');
   await siaaPage.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
   await siaaPage.waitForTimeout(1000);
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // DOWNLOAD DIRETO DO BOLETO VIA INTERCEPTAÇÃO DE REDE
+  // DOWNLOAD DO BOLETO (via click e captura de nova página)
   // ═══════════════════════════════════════════════════════════════════════════
   
-  let pdfBuffer = null;
+  console.log('   [BOLETO] Iniciando processo de download do boleto...');
+
   let linhaDigitavel = null;
   let boletoPage = null;
-  
-  // Configura interceptação para capturar o PDF diretamente da rede
-  await context.route('**/boleto/getBoletoDiversos**', async (route) => {
-    const pdfUrl = route.request().url();
-    console.log(`   🎯 URL do PDF interceptada: ${pdfUrl.substring(0, 80)}...`);
-    
-    // Faz a requisição e captura a resposta
-    const response = await route.fetch();
-    const body = await response.body();
-    
-    console.log(`   📄 Content-Type: ${response.headers()['content-type']}`);
-    console.log(`   📦 Tamanho: ${body.length} bytes`);
-    
-    // Se começa com %PDF, é o PDF real
-    if (body.slice(0, 5).toString().includes('%PDF')) {
-      pdfBuffer = body;
-      console.log('   ✅ PDF capturado com sucesso via interceptação!');
-    }
-    
-    // Continua a requisição normalmente para o browser
-    await route.fulfill({ response });
-  });
-  
+
   try {
-    // Localiza o botão de Emitir Boleto
+    // Localiza o botao de Emitir Boleto
+    console.log('   [BOLETO] Buscando botao Emitir Boleto...');
     let btnEmitirBoleto = siaaPage.locator('#formulario\\:acm\\:emissao_boleto, button[id*="emissao_boleto"]').first();
     
-    if (!(await btnEmitirBoleto.isVisible({ timeout: 2000 }))) {
+    let btnVisivel = await btnEmitirBoleto.isVisible({ timeout: 2000 }).catch(() => false);
+    console.log(`   📍 Botão por ID visível: ${btnVisivel}`);
+    
+    if (!btnVisivel) {
+      console.log('   📍 Tentando localizar por texto...');
       btnEmitirBoleto = siaaPage.getByRole('button', { name: /Emitir Boleto/i });
+      btnVisivel = await btnEmitirBoleto.isVisible({ timeout: 3000 }).catch(() => false);
+      console.log(`   📍 Botão por texto visível: ${btnVisivel}`);
     }
     
-    if (await btnEmitirBoleto.isVisible({ timeout: 5000 })) {
+    // Lista todos os botões na página para debug
+    if (!btnVisivel) {
+      console.log('   📋 Listando botões disponíveis na página SIAA...');
+      const buttons = await siaaPage.evaluate(() => {
+        const btns = document.querySelectorAll('button, input[type="submit"], input[type="button"], a.ui-button');
+        return Array.from(btns).slice(0, 15).map(b => ({
+          tag: b.tagName,
+          id: b.id || 'N/A',
+          text: (b.textContent || b.value || '').trim().substring(0, 50),
+          visible: b.offsetParent !== null
+        }));
+      });
+      buttons.forEach((b, i) => console.log(`      ${i+1}. [${b.tag}] "${b.text}" (id: ${b.id}, visible: ${b.visible})`));
+    }
+    
+    // Fallback: tenta encontrar por outros seletores
+    if (!btnVisivel) {
+      console.log('   📍 Tentando seletores alternativos...');
+      const altSelectors = [
+        'button:has-text("Emitir Boleto")',
+        'input[value*="Emitir Boleto"]',
+        '[onclick*="emissao_boleto"]',
+        'a:has-text("Emitir Boleto")',
+        '.ui-button:has-text("Emitir")'
+      ];
+      
+      for (const sel of altSelectors) {
+        const btn = siaaPage.locator(sel).first();
+        btnVisivel = await btn.isVisible({ timeout: 1000 }).catch(() => false);
+        if (btnVisivel) {
+          console.log(`   ✅ Botão encontrado via: ${sel}`);
+          btnEmitirBoleto = btn;
+          break;
+        }
+      }
+    }
+    
+    // Screenshot de debug antes de clicar
+    await siaaPage.screenshot({ path: 'debug-antes-emitir-boleto.png', fullPage: true });
+    console.log('   📸 Screenshot: debug-antes-emitir-boleto.png');
+    
+    if (btnVisivel) {
       console.log('   📝 Clicando em "Emitir Boleto"...');
       
       // Scroll até o botão
@@ -2262,7 +2480,10 @@ test('inscricao-pos', async ({ page, context }) => {
       
       // Verifica se ainda há overlay bloqueando
       const overlay = siaaPage.locator('.ui-widget-overlay').first();
-      if (await overlay.isVisible({ timeout: 500 }).catch(() => false)) {
+      const overlayVisible = await overlay.isVisible({ timeout: 500 }).catch(() => false);
+      console.log(`   📍 Overlay bloqueando: ${overlayVisible}`);
+      
+      if (overlayVisible) {
         console.log('   📍 Overlay detectado, aguardando...');
         await siaaPage.waitForTimeout(2000);
         await siaaPage.keyboard.press('Escape');
@@ -2270,40 +2491,32 @@ test('inscricao-pos', async ({ page, context }) => {
       }
       
       // Clica no botão e aguarda nova página
+      console.log('   📍 Executando clique e aguardando nova página...');
       const [newPage] = await Promise.all([
         context.waitForEvent('page', { timeout: 15000 }).catch(() => null),
         btnEmitirBoleto.click({ force: true, timeout: 10000 })
       ]);
+      
+      console.log(`   📍 Nova página retornada: ${newPage ? 'sim' : 'não'}`);
       
       if (newPage) {
         boletoPage = newPage;
         await boletoPage.waitForLoadState('load');
         await boletoPage.waitForTimeout(3000);
         console.log(`   📍 Nova página aberta: ${boletoPage.url().substring(0, 80)}...`);
+        
+        // Verifica se a URL contém "boleto" - indica página de boleto
+        const boletoUrl = boletoPage.url();
+        if (boletoUrl.includes('boleto') || boletoUrl.includes('getBoletoDiversos')) {
+          console.log('   ✅ Página de boleto detectada');
+        }
+      } else {
+        console.log('   ⚠️ Nova página não abriu, verificando URL atual...');
+        console.log(`   📍 URL atual SIAA: ${siaaPage.url()}`);
       }
       
-      // Verifica se capturou o PDF via interceptação
-      if (pdfBuffer) {
-        fs.writeFileSync(boletoPath, pdfBuffer);
-        console.log(`   ✅ BOLETO PDF BAIXADO DIRETAMENTE!`);
-        console.log(`   📁 Arquivo: ${boletoPath}`);
-        console.log(`   📦 Tamanho: ${pdfBuffer.length} bytes`);
-        
-        // Tenta extrair linha digitável do conteúdo do PDF
-        try {
-          const pdfText = pdfBuffer.toString('latin1');
-          const codigoMatch = pdfText.match(/\d{5}\.?\d{5}\s*\d{5}\.?\d{6}\s*\d{5}\.?\d{6}\s*\d\s*\d{14}/);
-          if (codigoMatch) {
-            linhaDigitavel = codigoMatch[0];
-            console.log(`   📊 Linha digitável: ${linhaDigitavel}`);
-          }
-        } catch (e) {}
-        
-      } else {
-        console.log('   ⚠️ PDF não capturado via interceptação, tentando método alternativo...');
-        
-        // Fallback: tenta capturar screenshot do boleto
-        if (boletoPage) {
+      // Captura screenshot do boleto na nova página
+      if (boletoPage) {
           const boletoPngPath = boletoPath.replace('.pdf', '.png');
           
           await boletoPage.setViewportSize({ width: 1600, height: 1200 });
@@ -2348,13 +2561,17 @@ test('inscricao-pos', async ({ page, context }) => {
               console.log(`   📊 Linha digitável: ${linhaDigitavel}`);
             }
           } catch (e) {}
-        }
       }
-      
     } else {
+      console.log('   ⚠️ Botão Emitir Boleto não encontrado!');
+      console.log('   📍 Tentando fallback...');
+      
       // Fallback: procura por link ou botão alternativo
       const btnAlt = siaaPage.locator('button:has-text("Emitir"), a:has-text("Emitir Boleto"), input[value*="Emitir"]').first();
-      if (await btnAlt.isVisible({ timeout: 3000 })) {
+      const altVisivel = await btnAlt.isVisible({ timeout: 3000 }).catch(() => false);
+      console.log(`   📍 Botão alternativo visível: ${altVisivel}`);
+      
+      if (altVisivel) {
         console.log('   📝 Clicando em "Emitir Boleto" (fallback)...');
         
         const [newPage] = await Promise.all([
@@ -2362,23 +2579,33 @@ test('inscricao-pos', async ({ page, context }) => {
           btnAlt.click({ force: true })
         ]);
         
-        if (newPage && pdfBuffer) {
-          fs.writeFileSync(boletoPath, pdfBuffer);
-          console.log(`   ✅ Boleto baixado (fallback): ${boletoPath}`);
+        console.log(`   📍 Nova página (fallback): ${newPage ? 'sim' : 'não'}`);
+        
+        if (newPage) {
           boletoPage = newPage;
+          await boletoPage.waitForLoadState('load');
+          await boletoPage.waitForTimeout(2000);
+          
+          // Captura screenshot do boleto
+          const boletoPngPath = boletoPath.replace('.pdf', '.png');
+          await boletoPage.screenshot({ path: boletoPngPath, fullPage: true });
+          console.log(`   ✅ Screenshot boleto (fallback): ${boletoPngPath}`);
         }
+      } else {
+        console.log('   ❌ Nenhum botão de boleto encontrado na página');
+        // Salva screenshot para debug
+        await siaaPage.screenshot({ path: 'debug-sem-botao-boleto.png', fullPage: true });
+        console.log('   📸 Screenshot: debug-sem-botao-boleto.png');
       }
     }
   } catch (e) {
     console.log(`   ⚠️ Erro ao emitir boleto: ${e.message}`);
+    console.log(`   📍 Stack: ${e.stack?.split('\n')[1] || 'N/A'}`);
     
     try {
       await siaaPage.screenshot({ path: `erro-boleto-${timestamp}.png`, fullPage: true });
     } catch (e2) {}
   }
-  
-  // Remove a interceptação para não afetar outras requisições
-  await context.unroute('**/boleto/getBoletoDiversos**');
   
   // Verifica se o PDF foi salvo
   if (!fs.existsSync(boletoPath)) {

@@ -1,0 +1,137 @@
+import { test, expect } from '@playwright/test';
+
+test('test', async ({ page }) => {
+  await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
+  await page.getByRole('textbox', { name: 'Email' }).click();
+  await page.getByRole('textbox', { name: 'Email' }).fill('marcelo.pinheiro1876@polo.cruzeirodosul.edu.br');
+  await page.getByRole('button', { name: 'Continuar' }).click();
+  await page.getByTestId('password-input').locator('path').click();
+  await page.getByRole('textbox', { name: 'Senha' }).fill('MFPedu!t678@!');
+  await page.getByRole('button', { name: 'Continuar' }).click();
+  await page.goto('https://cruzeirodosul.myvtex.com/graduacao');
+  await page.getByText('Aceitar todos').click();
+  await page.getByText('Entrar como cliente').first().click();
+  await page.getByPlaceholder('Ex: example@mail.com').click();
+  await page.getByPlaceholder('Ex: example@mail.com').fill('emaildocliente@teste.gmail.com');
+  await page.getByRole('button', { name: 'Entrar' }).click();
+  await page.getByRole('button', { name: 'Entrar' }).click();
+  await page.goto('https://cruzeirodosul.myvtex.com/graduacao');
+  await page.getByRole('textbox', { name: 'O que você procura? Buscar' }).click();
+  await page.getByRole('textbox', { name: 'O que você procura? Buscar' }).fill('alfabetizaç');
+  await page.getByRole('textbox', { name: 'O que você procura? Buscar' }).press('Dead');
+  await page.getByRole('textbox', { name: 'O que você procura? Buscar' }).fill('alfabetização e letramento - 9 meses');
+  await page.getByRole('textbox', { name: 'O que você procura? Buscar' }).press('Enter');
+  await page.getByRole('textbox', { name: 'O que você procura? Buscar' }).click();
+  await page.getByRole('textbox', { name: 'O que você procura? Buscar' }).fill('alfabetização e letramento');
+  await page.getByRole('textbox', { name: 'O que você procura? Buscar' }).press('Enter');
+  await page.getByRole('checkbox', { name: '9 meses' }).check();
+  await page.goto('https://cruzeirodosul.myvtex.com/9-meses/alfabetiza%C3%A7%C3%A3o%20e%20letramento?_q=alfabetiza%C3%A7%C3%A3o%20e%20letramento&fuzzy=0&initialMap=ft&initialQuery=alfabetiza%C3%A7%C3%A3o%20e%20letramento&map=duracao,ft&operator=and');
+  await page.getByRole('link', { name: 'View product details for' }).click();
+  await page.getByRole('textbox', { name: 'Nome completo' }).click();
+  await page.getByRole('textbox', { name: 'Nome completo' }).click();
+  await page.getByRole('textbox', { name: 'Nome completo' }).fill('Nome do Cliente');
+  await page.getByRole('textbox', { name: '(XX) XXXXX-XXXX' }).click();
+  await page.getByRole('textbox', { name: '(XX) XXXXX-XXXX' }).fill('(11) 98439-64374');
+  await page.locator('.cruzeirodosul-product-purchase-box-0-x-checkboxWrapperFakeInput > svg > path').click();
+  await page.locator('.cruzeirodosul-product-purchase-box-0-x-checkboxWrapperFakeInput > svg').click();
+  await page.getByRole('button', { name: 'Inscreva-se' }).click();
+  await page.locator('.css-8mmkcg').first().click();
+  await page.locator('.react-select__input-container').first().click();
+  await page.locator('#react-select-2-input').fill('brasil');
+  await page.getByRole('option', { name: 'Brasil' }).click();
+  await page.locator('.react-select__control.css-1s9q5rz-control > .react-select__value-container > .react-select__input-container').first().click();
+  await page.locator('#react-select-3-input').fill('s');
+  await page.locator('#react-select-3-input').press('Dead');
+  await page.locator('#react-select-3-input').fill('são pau');
+  await page.getByRole('option', { name: 'São Paulo' }).click();
+  await page.locator('div:nth-child(4) > .react-select-container > .react-select__control > .react-select__value-container > .react-select__input-container').click();
+  await page.locator('#react-select-4-input').fill('s');
+  await page.locator('#react-select-4-input').press('Dead');
+  await page.locator('#react-select-4-input').fill('são paulo');
+  await page.getByRole('option', { name: 'São Paulo' }).click();
+  await page.locator('div:nth-child(5) > .react-select-container > .react-select__control > .react-select__value-container > .react-select__input-container').click();
+  await page.locator('#react-select-5-input').fill('barra funda');
+  await page.getByRole('option', { name: 'São Paulo - Barra Funda - SP' }).click();
+  await page.locator('input[name="userDocument"]').click();
+  await page.locator('input[name="userDocument"]').click();
+  await page.locator('input[name="userDocument"]').fill('87703595047');
+  await page.locator('input[name="userDocument"]').click();
+  await page.locator('input[name="userDocument"]').click();
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').press('ArrowLeft');
+  await page.locator('input[name="userDocument"]').fill('87703595047');
+  await page.getByRole('button', { name: 'Continuar Inscrição' }).click();
+  await page.goto('https://cruzeirodosul.myvtex.com/campanha-comercial');
+  await page.locator('.react-select__indicator').click();
+  await page.locator('.react-select__input-container').click();
+  await page.locator('.react-select__input-container').click();
+  await page.locator('#react-select-2-input').fill('2546');
+  await page.getByRole('option', { name: '- Balcão 30%CT - Pós EAD' }).click();
+  await page.locator('.cruzeirodosul-campaign-comercial-0-x-campaignContainerInformation').click();
+  await page.getByText('Informações da Campanha').click();
+  await page.locator('div:nth-child(2) > .cruzeirodosul-campaign-comercial-0-x-campaignWrapperInformationDiv > div > div:nth-child(16) > span:nth-child(3)').click();
+  await page.locator('.cruzeirodosul-campaign-comercial-0-x-campaignContainerInformation').click({
+    button: 'right'
+  });
+  await page.getByText('ID da Campanha: 2546Nome:').click({
+    button: 'right'
+  });
+  await page.getByText('ID da Campanha: 2546Nome:').click();
+  await page.getByText('Informações da Campanha').click();
+  await page.locator('body').press('ControlOrMeta+c');
+  await page.getByRole('button', { name: 'Aplicar campanha' }).click();
+  await page.getByRole('link', { name: 'Continuar pagamento Continuar' }).click();
+  await page.getByRole('textbox', { name: 'Data de nascimento *' }).fill('1980-09-12');
+  await page.getByRole('button', { name: 'Ir para o Endereço' }).click();
+  await page.getByText('SimNão').click();
+  await page.locator('div').filter({ hasText: /^Selecione as formas de entregaReceber Retirar CEPNão sei meu CEP$/ }).first().click();
+  await page.getByRole('textbox', { name: 'CEP *' }).fill('05315030');
+  await page.getByRole('textbox', { name: 'Número *' }).click();
+  await page.getByRole('textbox', { name: 'Número *' }).fill('33');
+  await page.getByRole('button', { name: 'Ir para o pagamento' }).click();
+  await page.getByRole('link', { name: 'Boleto bancário' }).click();
+  await page.getByRole('button', { name: 'Finalizar compra Continuar' }).click();
+  await page.goto('https://cruzeirodosul.myvtex.com/checkout/orderPlaced/?og=1607873092959');
+  const page1Promise = page.waitForEvent('popup');
+  await page.getByRole('link', { name: 'Realizar pagamento' }).click();
+  const page1 = await page1Promise;
+  await page1.getByRole('textbox', { name: 'CPF' }).click();
+  await page1.getByRole('textbox', { name: 'CPF' }).fill('87703595047___.___.___-__');
+  await page1.getByRole('textbox', { name: 'CPF' }).click({
+    modifiers: ['ControlOrMeta']
+  });
+  await page1.getByRole('button', { name: 'Próximo' }).click();
+  await page1.locator('[id="formulario:j_idt163"]').click();
+  await page1.getByRole('heading', { name: 'Confira e escolha o plano' }).click();
+  await page1.getByRole('heading', { name: 'Confira e escolha o plano' }).click();
+  const page2Promise = page1.waitForEvent('popup');
+  await page1.getByRole('button', { name: 'Emitir Boleto' }).click();
+  const page2 = await page2Promise;
+  await page1.getByRole('button', { name: 'Emitir Boleto' }).click({
+    button: 'right'
+  });
+  await page1.getByRole('button', { name: 'Emitir Boleto' }).click();
+  const page4Promise = page1.waitForEvent('popup');
+  await page1.getByRole('button', { name: 'Emitir Boleto' }).click();
+  const page4 = await page4Promise;
+  await page1.getByRole('button', { name: 'Emitir Boleto' }).click({
+    button: 'right'
+  });
+  const page5Promise = page1.waitForEvent('popup');
+  await page1.getByRole('button', { name: 'Emitir Boleto' }).click();
+  const page5 = await page5Promise;
+  const page6Promise = page.waitForEvent('popup');
+  await page.getByRole('link', { name: 'Continuar Processo' }).click();
+  const page6 = await page6Promise;
+});
