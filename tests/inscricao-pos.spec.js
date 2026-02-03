@@ -1218,8 +1218,54 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log('📌 ETAPA 9: Dados Pessoais');
   console.log(`   📍 URL: ${page.url()}`);
   
-  // Aguarda a página de checkout carregar
+  // Aguarda a página de checkout carregar completamente
   await page.waitForTimeout(3000);
+  
+  // Aguarda o checkout VTEX carregar (espera o DOM estar pronto)
+  try {
+    await page.waitForLoadState('networkidle', { timeout: 15000 });
+    console.log('   ✅ Página carregada (networkidle)');
+  } catch (e) {
+    console.log('   ⚠️ Timeout esperando networkidle, continuando...');
+  }
+  
+  // Screenshot para debug
+  try {
+    await page.screenshot({ path: 'debug-etapa9-checkout.png', fullPage: true });
+    console.log('   📸 Screenshot: debug-etapa9-checkout.png');
+  } catch (e) {}
+  
+  // Verifica se está no checkout
+  const urlCheckout = page.url();
+  if (!urlCheckout.includes('checkout')) {
+    console.log('   ⚠️ NÃO ESTÁ NO CHECKOUT! Tentando navegar...');
+    try {
+      await page.goto('https://cruzeirodosul.myvtex.com/checkout/', { waitUntil: 'networkidle' });
+      await page.waitForTimeout(5000);
+      console.log(`   📍 Nova URL: ${page.url()}`);
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao navegar: ${e.message}`);
+    }
+  }
+  
+  // Lista todos os botões visíveis para debug
+  try {
+    const botoes = await page.evaluate(() => {
+      const btns = document.querySelectorAll('button');
+      return Array.from(btns).map(b => ({
+        text: b.textContent?.trim().substring(0, 50),
+        id: b.id,
+        class: b.className.substring(0, 50),
+        visible: b.offsetParent !== null
+      })).filter(b => b.visible);
+    });
+    console.log(`   📋 Botões visíveis no checkout: ${botoes.length}`);
+    botoes.slice(0, 5).forEach(b => {
+      console.log(`      - "${b.text}" (id: ${b.id || 'N/A'})`);
+    });
+  } catch (e) {}
+  
+  await page.waitForTimeout(2000);
   
   // Preenche data de nascimento (formato YYYY-MM-DD para input type=date)
   const partes = CLIENTE.nascimento.split('/');
