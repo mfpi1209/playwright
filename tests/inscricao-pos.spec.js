@@ -782,8 +782,20 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log(`   ✅ CPF: ${CLIENTE.cpf}`);
   
   // Continuar Inscrição
+  console.log('   📝 Clicando em Continuar Inscrição...');
   await page.getByRole('button', { name: 'Continuar Inscrição' }).click();
-  await page.waitForTimeout(5000);
+  
+  // Aguarda navegação para página de campanha
+  console.log('   ⏳ Aguardando navegação para página de campanha...');
+  try {
+    await page.waitForURL('**/campanha-comercial**', { timeout: 15000 });
+    console.log('   ✅ Navegou para página de campanha');
+  } catch (e) {
+    console.log('   ⚠️ Timeout esperando página de campanha, verificando URL...');
+  }
+  
+  await page.waitForTimeout(3000);
+  console.log(`   📍 URL após clique: ${page.url()}`);
   
   console.log('✅ ETAPA 6 CONCLUÍDA');
   console.log('');
@@ -793,17 +805,31 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 7: Campanha Comercial');
   
-  // Aguarda página de campanha
+  // Aguarda página de campanha carregar completamente
   await page.waitForTimeout(3000);
   
-  const urlAtualEtapa7 = page.url();
+  let urlAtualEtapa7 = page.url();
   console.log(`   📍 URL atual: ${urlAtualEtapa7}`);
   
   let campanhaEscolhida = null;
   
+  // Se não está na página de campanha, tenta aguardar mais ou navegar
+  if (!urlAtualEtapa7.includes('campanha-comercial')) {
+    console.log('   ⚠️ Não está na página de campanha, aguardando mais...');
+    await page.waitForTimeout(5000);
+    urlAtualEtapa7 = page.url();
+    console.log(`   📍 URL após espera adicional: ${urlAtualEtapa7}`);
+  }
+  
   // Verifica se está na página de campanha
   const estaNaPaginaCampanha = urlAtualEtapa7.includes('campanha-comercial');
   console.log(`   📍 Está na página de campanha? ${estaNaPaginaCampanha}`);
+  
+  // Screenshot para debug
+  try {
+    await page.screenshot({ path: 'debug-etapa7-campanha.png', fullPage: true });
+    console.log('   📸 Screenshot: debug-etapa7-campanha.png');
+  } catch (e) {}
   
   if (estaNaPaginaCampanha) {
     console.log('   📍 Página de campanha detectada');
