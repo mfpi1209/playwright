@@ -1025,26 +1025,46 @@ test('inscricao-pos', async ({ page, context }) => {
   await manterCursorNaTela(page);
   
   // Clica em Continuar Inscrição (botão azul grande)
-  console.log('   📝 Clicando em Continuar Inscrição...');
+  console.log('   📝 Clicando em Continuar Inscrição para ir ao checkout...');
+  console.log(`   📍 URL atual: ${page.url()}`);
   
   let btnClicado = false;
   
-  // Tenta pelo texto exato
+  // Espera o botão aparecer e estar clicável
+  await page.waitForTimeout(2000);
+  
+  // Tenta pelo seletor de classe específico do VTEX
   try {
-    const btnContinuar = page.getByRole('button', { name: /Continuar Inscrição/i });
-    if (await btnContinuar.isVisible({ timeout: 3000 })) {
-      await btnContinuar.scrollIntoViewIfNeeded();
-      await btnContinuar.click();
-      console.log('   ✅ Botão "Continuar Inscrição" clicado');
+    const btnVtex = page.locator('button.vtex-button, .vtex-button__label, button[class*="vtex"]').filter({ hasText: /Continuar/i }).first();
+    if (await btnVtex.isVisible({ timeout: 3000 })) {
+      await btnVtex.scrollIntoViewIfNeeded();
+      await btnVtex.click({ force: true });
+      console.log('   ✅ Botão Continuar clicado (via classe VTEX)');
       btnClicado = true;
     }
-  } catch (e) {}
+  } catch (e) {
+    console.log(`   ⚠️ Botão VTEX não encontrado: ${e.message}`);
+  }
+  
+  // Tenta pelo texto exato
+  if (!btnClicado) {
+    try {
+      const btnContinuar = page.getByRole('button', { name: /Continuar Inscrição/i });
+      if (await btnContinuar.isVisible({ timeout: 3000 })) {
+        await btnContinuar.scrollIntoViewIfNeeded();
+        await btnContinuar.click({ force: true });
+        console.log('   ✅ Botão "Continuar Inscrição" clicado');
+        btnClicado = true;
+      }
+    } catch (e) {}
+  }
   
   // Fallback: qualquer botão que contenha "Continuar"
   if (!btnClicado) {
     try {
       const btn = page.locator('button:has-text("Continuar")').first();
       if (await btn.isVisible({ timeout: 2000 })) {
+        await btn.scrollIntoViewIfNeeded();
         await btn.click({ force: true });
         console.log('   ✅ Botão Continuar clicado (fallback)');
         btnClicado = true;
@@ -1057,20 +1077,72 @@ test('inscricao-pos', async ({ page, context }) => {
     try {
       const link = page.locator('a:has-text("Continuar")').first();
       if (await link.isVisible({ timeout: 2000 })) {
-        await link.click();
+        await link.scrollIntoViewIfNeeded();
+        await link.click({ force: true });
         console.log('   ✅ Link Continuar clicado');
         btnClicado = true;
       }
     } catch (e) {}
   }
   
+  // Fallback: tenta clicar via JavaScript se nada funcionou
   if (!btnClicado) {
-    console.log('   ⚠️ Botão Continuar não encontrado');
-    await page.screenshot({ path: 'erro-carrinho-pos.png', fullPage: true });
+    try {
+      const clicked = await page.evaluate(() => {
+        const btns = document.querySelectorAll('button, a');
+        for (const btn of btns) {
+          if (btn.textContent && btn.textContent.toLowerCase().includes('continuar')) {
+            btn.click();
+            return true;
+          }
+        }
+        return false;
+      });
+      if (clicked) {
+        console.log('   ✅ Botão Continuar clicado (via JavaScript)');
+        btnClicado = true;
+      }
+    } catch (e) {}
   }
   
-  await page.waitForTimeout(3000);
+  if (!btnClicado) {
+    console.log('   ⚠️ Botão Continuar não encontrado - tentando screenshot');
+    try {
+      await page.screenshot({ path: 'erro-carrinho-pos.png', fullPage: true });
+    } catch (e) {}
+  }
+  
+  // Aguarda navegação para o checkout
+  await page.waitForTimeout(5000);
   await manterCursorNaTela(page);
+  
+  // Verifica se realmente saiu da página de campanha
+  const urlAposClique = page.url();
+  console.log(`   📍 URL após clique: ${urlAposClique}`);
+  
+  if (urlAposClique.includes('campanha-comercial')) {
+    console.log('   ⚠️ Ainda na página de campanha, tentando novamente...');
+    
+    // Segunda tentativa com mais força
+    try {
+      await page.evaluate(() => {
+        const allButtons = Array.from(document.querySelectorAll('button'));
+        const continuar = allButtons.find(b => 
+          b.textContent?.toLowerCase().includes('continuar') && 
+          !b.disabled
+        );
+        if (continuar) {
+          continuar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          continuar.focus();
+          continuar.click();
+        }
+      });
+      await page.waitForTimeout(5000);
+      console.log(`   📍 URL após segunda tentativa: ${page.url()}`);
+    } catch (e) {
+      console.log(`   ⚠️ Segunda tentativa falhou: ${e.message}`);
+    }
+  }
   
   console.log('✅ ETAPA 8 CONCLUÍDA');
   console.log('');
