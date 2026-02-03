@@ -1216,29 +1216,111 @@ test('inscricao-pos', async ({ page, context }) => {
   // ETAPA 9: CHECKOUT - DADOS PESSOAIS
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 9: Dados Pessoais');
+  console.log(`   📍 URL: ${page.url()}`);
+  
+  // Aguarda a página de checkout carregar
+  await page.waitForTimeout(3000);
   
   // Preenche data de nascimento (formato YYYY-MM-DD para input type=date)
   const partes = CLIENTE.nascimento.split('/');
   const dataFormatada = `${partes[2]}-${partes[1]}-${partes[0]}`;
   
-  const campoData = page.getByRole('textbox', { name: 'Data de nascimento *' });
-  if (await campoData.isVisible({ timeout: 5000 })) {
-    // Verifica se o campo está habilitado antes de preencher
-    const disabled = await campoData.getAttribute('disabled');
-    if (!disabled) {
-      await campoData.fill(dataFormatada);
-      console.log(`   ✅ Data nascimento: ${CLIENTE.nascimento}`);
-    } else {
-      console.log(`   ℹ️ Data nascimento já preenchida (campo desabilitado)`);
-    }
+  // Tenta diferentes seletores para data de nascimento
+  let dataPreenchida = false;
+  
+  const seletoresData = [
+    page.getByRole('textbox', { name: 'Data de nascimento *' }),
+    page.locator('input[name="birthDate"]'),
+    page.locator('input[type="date"]'),
+    page.locator('#client-birth-date'),
+    page.locator('input[placeholder*="nascimento" i]')
+  ];
+  
+  for (const seletor of seletoresData) {
+    try {
+      if (await seletor.isVisible({ timeout: 2000 })) {
+        const disabled = await seletor.getAttribute('disabled');
+        if (!disabled) {
+          await seletor.fill(dataFormatada);
+          console.log(`   ✅ Data nascimento: ${CLIENTE.nascimento}`);
+          dataPreenchida = true;
+          break;
+        } else {
+          console.log(`   ℹ️ Data nascimento já preenchida (campo desabilitado)`);
+          dataPreenchida = true;
+          break;
+        }
+      }
+    } catch (e) {}
   }
   
-  // Ir para Endereço
-  const btnEndereco = page.getByRole('button', { name: 'Ir para o Endereço' });
-  if (await btnEndereco.isVisible({ timeout: 3000 })) {
-    await btnEndereco.click();
-    await page.waitForTimeout(2000);
+  if (!dataPreenchida) {
+    console.log('   ⚠️ Campo data de nascimento não encontrado');
   }
+  
+  await page.waitForTimeout(1000);
+  
+  // Ir para Endereço - com múltiplos fallbacks
+  console.log('   📝 Clicando em Ir para o Endereço...');
+  let avancouEndereco = false;
+  
+  const seletoresBtnEndereco = [
+    page.getByRole('button', { name: /Ir para o Endereço/i }),
+    page.getByRole('button', { name: /Endereço/i }),
+    page.locator('button:has-text("Ir para o Endereço")'),
+    page.locator('#go-to-shipping'),
+    page.locator('button.btn-go-to-shipping'),
+    page.locator('#btn-go-to-shipping'),
+    page.locator('button[data-i18n*="shipping"]'),
+    page.locator('.btn-success:has-text("Endereço")')
+  ];
+  
+  for (const seletor of seletoresBtnEndereco) {
+    try {
+      if (await seletor.isVisible({ timeout: 2000 })) {
+        await seletor.scrollIntoViewIfNeeded();
+        await seletor.click({ force: true });
+        console.log('   ✅ Botão Ir para o Endereço clicado');
+        avancouEndereco = true;
+        break;
+      }
+    } catch (e) {}
+  }
+  
+  // Fallback: JavaScript
+  if (!avancouEndereco) {
+    try {
+      const clicked = await page.evaluate(() => {
+        const btns = document.querySelectorAll('button, a');
+        for (const btn of btns) {
+          const txt = btn.textContent?.toLowerCase() || '';
+          if (txt.includes('endereço') || txt.includes('shipping') || txt.includes('address')) {
+            btn.click();
+            return true;
+          }
+        }
+        // Tenta pelo ID
+        const goShipping = document.querySelector('#go-to-shipping, #btn-go-to-shipping, .btn-go-to-shipping');
+        if (goShipping) {
+          goShipping.click();
+          return true;
+        }
+        return false;
+      });
+      if (clicked) {
+        console.log('   ✅ Botão Endereço clicado (via JavaScript)');
+        avancouEndereco = true;
+      }
+    } catch (e) {}
+  }
+  
+  if (!avancouEndereco) {
+    console.log('   ⚠️ Botão Ir para o Endereço não encontrado');
+    await page.screenshot({ path: 'debug-checkout-profile.png', fullPage: true });
+  }
+  
+  await page.waitForTimeout(3000);
+  console.log(`   📍 URL após clicar: ${page.url()}`);
   
   console.log('✅ ETAPA 9 CONCLUÍDA');
   console.log('');
@@ -1247,29 +1329,126 @@ test('inscricao-pos', async ({ page, context }) => {
   // ETAPA 10: CHECKOUT - ENDEREÇO
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 10: Endereço');
+  console.log(`   📍 URL: ${page.url()}`);
   
-  // Preenche CEP
-  const campoCep = page.getByRole('textbox', { name: 'CEP *' });
-  if (await campoCep.isVisible({ timeout: 5000 })) {
-    await campoCep.fill(CLIENTE.cep);
-    await page.waitForTimeout(2000);
-    console.log(`   ✅ CEP: ${CLIENTE.cep}`);
+  await page.waitForTimeout(2000);
+  
+  // Preenche CEP - com múltiplos seletores
+  let cepPreenchido = false;
+  
+  const seletoresCep = [
+    page.getByRole('textbox', { name: 'CEP *' }),
+    page.locator('input[name="postalCode"]'),
+    page.locator('input#ship-postalCode'),
+    page.locator('input[placeholder*="CEP" i]'),
+    page.locator('input[id*="postal" i]')
+  ];
+  
+  for (const seletor of seletoresCep) {
+    try {
+      if (await seletor.isVisible({ timeout: 2000 })) {
+        await seletor.click();
+        await seletor.fill(CLIENTE.cep);
+        await page.waitForTimeout(2000);
+        console.log(`   ✅ CEP: ${CLIENTE.cep}`);
+        cepPreenchido = true;
+        break;
+      }
+    } catch (e) {}
   }
   
-  // Preenche Número
-  const campoNumero = page.getByRole('textbox', { name: 'Número *' });
-  if (await campoNumero.isVisible({ timeout: 3000 })) {
-    await campoNumero.click();
-    await campoNumero.fill(CLIENTE.numero);
-    console.log(`   ✅ Número: ${CLIENTE.numero}`);
+  if (!cepPreenchido) {
+    console.log('   ⚠️ Campo CEP não encontrado');
   }
   
-  // Ir para pagamento
-  const btnPagamento = page.getByRole('button', { name: 'Ir para o pagamento' });
-  if (await btnPagamento.isVisible({ timeout: 3000 })) {
-    await btnPagamento.click();
-    await page.waitForTimeout(2000);
+  // Preenche Número - com múltiplos seletores
+  let numeroPreenchido = false;
+  
+  const seletoresNumero = [
+    page.getByRole('textbox', { name: 'Número *' }),
+    page.locator('input[name="number"]'),
+    page.locator('input#ship-number'),
+    page.locator('input[placeholder*="Número" i]')
+  ];
+  
+  for (const seletor of seletoresNumero) {
+    try {
+      if (await seletor.isVisible({ timeout: 2000 })) {
+        await seletor.click();
+        await seletor.fill(CLIENTE.numero);
+        console.log(`   ✅ Número: ${CLIENTE.numero}`);
+        numeroPreenchido = true;
+        break;
+      }
+    } catch (e) {}
   }
+  
+  if (!numeroPreenchido) {
+    console.log('   ⚠️ Campo Número não encontrado');
+  }
+  
+  await page.waitForTimeout(1000);
+  
+  // Ir para pagamento - com múltiplos fallbacks
+  console.log('   📝 Clicando em Ir para o Pagamento...');
+  let avancouPagamento = false;
+  
+  const seletoresBtnPagamento = [
+    page.getByRole('button', { name: /Ir para o pagamento/i }),
+    page.getByRole('button', { name: /pagamento/i }),
+    page.locator('button:has-text("Ir para o pagamento")'),
+    page.locator('#go-to-payment'),
+    page.locator('button.btn-go-to-payment'),
+    page.locator('#btn-go-to-payment'),
+    page.locator('button[data-i18n*="payment"]'),
+    page.locator('.btn-success:has-text("pagamento")')
+  ];
+  
+  for (const seletor of seletoresBtnPagamento) {
+    try {
+      if (await seletor.isVisible({ timeout: 2000 })) {
+        await seletor.scrollIntoViewIfNeeded();
+        await seletor.click({ force: true });
+        console.log('   ✅ Botão Ir para o Pagamento clicado');
+        avancouPagamento = true;
+        break;
+      }
+    } catch (e) {}
+  }
+  
+  // Fallback: JavaScript
+  if (!avancouPagamento) {
+    try {
+      const clicked = await page.evaluate(() => {
+        const btns = document.querySelectorAll('button, a');
+        for (const btn of btns) {
+          const txt = btn.textContent?.toLowerCase() || '';
+          if (txt.includes('pagamento') || txt.includes('payment')) {
+            btn.click();
+            return true;
+          }
+        }
+        const goPayment = document.querySelector('#go-to-payment, #btn-go-to-payment, .btn-go-to-payment');
+        if (goPayment) {
+          goPayment.click();
+          return true;
+        }
+        return false;
+      });
+      if (clicked) {
+        console.log('   ✅ Botão Pagamento clicado (via JavaScript)');
+        avancouPagamento = true;
+      }
+    } catch (e) {}
+  }
+  
+  if (!avancouPagamento) {
+    console.log('   ⚠️ Botão Ir para o Pagamento não encontrado');
+    await page.screenshot({ path: 'debug-checkout-shipping.png', fullPage: true });
+  }
+  
+  await page.waitForTimeout(3000);
+  console.log(`   📍 URL após clicar: ${page.url()}`);
   
   console.log('✅ ETAPA 10 CONCLUÍDA');
   console.log('');
