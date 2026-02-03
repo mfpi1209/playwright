@@ -1332,55 +1332,90 @@ test('inscricao-pos', async ({ page, context }) => {
   
   await page.waitForTimeout(1000);
   
-  // Ir para Endereço - com múltiplos fallbacks
+  // Ir para Endereço - O checkout VTEX usa um "fake-button" especial
   console.log('   📝 Clicando em Ir para o Endereço...');
   let avancouEndereco = false;
   
-  const seletoresBtnEndereco = [
-    page.getByRole('button', { name: /Ir para o Endereço/i }),
-    page.getByRole('button', { name: /Endereço/i }),
-    page.locator('button:has-text("Ir para o Endereço")'),
-    page.locator('#go-to-shipping'),
-    page.locator('button.btn-go-to-shipping'),
-    page.locator('#btn-go-to-shipping'),
-    page.locator('button[data-i18n*="shipping"]'),
-    page.locator('.btn-success:has-text("Endereço")')
-  ];
-  
-  for (const seletor of seletoresBtnEndereco) {
-    try {
-      if (await seletor.isVisible({ timeout: 2000 })) {
-        await seletor.scrollIntoViewIfNeeded();
-        await seletor.click({ force: true });
-        console.log('   ✅ Botão Ir para o Endereço clicado');
+  // Primeiro tenta o botão específico do VTEX (fake-button)
+  try {
+    const fakeBtn = page.locator('#fake-button-go-to-shipping');
+    if (await fakeBtn.isVisible({ timeout: 3000 })) {
+      console.log('   📍 Encontrou fake-button-go-to-shipping');
+      // O fake-button pode ter múltiplos elementos, clica no primeiro link/span dentro dele
+      const linkEndereco = fakeBtn.locator('a, span, div').filter({ hasText: /Ir para o Endereço/i }).first();
+      if (await linkEndereco.isVisible({ timeout: 2000 })) {
+        await linkEndereco.click({ force: true });
+        console.log('   ✅ Link "Ir para o Endereço" dentro do fake-button clicado');
         avancouEndereco = true;
-        break;
+      } else {
+        // Clica no próprio fake-button
+        await fakeBtn.click({ force: true });
+        console.log('   ✅ fake-button-go-to-shipping clicado');
+        avancouEndereco = true;
+      }
+    }
+  } catch (e) {
+    console.log(`   ⚠️ Erro no fake-button: ${e.message}`);
+  }
+  
+  // Fallback: link com ID específico do VTEX
+  if (!avancouEndereco) {
+    try {
+      const linkShipping = page.locator('#go-to-shipping, a[id*="shipping"], .link-shipping');
+      if (await linkShipping.first().isVisible({ timeout: 2000 })) {
+        await linkShipping.first().click({ force: true });
+        console.log('   ✅ Link shipping clicado');
+        avancouEndereco = true;
       }
     } catch (e) {}
   }
   
-  // Fallback: JavaScript
+  // Fallback: botão/link com texto
+  if (!avancouEndereco) {
+    const seletoresBtnEndereco = [
+      page.getByRole('link', { name: /Ir para o Endereço/i }),
+      page.getByRole('button', { name: /Ir para o Endereço/i }),
+      page.locator('a:has-text("Ir para o Endereço")'),
+      page.locator('button:has-text("Ir para o Endereço")')
+    ];
+    
+    for (const seletor of seletoresBtnEndereco) {
+      try {
+        if (await seletor.isVisible({ timeout: 1500 })) {
+          await seletor.scrollIntoViewIfNeeded();
+          await seletor.click({ force: true });
+          console.log('   ✅ Botão/Link Ir para o Endereço clicado');
+          avancouEndereco = true;
+          break;
+        }
+      } catch (e) {}
+    }
+  }
+  
+  // Fallback: JavaScript - clica no link específico
   if (!avancouEndereco) {
     try {
       const clicked = await page.evaluate(() => {
-        const btns = document.querySelectorAll('button, a');
-        for (const btn of btns) {
-          const txt = btn.textContent?.toLowerCase() || '';
-          if (txt.includes('endereço') || txt.includes('shipping') || txt.includes('address')) {
-            btn.click();
-            return true;
+        // Procura especificamente por links/botões com "Ir para o Endereço"
+        const elements = document.querySelectorAll('a, button, span');
+        for (const el of elements) {
+          const txt = el.textContent?.trim() || '';
+          // Busca texto exato para evitar clicar no errado
+          if (txt === 'Ir para o Endereço' || txt.startsWith('Ir para o Endereço')) {
+            el.click();
+            return { success: true, text: txt };
           }
         }
         // Tenta pelo ID
-        const goShipping = document.querySelector('#go-to-shipping, #btn-go-to-shipping, .btn-go-to-shipping');
+        const goShipping = document.querySelector('#go-to-shipping');
         if (goShipping) {
           goShipping.click();
-          return true;
+          return { success: true, text: 'go-to-shipping' };
         }
-        return false;
+        return { success: false };
       });
-      if (clicked) {
-        console.log('   ✅ Botão Endereço clicado (via JavaScript)');
+      if (clicked.success) {
+        console.log(`   ✅ Elemento "${clicked.text}" clicado (via JavaScript)`);
         avancouEndereco = true;
       }
     } catch (e) {}
@@ -1391,7 +1426,19 @@ test('inscricao-pos', async ({ page, context }) => {
     await page.screenshot({ path: 'debug-checkout-profile.png', fullPage: true });
   }
   
+  // Aguarda a seção de endereço aparecer
   await page.waitForTimeout(3000);
+  
+  // Verifica se a seção de endereço/shipping está visível
+  try {
+    const secaoEndereco = page.locator('#shipping-data, .shipping-data, [data-i18n*="shipping"]');
+    if (await secaoEndereco.isVisible({ timeout: 5000 })) {
+      console.log('   ✅ Seção de endereço visível');
+    } else {
+      console.log('   ⚠️ Seção de endereço não visível');
+    }
+  } catch (e) {}
+  
   console.log(`   📍 URL após clicar: ${page.url()}`);
   
   console.log('✅ ETAPA 9 CONCLUÍDA');
@@ -1586,15 +1633,19 @@ test('inscricao-pos', async ({ page, context }) => {
   let finalizou = false;
   
   // Lista de textos possíveis para o botão (em ordem de prioridade)
+  // IMPORTANTE: Não incluir "Finalizar compra sem" que é para remover itens!
   const textosFinalizacao = [
     'Continuar Inscrição',
-    'Continuar Inscricao',
-    'Finalizar compra',
-    'Finalizar Compra',
-    'Confirmar',
-    'Concluir',
-    'Prosseguir',
-    'Avançar'
+    'Continuar Inscricao'
+  ];
+  
+  // Textos a EVITAR (botões que fazem outras coisas)
+  const textosEvitar = [
+    'sem este item',
+    'sem estes itens',
+    'remover',
+    'excluir',
+    'cancelar'
   ];
   
   // Tenta pelo ID específico do botão VTEX
@@ -1644,12 +1695,25 @@ test('inscricao-pos', async ({ page, context }) => {
   }
   
   // Fallback: qualquer botão que contenha os textos de finalização via JavaScript
+  // MAS evita botões com textos proibidos
   if (!finalizou) {
     try {
-      const clicked = await page.evaluate((textos) => {
+      const clicked = await page.evaluate(({ textos, evitar }) => {
         const btns = document.querySelectorAll('button, input[type="submit"]');
         for (const btn of btns) {
           const txt = btn.textContent?.toLowerCase() || btn.value?.toLowerCase() || '';
+          
+          // Verifica se contém texto a evitar
+          let deveEvitar = false;
+          for (const e of evitar) {
+            if (txt.includes(e.toLowerCase())) {
+              deveEvitar = true;
+              break;
+            }
+          }
+          if (deveEvitar) continue;
+          
+          // Verifica se contém texto de finalização
           for (const t of textos) {
             if (txt.includes(t.toLowerCase())) {
               btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1659,7 +1723,7 @@ test('inscricao-pos', async ({ page, context }) => {
           }
         }
         return { success: false };
-      }, textosFinalizacao);
+      }, { textos: textosFinalizacao, evitar: textosEvitar });
       
       if (clicked.success) {
         console.log(`   ✅ Botão "${clicked.text}" clicado (via JavaScript)`);
