@@ -28,6 +28,21 @@ export default defineConfig({
     timezoneId: 'America/Sao_Paulo',
     geolocation: { latitude: -23.5505, longitude: -46.6333 },
     permissions: ['geolocation'],
+    // Configurações extras para headless
+    ignoreHTTPSErrors: true,
+    bypassCSP: true,
+    launchOptions: {
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--window-size=1920,1080',
+        '--disable-web-security',
+        '--disable-features=VizDisplayCompositor'
+      ]
+    }
   },
   projects: [
     {
