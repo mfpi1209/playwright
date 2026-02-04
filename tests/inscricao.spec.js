@@ -639,24 +639,73 @@ test('test', async ({ page }) => {
   console.log('📌 ETAPA 4: Busca e Seleção do Curso');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
+  // Remove overlays que podem bloquear a busca
+  await removerOverlays();
+  
+  // Aguarda página estabilizar
+  await page.waitForTimeout(2000);
+  console.log('   🔍 Procurando campo de busca...');
+  
+  // Tenta múltiplos seletores para o campo de busca
+  let searchInput = null;
+  const seletoresBusca = [
+    page.getByRole('textbox', { name: 'O que você procura? Buscar' }),
+    page.getByRole('textbox', { name: /buscar/i }),
+    page.locator('input[type="text"][placeholder*="busca"]').first(),
+    page.locator('input[type="text"][placeholder*="procura"]').first(),
+    page.locator('input[class*="search"]').first(),
+    page.locator('[class*="search"] input').first(),
+    page.locator('input[name*="search"]').first(),
+  ];
+  
+  for (const seletor of seletoresBusca) {
+    try {
+      const isVisible = await seletor.isVisible({ timeout: 3000 }).catch(() => false);
+      if (isVisible) {
+        searchInput = seletor;
+        console.log('   ✅ Campo de busca encontrado!');
+        break;
+      }
+    } catch (e) {
+      // continua tentando
+    }
+  }
+  
+  if (!searchInput) {
+    console.log('   ⚠️ Campo de busca não encontrado pelos seletores padrão');
+    // Tenta screenshot para debug
+    await page.screenshot({ path: 'debug-busca-nao-encontrada.png', fullPage: true });
+    throw new Error('Campo de busca não encontrado');
+  }
+  
   await searchInput.waitFor({ state: 'visible', timeout: 15000 });
+  await searchInput.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(500);
   await searchInput.click();
   
   // Usa texto sem acentos para a busca (evita problemas de encoding)
   const cursoParaBusca = removerAcentos(CLIENTE.curso);
   console.log(`🔍 Digitando na busca: "${cursoParaBusca}" (original: ${CLIENTE.curso})`);
   
+  // Limpa o campo antes de digitar
+  await searchInput.fill('');
+  await page.waitForTimeout(300);
+  
   // Digita mais devagar para garantir que a busca funcione
-  await searchInput.type(cursoParaBusca, { delay: 100 });
-  await page.waitForTimeout(1000);
+  await searchInput.type(cursoParaBusca, { delay: 150 });
+  await page.waitForTimeout(1500);
+  
+  console.log('   📍 Pressionando Enter...');
   await searchInput.press('Enter');
   
   // Aguarda resultados carregarem completamente
   console.log('⏳ Aguardando resultados da busca...');
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(5000);
   await aguardarCarregandoDesaparecer();
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
+  
+  // Remove overlays novamente após carregamento
+  await removerOverlays();
   
   // Verifica se está em página de busca ou de produto
   const urlAposBusca = page.url();
