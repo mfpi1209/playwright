@@ -491,6 +491,45 @@ test('test', async ({ page }) => {
   } catch (e) {}
   
   // ═══════════════════════════════════════════════════════════════════════════
+  // FUNÇÃO: Remover overlays/backdrops que interceptam cliques
+  // ═══════════════════════════════════════════════════════════════════════════
+  async function removerOverlays() {
+    console.log('🧹 Removendo overlays que bloqueiam cliques...');
+    try {
+      await page.evaluate(() => {
+        const backdropSelectors = [
+          '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsBackdrop',
+          '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsDownloadFormBackdrop',
+          '[class*="Backdrop"]',
+          '[class*="backdrop"]',
+          '.overlay',
+          '.modal-backdrop',
+          '[class*="portalContainer"]'
+        ];
+        
+        backdropSelectors.forEach(selector => {
+          document.querySelectorAll(selector).forEach(el => {
+            console.log(`Removendo: ${el.className}`);
+            el.remove();
+          });
+        });
+        
+        // Esconde formulários de contato que podem bloquear
+        document.querySelectorAll('[class*="ContactForm"], [class*="DownloadForm"]').forEach(el => {
+          if (el.style) el.style.display = 'none';
+        });
+      });
+      
+      // Pressiona Escape para fechar qualquer modal
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      console.log('   ✅ Overlays removidos');
+    } catch (e) {
+      console.log(`   ⚠️ Aviso ao remover overlays: ${e.message}`);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO: Login do cliente com validação
   // ═══════════════════════════════════════════════════════════════════════════
   async function fazerLoginCliente() {
@@ -1054,6 +1093,9 @@ test('test', async ({ page }) => {
   const cpfInput = page.locator('input[name="userDocument"]');
   await preencherCampo(cpfInput, CLIENTE.cpf, 'CPF');
   
+  // Remove overlays antes de clicar
+  await removerOverlays();
+  
   // Continuar Inscrição - com verificação de mudança de estado
   console.log('📍 Clicando em "Continuar Inscrição" (Etapa 6)...');
   const continuarBtn1 = page.getByRole('button', { name: 'Continuar Inscrição' });
@@ -1126,6 +1168,9 @@ test('test', async ({ page }) => {
     null,
     'Condições Especiais'
   );
+  
+  // Remove overlays antes de clicar (Etapa 7)
+  await removerOverlays();
   
   // Continuar Inscrição - com verificação de mudança de página
   console.log('📍 Clicando em Continuar Inscrição (Etapa 7)...');
@@ -1300,6 +1345,9 @@ test('test', async ({ page }) => {
       console.log(`⚠️ URL ainda na página do produto: ${urlAtual}`);
       console.log(`🔄 Tentando novamente clicar em "Continuar Inscrição"...`);
     }
+    
+    // Remove overlays antes de tentar clicar
+    await removerOverlays();
     
     // Tenta clicar novamente no botão
     try {
@@ -1803,6 +1851,9 @@ test('test', async ({ page }) => {
   console.log('📌 CHECKOUT: Página de Pagamento...');
   
   await page.waitForTimeout(1000);
+  
+  // Remove overlays antes de procurar o botão
+  await removerOverlays();
   
   // Procura botão "Continuar Inscrição" (usando seletor exato)
   console.log('📍 Procurando botão "Continuar Inscrição"...');

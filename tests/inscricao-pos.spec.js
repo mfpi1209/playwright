@@ -56,7 +56,7 @@ function formatarTelefone(telefone) {
 const CLIENTE = {
   nome: capitalizarNome(process.env.CLIENTE_NOME || 'Carlos Eduardo Mendes'),
   cpf: process.env.CLIENTE_CPF || '26415424041',
-  email: (process.env.CLIENTE_EMAIL || 'teste@gmail.com').toLowerCase(),
+  email: (process.env.CLIENTE_EMAIL || 'carlos.mendes2024@gmail.com').toLowerCase(),
   telefone: formatarTelefone(process.env.CLIENTE_TELEFONE || '11974562318'),
   nascimento: process.env.CLIENTE_NASCIMENTO || '12/09/1980',
   cep: process.env.CLIENTE_CEP || '05315030',
@@ -652,6 +652,42 @@ test('inscricao-pos', async ({ page, context }) => {
         console.log('   ✅ Botão clicado (alternativo)');
       }
     }
+    
+    // Aguarda o formulário de localização aparecer
+    console.log('   ⏳ Aguardando formulário de localização...');
+    await page.waitForTimeout(3000);
+    
+    // Scroll para baixo para revelar formulário se estiver oculto
+    await page.evaluate(() => window.scrollBy(0, 500));
+    await page.waitForTimeout(2000);
+    
+    // Verifica se o formulário de localização apareceu (várias opções)
+    const seletoresForm = [
+      '.react-select__input-container',
+      'input[name*="cpf"]',
+      'input[placeholder*="CPF"]',
+      'select[name*="country"]',
+      'text=País',
+      'text=Estado',
+      'text=Cidade'
+    ];
+    
+    let formEncontrado = false;
+    for (const sel of seletoresForm) {
+      const elem = page.locator(sel).first();
+      if (await elem.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log(`   ✅ Formulário de localização apareceu (${sel})`);
+        formEncontrado = true;
+        break;
+      }
+    }
+    
+    if (!formEncontrado) {
+      console.log('   ⚠️ Formulário de localização não apareceu, verificando URL...');
+      console.log(`   📍 URL atual: ${page.url()}`);
+      await page.screenshot({ path: 'debug-pos-inscreva-se.png', fullPage: true });
+    }
+    
   } catch (e) {
     console.log(`   ⚠️ Erro ao clicar Inscreva-se: ${e.message}`);
   }
@@ -666,25 +702,60 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 6: Dados de Localização');
   
-  // Scroll para baixo para evitar header sticky bloqueando
-  await page.evaluate(() => window.scrollBy(0, 300));
-  await page.waitForTimeout(1000);
-  await manterCursorNaTela(page);
+  // Verifica se está na página correta com formulário de localização
+  await page.waitForTimeout(2000);
   
-  // País - Brasil
-  try {
-    const selectPais = page.locator('.react-select__input-container').first();
-    await selectPais.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(500);
-    await selectPais.click({ force: true });
-    await page.locator('#react-select-2-input').fill('brasil');
-    await page.waitForTimeout(500);
-    await page.getByRole('option', { name: 'Brasil' }).click();
-  } catch (e) {
-    // Fallback: tenta com keyboard
-    await page.keyboard.type('brasil', { delay: 50 });
-    await page.keyboard.press('Enter');
+  // Procura formulário por vários seletores
+  const seletoresLocalizacao = [
+    'text=País',
+    '.react-select__input-container',
+    'input[placeholder*="CPF"]',
+    'text=Estado'
+  ];
+  
+  let temFormLocalizacao = false;
+  for (const sel of seletoresLocalizacao) {
+    if (await page.locator(sel).first().isVisible({ timeout: 2000 }).catch(() => false)) {
+      temFormLocalizacao = true;
+      console.log(`   ✅ Formulário encontrado via: ${sel}`);
+      break;
+    }
   }
+  
+  if (!temFormLocalizacao) {
+    console.log('   ⚠️ Formulário de localização não encontrado, verificando página...');
+    console.log(`   📍 URL atual: ${page.url()}`);
+    
+    // Pode já estar na página de campanha ou checkout
+    if (page.url().includes('campanha-comercial') || page.url().includes('checkout')) {
+      console.log('   ✅ Já passou da etapa de localização');
+      console.log('✅ ETAPA 6 PULADA - Dados já preenchidos');
+      // Pula para próxima etapa
+    } else {
+      // Tira screenshot para debug
+      await page.screenshot({ path: 'debug-etapa6-sem-form.png', fullPage: true });
+      console.log('   📸 Screenshot salvo: debug-etapa6-sem-form.png');
+    }
+  } else {
+    // Scroll para baixo para evitar header sticky bloqueando
+    await page.evaluate(() => window.scrollBy(0, 300));
+    await page.waitForTimeout(1000);
+    await manterCursorNaTela(page);
+    
+    // País - Brasil
+    try {
+      const selectPais = page.locator('.react-select__input-container').first();
+      await selectPais.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(500);
+      await selectPais.click({ force: true });
+      await page.locator('#react-select-2-input').fill('brasil');
+      await page.waitForTimeout(500);
+      await page.getByRole('option', { name: 'Brasil' }).click();
+    } catch (e) {
+      // Fallback: tenta com keyboard
+      await page.keyboard.type('brasil', { delay: 50 });
+      await page.keyboard.press('Enter');
+    }
   await page.waitForTimeout(500);
   console.log('   ✅ País: Brasil');
   
@@ -845,19 +916,18 @@ test('inscricao-pos', async ({ page, context }) => {
   });
   await page.waitForTimeout(500);
   
-  // Tenta clicar no botão
+  // Tenta clicar no botão "Continuar Inscrição"
   const btnContinuarInscricao = page.getByRole('button', { name: 'Continuar Inscrição' });
-  if (await btnContinuarInscricao.isVisible({ timeout: 5000 })) {
+  if (await btnContinuarInscricao.isVisible({ timeout: 5000 }).catch(() => false)) {
     await btnContinuarInscricao.scrollIntoViewIfNeeded();
     await page.waitForTimeout(500);
-    await btnContinuarInscricao.click();
+    await btnContinuarInscricao.click({ force: true });
     console.log('   ✅ Botão "Continuar Inscrição" clicado');
   } else {
-    console.log('   ⚠️ Botão "Continuar Inscrição" não visível, tentando alternativas...');
-    // Tenta outros seletores
+    // Tenta botão alternativo
     const btnAlt = page.locator('button:has-text("Continuar")').first();
-    if (await btnAlt.isVisible({ timeout: 3000 })) {
-      await btnAlt.click();
+    if (await btnAlt.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await btnAlt.click({ force: true });
       console.log('   ✅ Botão alternativo clicado');
     }
   }
@@ -897,6 +967,7 @@ test('inscricao-pos', async ({ page, context }) => {
   
   await page.waitForTimeout(5000);
   console.log(`   📍 URL após clique: ${page.url()}`);
+  } // Fecha o else do temFormLocalizacao
   
   console.log('✅ ETAPA 6 CONCLUÍDA');
   console.log('');
@@ -1216,26 +1287,37 @@ test('inscricao-pos', async ({ page, context }) => {
   
   await manterCursorNaTela(page);
   
-  // Clica em Continuar Inscrição (botão azul grande)
-  console.log('   📝 Clicando em Continuar Inscrição para ir ao checkout...');
+  // Clica em "Seguir para o carrinho" ou "Continuar Inscrição"
+  console.log('   📝 Clicando para ir ao checkout...');
   console.log(`   📍 URL atual: ${page.url()}`);
   
   let btnClicado = false;
   
-  // Espera o botão aparecer e estar clicável
+  // Espera o botão aparecer
   await page.waitForTimeout(2000);
   
-  // Tenta pelo seletor de classe específico do VTEX
+  // PRIMEIRA PRIORIDADE: "Seguir para o carrinho" (página de campanha)
   try {
-    const btnVtex = page.locator('button.vtex-button, .vtex-button__label, button[class*="vtex"]').filter({ hasText: /Continuar/i }).first();
-    if (await btnVtex.isVisible({ timeout: 3000 })) {
-      await btnVtex.scrollIntoViewIfNeeded();
-      await btnVtex.click({ force: true });
-      console.log('   ✅ Botão Continuar clicado (via classe VTEX)');
+    const linkCarrinho = page.locator('a:has-text("Seguir para o carrinho"), text=Seguir para o carrinho').first();
+    if (await linkCarrinho.isVisible({ timeout: 3000 })) {
+      await linkCarrinho.scrollIntoViewIfNeeded();
+      await linkCarrinho.click({ force: true });
+      console.log('   ✅ Link "Seguir para o carrinho" clicado');
       btnClicado = true;
     }
-  } catch (e) {
-    console.log(`   ⚠️ Botão VTEX não encontrado: ${e.message}`);
+  } catch (e) {}
+  
+  // Tenta pelo seletor de classe específico do VTEX
+  if (!btnClicado) {
+    try {
+      const btnVtex = page.locator('button.vtex-button, .vtex-button__label, button[class*="vtex"]').filter({ hasText: /Continuar/i }).first();
+      if (await btnVtex.isVisible({ timeout: 3000 })) {
+        await btnVtex.scrollIntoViewIfNeeded();
+        await btnVtex.click({ force: true });
+        console.log('   ✅ Botão Continuar clicado (via classe VTEX)');
+        btnClicado = true;
+      }
+    } catch (e) {}
   }
   
   // Tenta pelo texto exato
@@ -1264,7 +1346,7 @@ test('inscricao-pos', async ({ page, context }) => {
     } catch (e) {}
   }
   
-  // Fallback: link
+  // Fallback: link Continuar
   if (!btnClicado) {
     try {
       const link = page.locator('a:has-text("Continuar")').first();
@@ -1789,6 +1871,63 @@ test('inscricao-pos', async ({ page, context }) => {
   await page.waitForTimeout(3000);
   
   console.log(`   📍 URL: ${page.url()}`);
+  
+  // Verifica qual botão está visível e clica
+  if (page.url().includes('#/profile') || page.url().includes('#/shipping')) {
+    await page.waitForTimeout(2000);
+    
+    // Verifica se precisa ir para endereço ou pagamento
+    const spanEndereco = page.locator('span[data-i18n="global.goToShipping"]');
+    const spanPagamento = page.locator('span[data-i18n="global.goToPayment"]');
+    
+    const enderecoVisivel = await spanEndereco.isVisible({ timeout: 3000 }).catch(() => false);
+    const pagamentoVisivel = await spanPagamento.isVisible({ timeout: 3000 }).catch(() => false);
+    
+    console.log(`   📍 Botão "Ir para o Endereço" visível: ${enderecoVisivel}`);
+    console.log(`   📍 Botão "Ir para o Pagamento" visível: ${pagamentoVisivel}`);
+    
+    if (enderecoVisivel) {
+      // Precisa preencher endereço primeiro
+      console.log('   📝 Clicando em "Ir para o Endereço"...');
+      await spanEndereco.click();
+      await page.waitForTimeout(3000);
+      
+      // Preenche CEP
+      console.log('   📝 Preenchendo CEP...');
+      const campoCep = page.locator('#ship-postalCode');
+      if (await campoCep.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await campoCep.fill(CLIENTE.cep);
+        await campoCep.press('Tab');
+        console.log(`   ✅ CEP preenchido: ${CLIENTE.cep}`);
+        await page.waitForTimeout(4000); // Aguarda autocomplete
+      }
+      
+      // Preenche Número
+      console.log('   📝 Preenchendo Número...');
+      const campoNumero = page.locator('#ship-number');
+      if (await campoNumero.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await campoNumero.fill(CLIENTE.numero);
+        console.log(`   ✅ Número preenchido: ${CLIENTE.numero}`);
+        await page.waitForTimeout(2000);
+      }
+      
+      // Agora clica em "Ir para o Pagamento"
+      await page.waitForTimeout(2000);
+      console.log('   📝 Clicando em "Ir para o Pagamento"...');
+      await page.click('span[data-i18n="global.goToPayment"]', { timeout: 10000 });
+      console.log('   ✅ Clicou em "Ir para o Pagamento"!');
+      await page.waitForTimeout(5000);
+      
+    } else if (pagamentoVisivel) {
+      // Endereço já preenchido, vai direto para pagamento
+      console.log('   📝 Clicando em "Ir para o Pagamento"...');
+      await spanPagamento.click();
+      console.log('   ✅ Clicou em "Ir para o Pagamento"!');
+      await page.waitForTimeout(5000);
+    }
+    
+    console.log(`   📍 URL após navegação: ${page.url()}`);
+  }
   
   // Seleciona Boleto Bancário se disponível
   try {

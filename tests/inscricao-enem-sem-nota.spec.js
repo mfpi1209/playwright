@@ -204,6 +204,45 @@ test('test-enem-sem-nota', async ({ page }) => {
       return false;
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FUNÇÃO: Remover overlays/backdrops que interceptam cliques
+  // ═══════════════════════════════════════════════════════════════════════════
+  async function removerOverlays() {
+    console.log('🧹 Removendo overlays que bloqueiam cliques...');
+    try {
+      await page.evaluate(() => {
+        const backdropSelectors = [
+          '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsBackdrop',
+          '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsDownloadFormBackdrop',
+          '[class*="Backdrop"]',
+          '[class*="backdrop"]',
+          '.overlay',
+          '.modal-backdrop',
+          '[class*="portalContainer"]'
+        ];
+        
+        backdropSelectors.forEach(selector => {
+          document.querySelectorAll(selector).forEach(el => {
+            console.log(`Removendo: ${el.className}`);
+            el.remove();
+          });
+        });
+        
+        // Esconde formulários de contato que podem bloquear
+        document.querySelectorAll('[class*="ContactForm"], [class*="DownloadForm"]').forEach(el => {
+          if (el.style) el.style.display = 'none';
+        });
+      });
+      
+      // Pressiona Escape para fechar qualquer modal
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      console.log('   ✅ Overlays removidos');
+    } catch (e) {
+      console.log(`   ⚠️ Aviso ao remover overlays: ${e.message}`);
+    }
+  }
   
   // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO AUXILIAR: Seleciona opção em react-select
@@ -723,6 +762,9 @@ test('test-enem-sem-nota', async ({ page }) => {
   const cpfInput = page.locator('input[name="userDocument"]');
   await preencherCampo(cpfInput, CLIENTE.cpf, 'CPF');
   
+  // Remove overlays antes de clicar
+  await removerOverlays();
+  
   // Continuar Inscrição
   const continuarBtn1 = page.getByRole('button', { name: 'Continuar Inscrição' });
   await continuarBtn1.scrollIntoViewIfNeeded();
@@ -758,6 +800,9 @@ test('test-enem-sem-nota', async ({ page }) => {
     'Não necessito de condições',
     'Condições Especiais'
   );
+  
+  // Remove overlays antes de clicar (Etapa 7)
+  await removerOverlays();
   
   // Continuar Inscrição
   console.log('📍 Clicando em Continuar Inscrição...');
@@ -1164,6 +1209,9 @@ test('test-enem-sem-nota', async ({ page }) => {
   console.log('📌 CHECKOUT: Página de Pagamento...');
   
   await page.waitForTimeout(5000);
+  
+  // Remove overlays antes de procurar o botão
+  await removerOverlays();
   
   // Procura botão "Continuar Inscrição" (usando seletor exato)
   console.log('📍 Procurando botão "Continuar Inscrição"...');
