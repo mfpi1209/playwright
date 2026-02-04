@@ -686,9 +686,15 @@ test('test', async ({ page }) => {
   const cursoParaBusca = removerAcentos(CLIENTE.curso);
   console.log(`🔍 Digitando na busca: "${cursoParaBusca}" (original: ${CLIENTE.curso})`);
   
-  // Clica e limpa o campo usando keyboard (mais confiável em headless)
-  await searchInput.click();
+  // Remove overlays novamente (podem ter reaparecido)
+  await removerOverlays();
+  
+  // Clica usando force: true para ignorar overlays
+  console.log('   📍 Clicando no campo de busca...');
+  await searchInput.click({ force: true });
   await page.waitForTimeout(300);
+  
+  // Limpa usando keyboard
   await page.keyboard.press('Control+a');
   await page.waitForTimeout(100);
   await page.keyboard.press('Backspace');
