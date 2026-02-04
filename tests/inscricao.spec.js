@@ -681,22 +681,26 @@ test('test', async ({ page }) => {
   await searchInput.waitFor({ state: 'visible', timeout: 15000 });
   await searchInput.scrollIntoViewIfNeeded();
   await page.waitForTimeout(500);
-  await searchInput.click();
   
   // Usa texto sem acentos para a busca (evita problemas de encoding)
   const cursoParaBusca = removerAcentos(CLIENTE.curso);
   console.log(`🔍 Digitando na busca: "${cursoParaBusca}" (original: ${CLIENTE.curso})`);
   
-  // Limpa o campo antes de digitar
-  await searchInput.fill('');
+  // Clica e limpa o campo usando keyboard (mais confiável em headless)
+  await searchInput.click();
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Control+a');
+  await page.waitForTimeout(100);
+  await page.keyboard.press('Backspace');
   await page.waitForTimeout(300);
   
-  // Digita mais devagar para garantir que a busca funcione
-  await searchInput.type(cursoParaBusca, { delay: 150 });
+  // Digita usando keyboard (mais confiável em headless)
+  console.log('   📍 Digitando curso...');
+  await page.keyboard.type(cursoParaBusca, { delay: 100 });
   await page.waitForTimeout(1500);
   
   console.log('   📍 Pressionando Enter...');
-  await searchInput.press('Enter');
+  await page.keyboard.press('Enter');
   
   // Aguarda resultados carregarem completamente
   console.log('⏳ Aguardando resultados da busca...');
