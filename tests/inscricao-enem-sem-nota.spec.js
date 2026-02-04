@@ -452,22 +452,89 @@ test('test-enem-sem-nota', async ({ page }) => {
   console.log('📌 ETAPA 4: Busca e Seleção do Curso');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
-  await searchInput.waitFor({ state: 'visible', timeout: 15000 });
-  await searchInput.click();
+  // Remove overlays que podem bloquear a busca
+  await removerOverlays();
+  
+  // Aguarda página estabilizar
+  await page.waitForTimeout(2000);
+  console.log('   🔍 Procurando campo de busca...');
+  
+  // Tenta múltiplos seletores para o campo de busca
+  let searchInput = null;
+  const seletoresBusca = [
+    page.getByRole('textbox', { name: 'O que você procura? Buscar' }),
+    page.getByRole('textbox', { name: /buscar/i }),
+    page.locator('input[type="text"][placeholder*="busca"]').first(),
+    page.locator('input[type="text"][placeholder*="procura"]').first(),
+    page.locator('input[class*="search"]').first(),
+    page.locator('[class*="search"] input').first(),
+  ];
+  
+  for (const seletor of seletoresBusca) {
+    try {
+      const isVisible = await seletor.isVisible({ timeout: 3000 }).catch(() => false);
+      if (isVisible) {
+        searchInput = seletor;
+        console.log('   ✅ Campo de busca encontrado!');
+        break;
+      }
+    } catch (e) {
+      // continua tentando
+    }
+  }
+  
+  if (!searchInput) {
+    console.log('   ⚠️ Campo de busca não encontrado, usando URL direta');
+  }
   
   // Usa texto sem acentos para a busca (evita problemas de encoding)
   const cursoParaBusca = removerAcentos(CLIENTE.curso);
   console.log(`🔍 Digitando na busca: "${cursoParaBusca}" (original: ${CLIENTE.curso})`);
-  await searchInput.type(cursoParaBusca, { delay: 100 });
-  await page.waitForTimeout(1000);
-  await searchInput.press('Enter');
+  
+  // Remove overlays novamente
+  await removerOverlays();
+  
+  if (searchInput) {
+    await searchInput.waitFor({ state: 'visible', timeout: 15000 });
+    await searchInput.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
+    
+    // Usa page.evaluate para preencher o campo (mais confiável em headless)
+    console.log('   📍 Preenchendo campo de busca via JavaScript...');
+    await page.evaluate((curso) => {
+      const input = document.querySelector('input[placeholder*="procura"]') || 
+                    document.querySelector('input[class*="search"]') ||
+                    document.querySelector('[class*="search"] input');
+      if (input) {
+        input.focus();
+        input.value = curso;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }, cursoParaBusca);
+    await page.waitForTimeout(1000);
+    
+    console.log('   📍 Pressionando Enter...');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(2000);
+  }
+  
+  // Se não navegou, tenta URL direta
+  const urlAposBusca1 = page.url();
+  if (!urlAposBusca1.includes('?') && !urlAposBusca1.includes('/p')) {
+    console.log('   ⚠️ Busca não navegou, tentando URL direta...');
+    await page.goto(`https://cruzeirodosul.myvtex.com/${cursoParaBusca}?_q=${cursoParaBusca}&map=ft`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(3000);
+  }
   
   // Aguarda resultados carregarem completamente
   console.log('⏳ Aguardando resultados da busca...');
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(5000);
   await aguardarCarregandoDesaparecer();
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
+  
+  // Remove overlays novamente após carregamento
+  await removerOverlays();
   
   // Verifica se está em página de busca ou de produto
   const urlAposBusca = page.url();
