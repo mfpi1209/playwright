@@ -689,24 +689,34 @@ test('test', async ({ page }) => {
   // Remove overlays novamente (podem ter reaparecido)
   await removerOverlays();
   
-  // Clica usando force: true para ignorar overlays
-  console.log('   📍 Clicando no campo de busca...');
-  await searchInput.click({ force: true });
-  await page.waitForTimeout(300);
+  // Usa page.evaluate para focar e preencher o campo diretamente (mais confiável em headless)
+  console.log('   📍 Preenchendo campo de busca via JavaScript...');
+  await page.evaluate((curso) => {
+    const input = document.querySelector('input[placeholder*="procura"]') || 
+                  document.querySelector('input[class*="search"]') ||
+                  document.querySelector('[class*="search"] input');
+    if (input) {
+      input.focus();
+      input.value = curso;
+      // Dispara eventos para o React detectar a mudança
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }, cursoParaBusca);
+  await page.waitForTimeout(1000);
   
-  // Limpa usando keyboard
-  await page.keyboard.press('Control+a');
-  await page.waitForTimeout(100);
-  await page.keyboard.press('Backspace');
-  await page.waitForTimeout(300);
-  
-  // Digita usando keyboard (mais confiável em headless)
-  console.log('   📍 Digitando curso...');
-  await page.keyboard.type(cursoParaBusca, { delay: 100 });
-  await page.waitForTimeout(1500);
-  
+  // Pressiona Enter para buscar
   console.log('   📍 Pressionando Enter...');
   await page.keyboard.press('Enter');
+  await page.waitForTimeout(2000);
+  
+  // Se não navegou, tenta submeter o formulário diretamente ou navegar via URL
+  const urlAposBusca1 = page.url();
+  if (!urlAposBusca1.includes('?') && !urlAposBusca1.includes('/p')) {
+    console.log('   ⚠️ Busca não navegou, tentando URL direta...');
+    await page.goto(`https://cruzeirodosul.myvtex.com/${cursoParaBusca}?_q=${cursoParaBusca}&map=ft`, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(3000);
+  }
   
   // Aguarda resultados carregarem completamente
   console.log('⏳ Aguardando resultados da busca...');
