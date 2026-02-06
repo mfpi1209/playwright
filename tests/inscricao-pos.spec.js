@@ -283,27 +283,27 @@ async function detectarTelaAtual(page) {
 }
 
 const CLIENTE = {
-  nome: capitalizarNome(corrigirEncoding(process.env.CLIENTE_NOME || 'Carlos Eduardo Mendes')),
-  cpf: process.env.CLIENTE_CPF || '26415424041',
-  email: (process.env.CLIENTE_EMAIL || 'carlos.mendes2024@gmail.com').toLowerCase(),
-  telefone: formatarTelefone(process.env.CLIENTE_TELEFONE || '11974562318'),
-  nascimento: process.env.CLIENTE_NASCIMENTO || '12/09/1980',
-  cep: process.env.CLIENTE_CEP || '05315030',
-  numero: process.env.CLIENTE_NUMERO || '33',
-  estado: corrigirEncoding(process.env.CLIENTE_ESTADO || 'São Paulo'),
-  cidade: corrigirEncoding(process.env.CLIENTE_CIDADE || 'São Paulo'),
-  curso: corrigirEncoding(process.env.CLIENTE_CURSO || 'Engenharia de Produção'),
+  nome: capitalizarNome(corrigirEncoding(process.env.CLIENTE_NOME || '')),
+  cpf: process.env.CLIENTE_CPF || '',
+  email: (process.env.CLIENTE_EMAIL || '').toLowerCase(),
+  telefone: formatarTelefone(process.env.CLIENTE_TELEFONE || ''),
+  nascimento: process.env.CLIENTE_NASCIMENTO || '',
+  cep: process.env.CLIENTE_CEP || '',
+  numero: process.env.CLIENTE_NUMERO || '',
+  estado: corrigirEncoding(process.env.CLIENTE_ESTADO || ''),
+  cidade: corrigirEncoding(process.env.CLIENTE_CIDADE || ''),
+  curso: corrigirEncoding(process.env.CLIENTE_CURSO || ''),
   // Duração: usa env var se fornecida, senão extrai do nome do curso (ex: "MBA... 9 Meses" → 9)
   duracao: process.env.CLIENTE_DURACAO || (() => {
     const cursoNome = corrigirEncoding(process.env.CLIENTE_CURSO || '');
     const matchDur = cursoNome.match(/(\d+)\s*meses?/i);
-    return matchDur ? matchDur[1] : '6';
+    return matchDur ? matchDur[1] : '';
   })(),
-  polo: corrigirEncoding(process.env.CLIENTE_POLO || 'barra funda'),
+  polo: corrigirEncoding(process.env.CLIENTE_POLO || ''),
   campanha: corrigirEncoding(process.env.CLIENTE_CAMPANHA || ''),
   // Limpa R$, espaços e vírgulas dos valores monetários para garantir que parseFloat funcione
-  matricula: (process.env.CLIENTE_MATRICULA || '99').replace(/[R$\s]/g, '').replace(',', '.').trim(),
-  mensalidade: (process.env.CLIENTE_MENSALIDADE || '184').replace(/[R$\s]/g, '').replace(',', '.').trim(),
+  matricula: (process.env.CLIENTE_MATRICULA || '').replace(/[R$\s]/g, '').replace(',', '.').trim(),
+  mensalidade: (process.env.CLIENTE_MENSALIDADE || '').replace(/[R$\s]/g, '').replace(',', '.').trim(),
 };
 
 // Função DESABILITADA - não mover o mouse para evitar popup "Antes de Você Sair"
