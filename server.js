@@ -932,12 +932,27 @@ app.post('/inscricao-pos/sync', async (req, res) => {
   const { 
     nome, cpf, email, telefone, 
     cep, numero, complemento, estado, cidade, 
-    curso, duracao, polo, campanha, matricula, mensalidade,
+    curso, polo, campanha,
     leadId, webhookUrl
   } = req.body;
   
   // Aceita tanto "nascimento" quanto "data de nascimento"
   const nascimento = req.body.nascimento || req.body['data de nascimento'] || req.body.dataNascimento;
+  
+  // Limpa R$ e espaços de valores monetários
+  const matricula = (req.body.matricula || '').toString().replace(/[R$\s]/g, '').replace(',', '.').trim();
+  const mensalidade = (req.body.mensalidade || '').toString().replace(/[R$\s]/g, '').replace(',', '.').trim();
+  
+  // Extrai duração do nome do curso se não fornecida explicitamente
+  // Ex: "MBA em Empreendedorismo e Inovação 9 Meses" → duracao = "9"
+  let duracao = req.body.duracao || '';
+  if (!duracao && curso) {
+    const duracaoMatch = curso.match(/(\d+)\s*meses?/i);
+    if (duracaoMatch) {
+      duracao = duracaoMatch[1];
+      console.log(`   📏 Duração extraída do nome do curso: ${duracao} meses`);
+    }
+  }
 
   // Validação básica
   if (!nome || !cpf || !email || !telefone || !nascimento) {
@@ -975,6 +990,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
   console.log(`   Campanha: ${campanha || '(auto)'}`);
   console.log(`   Matrícula: R$ ${matricula || '(padrão)'}`);
   console.log(`   Mensalidade: R$ ${mensalidade || '(padrão)'}`);
+  console.log(`   Duração: ${duracao || '(auto)'} meses`);
   console.log('   --- INTEGRAÇÃO N8N ---');
   console.log(`   Lead ID: ${leadId || '(não informado)'}`);
   console.log(`   Webhook URL: ${webhookUrl || '(não informado)'}`);
@@ -1011,7 +1027,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     CLIENTE_CIDADE: cidade || '',
     // Variáveis específicas de pós-graduação
     CLIENTE_CURSO: curso,
-    CLIENTE_DURACAO: duracao || '',
+    CLIENTE_DURACAO: duracao || '6',
     CLIENTE_POLO: polo || '',
     CLIENTE_CAMPANHA: campanha || '',
     // Limpa R$, espaços e vírgulas dos valores monetários
@@ -1054,16 +1070,20 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     console.log(`📤 PROCESSO PÓS-GRADUAÇÃO FINALIZADO (código: ${code})`);
     console.log('═══════════════════════════════════════════════════════════════');
     
+    // Extrai linkCartaoCredito e dados cedo para incluir em TODAS as respostas
+    const linkCartaoMatch = stdout.match(/LINK_CARTAO_CREDITO:\s*(\S+)/);
+    const linkCartaoCredito = linkCartaoMatch ? linkCartaoMatch[1] : null;
+    
     const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição') || stdout.includes('cpf já cadastrado');
     if (cpfJaInscrito) {
       if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CPF já possui inscrição', etapa_erro: 'validacao_cpf', output_final: stdout.slice(-3000) });
-      return res.json({ sucesso: false, erro: 'CPF já possui inscrição', logId, cliente: { nome, cpf, email } });
+      return res.status(202).json({ sucesso: false, erro: 'CPF já possui inscrição', linkCartaoCredito, logId, cliente: { nome, cpf, email } });
     }
     
     const erroCep = stdout.includes('CEP NÃO FOI ENCONTRADO') || stdout.includes('CEP não encontrado');
     if (erroCep) {
       if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CEP não encontrado', etapa_erro: 'validacao_cep', output_final: stdout.slice(-3000) });
-      return res.json({ sucesso: false, erro: 'CEP não encontrado.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
+      return res.status(202).json({ sucesso: false, erro: 'CEP não encontrado.', linkCartaoCredito, logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
     // Verifica se o processo foi concluído com sucesso
@@ -1091,10 +1111,6 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     
     const campanhaMatch = stdout.match(/Campanha:\s*(.+)/);
     const campanhaUsada = campanhaMatch ? campanhaMatch[1].trim() : campanha;
-    
-    // Extrai link do cartão de crédito
-    const linkCartaoMatch = stdout.match(/LINK_CARTAO_CREDITO:\s*(\S+)/);
-    const linkCartaoCredito = linkCartaoMatch ? linkCartaoMatch[1] : null;
     
     // Extrai valores financeiros
     const valorMatriculaMatch = stdout.match(/Valor matrícula:\s*R?\$?\s*([\d,.]+)/);
@@ -1127,7 +1143,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
       // ═════════════════════════════════════════════════════════════════
       let kommoUploadResult = null;
 
-      if (leadId && (screenshotPath || boletoPath)) {
+      if (leadId && (screenshotPath || boletoPath) && process.env.KOMMO_PASSWORD) {
         console.log('');
         console.log('📤 Iniciando upload automático para Kommo...');
         console.log(`   Lead ID: ${leadId} | CPF: ${cpf}`);
@@ -1185,9 +1201,12 @@ app.post('/inscricao-pos/sync', async (req, res) => {
           console.error('   ❌ Erro no upload Kommo:', kommoErr.message);
           kommoUploadResult = { sucesso: false, erro: kommoErr.message };
         }
+      } else if (leadId && !process.env.KOMMO_PASSWORD) {
+        console.log('   ⚠️ KOMMO_PASSWORD não configurado no .env - pulando upload Kommo');
+        kommoUploadResult = { sucesso: false, erro: 'KOMMO_PASSWORD não configurado' };
       }
 
-      return res.json({
+      return res.status(202).json({
         sucesso: true,
         numeroInscricao: numeroInscricaoSiaa || numeroInscricao,
         numeroInscricaoSiaa,
@@ -1207,19 +1226,33 @@ app.post('/inscricao-pos/sync', async (req, res) => {
       });
     }
     
-    // ERRO
+    // ERRO - ainda retorna 202 para o fluxo continuar
     console.log('❌ ERRO - Inscrição Pós-Graduação não finalizada');
     if (logId) await db.finalizarLogErro(logId, {
       erro_mensagem: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição Pós-Graduação não finalizada',
       etapa_erro: 'finalizacao',
       output_final: stdout.slice(-3000)
     });
-    return res.json({ sucesso: false, erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição Pós-Graduação não finalizada.', logId, logs: stdout.slice(-2000) });
+    return res.status(202).json({
+      sucesso: false,
+      erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição Pós-Graduação não finalizada.',
+      linkCartaoCredito,
+      numeroInscricao: numeroInscricaoSiaa || numeroInscricao,
+      numeroInscricaoSiaa,
+      numeroPedidoVtex: numeroInscricao,
+      screenshotPath,
+      boletoPath,
+      screenshotUrl: screenshotPath ? `${BASE_URL}/files/${screenshotPath}` : null,
+      boletoUrl: boletoPath ? `${BASE_URL}/files/${boletoPath}` : null,
+      logId,
+      cliente: { nome, cpf, email },
+      logs: stdout.slice(-2000)
+    });
   });
 
   processo.on('error', async (err) => {
     if (logId) await db.finalizarLogErro(logId, { erro_mensagem: err.message, etapa_erro: 'spawn_processo', output_final: '' });
-    res.json({ sucesso: false, erro: err.message, logId });
+    res.status(202).json({ sucesso: false, erro: err.message, logId, cliente: { nome, cpf, email } });
   });
 });
 

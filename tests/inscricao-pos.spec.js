@@ -271,8 +271,9 @@ async function detectarTelaAtual(page) {
       estado.tela = 'PAGINA_CURSO';
     }
     
-    console.log(`   🔍 [DETECTOR] Tela: ${estado.tela} | URL: ${url.substring(0, 60)}...`);
-    console.log(`   📊 [DETECTOR] ReactSelects: ${elementos.reactSelects} | CPF: ${elementos.campoCPF} | País: ${elementos.selectPais}`);
+    // Log compacto - só mostra a tela detectada (sem detalhes internos)
+    // Para debug, descomente a linha abaixo:
+    // console.log(`   📊 ReactSelects: ${elementos.reactSelects} | CPF: ${elementos.campoCPF} | País: ${elementos.selectPais}`);
     
   } catch (e) {
     console.log(`   ⚠️ [DETECTOR] Erro: ${e.message}`);
@@ -378,21 +379,25 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   // INTERCEPTAÇÃO DE REDE PARA CAPTURAR O PDF DO BOLETO DIRETAMENTE
   // ═══════════════════════════════════════════════════════════════════════════
+  let pdfBoletoUrl = null; // Para salvar a URL do boleto para download direto
+  
   await context.route('**/boleto/getBoletoDiversos**', async (route) => {
-    const pdfUrl = route.request().url();
-    console.log(`   🎯 [INTERCEPTOR] URL do PDF interceptada`);
+    pdfBoletoUrl = route.request().url();
+    console.log(`   🎯 [INTERCEPTOR] URL do boleto capturada`);
     
     try {
       const response = await route.fetch();
       const body = await response.body();
       
-      // Se começa com %PDF, é o PDF real
-      if (body.slice(0, 5).toString().includes('%PDF')) {
+      // Aceita qualquer resposta com tamanho razoável (pode ser PDF, pode ser binário)
+      if (body && body.length > 500) {
         pdfBoletoBuffer = body;
-        console.log(`   ✅ [INTERCEPTOR] PDF capturado: ${body.length} bytes`);
+        const isPdf = body.slice(0, 5).toString().includes('%PDF');
+        console.log(`   ✅ [INTERCEPTOR] Conteúdo capturado: ${body.length} bytes (PDF: ${isPdf})`);
+      } else {
+        console.log(`   ⚠️ [INTERCEPTOR] Resposta pequena: ${body ? body.length : 0} bytes`);
       }
       
-      // Continua a requisição normalmente para o browser
       await route.fulfill({ response });
     } catch (e) {
       console.log(`   ⚠️ [INTERCEPTOR] Erro: ${e.message}`);
@@ -624,13 +629,14 @@ test('inscricao-pos', async ({ page, context }) => {
   // Fecha modais se necessário
   await fecharModais(page);
   
-  // PASSO 1: Pesquisar o curso
-  console.log(`   🔍 Pesquisando curso: "${CLIENTE.curso}"`);
-  
+  // PASSO 1: Pesquisar o curso (SEM a duração no termo de busca)
+  // Ex: "MBA em Empreendedorismo e Inovação 9 Meses" → busca "MBA em Empreendedorismo e Inovação"
+  const cursoSemDuracao = CLIENTE.curso.replace(/\s*\d+\s*meses?\s*$/i, '').trim();
+  console.log(`   🔍 Pesquisando curso: "${cursoSemDuracao}" (duração ${CLIENTE.duracao}m lida do card)`);
   
   const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
   await searchInput.click({ force: true });
-  await searchInput.fill(CLIENTE.curso);
+  await searchInput.fill(cursoSemDuracao);
   await searchInput.press('Enter');
   
   // PASSO 2: Aguardar os resultados carregarem
@@ -1017,7 +1023,7 @@ test('inscricao-pos', async ({ page, context }) => {
       // Screenshot para diagnóstico
       try {
         await page.screenshot({ path: 'debug-etapa4-fallback-falhou.png', fullPage: true });
-        console.log('   📸 Screenshot debug: debug-etapa4-fallback-falhou.png');
+        // debug screenshot salvo silenciosamente
       } catch (e) {}
     }
   }
@@ -1280,7 +1286,7 @@ test('inscricao-pos', async ({ page, context }) => {
       if (!formEncontrado) {
         console.log('   ⚠️ Formulário de localização não apareceu após 5 tentativas');
         await page.screenshot({ path: 'debug-pos-inscreva-se.png', fullPage: true });
-        console.log('   📸 Screenshot: debug-pos-inscreva-se.png');
+        // debug screenshot salvo silenciosamente
       }
       
     } catch (e) {
@@ -1400,7 +1406,7 @@ test('inscricao-pos', async ({ page, context }) => {
       
       // Tira screenshot para debug
       await page.screenshot({ path: 'debug-etapa6-estado.png', fullPage: true });
-      console.log('   📸 Screenshot: debug-etapa6-estado.png');
+      // debug screenshot salvo silenciosamente
     }
     
     // Re-verifica tela
@@ -1679,7 +1685,7 @@ test('inscricao-pos', async ({ page, context }) => {
   // Screenshot para debug
   try {
     await page.screenshot({ path: 'debug-etapa7-campanha.png', fullPage: true });
-    console.log('   📸 Screenshot: debug-etapa7-campanha.png');
+    // debug screenshot salvo silenciosamente
   } catch (e) {}
   
   if (estaNaPaginaCampanha) {
@@ -1794,7 +1800,7 @@ test('inscricao-pos', async ({ page, context }) => {
     // Tira screenshot para debug
     try {
       await page.screenshot({ path: 'debug-campanha-antes-click.png', fullPage: true });
-      console.log('   📸 Screenshot salvo: debug-campanha-antes-click.png');
+      // debug screenshot salvo silenciosamente
     } catch (e) {}
     
     await selectCampanha.click({ force: true });
@@ -2197,7 +2203,7 @@ test('inscricao-pos', async ({ page, context }) => {
   // Screenshot para debug
   try {
     await page.screenshot({ path: 'debug-etapa9-checkout.png', fullPage: true });
-    console.log('   📸 Screenshot: debug-etapa9-checkout.png');
+    // debug screenshot salvo silenciosamente
   } catch (e) {}
   
   // Verifica se está no checkout
@@ -2462,7 +2468,7 @@ test('inscricao-pos', async ({ page, context }) => {
   // Screenshot para debug
   try {
     await page.screenshot({ path: 'debug-etapa10-endereco.png', fullPage: true });
-    console.log('   📸 Screenshot: debug-etapa10-endereco.png');
+    // debug screenshot salvo silenciosamente
   } catch (e) {}
   
   // Verifica se o endereço já está preenchido (seção de endereço mostra dados)
@@ -2718,7 +2724,7 @@ test('inscricao-pos', async ({ page, context }) => {
   // Screenshot para debug
   try {
     await page.screenshot({ path: 'debug-etapa11-pagamento.png', fullPage: true });
-    console.log('   📸 Screenshot: debug-etapa11-pagamento.png');
+    // debug screenshot salvo silenciosamente
   } catch (e) {}
   
   // Clica no botão de finalização (pode ser "Continuar Inscrição", "Finalizar compra", etc)
@@ -2873,7 +2879,7 @@ test('inscricao-pos', async ({ page, context }) => {
   // Aguarda a página de confirmação carregar completamente
   await page.waitForTimeout(5000);
   await page.screenshot({ path: 'debug-orderPlaced.png', fullPage: true });
-  console.log('   📸 Screenshot: debug-orderPlaced.png');
+  // debug screenshot salvo silenciosamente
   
   let siaaPage = null;
   
@@ -3563,7 +3569,7 @@ test('inscricao-pos', async ({ page, context }) => {
       console.log('   ⚠️ Botão "Cartão de Crédito" não encontrado na página SIAA');
       // Debug: screenshot para análise
       await siaaPage.screenshot({ path: 'debug-cartao-nao-encontrado.png', fullPage: true });
-      console.log('   📸 Screenshot debug: debug-cartao-nao-encontrado.png');
+      // debug screenshot salvo silenciosamente
     }
     
     if (!linkCartaoCredito) {
@@ -3636,7 +3642,7 @@ test('inscricao-pos', async ({ page, context }) => {
     
     // Screenshot de debug antes de clicar
     await siaaPage.screenshot({ path: 'debug-antes-emitir-boleto.png', fullPage: true });
-    console.log('   📸 Screenshot: debug-antes-emitir-boleto.png');
+    // debug screenshot salvo silenciosamente
     
     if (btnVisivel) {
       console.log('   📝 Clicando em "Emitir Boleto"...');
@@ -3762,7 +3768,7 @@ test('inscricao-pos', async ({ page, context }) => {
         console.log('   ❌ Nenhum botão de boleto encontrado na página');
         // Salva screenshot para debug
         await siaaPage.screenshot({ path: 'debug-sem-botao-boleto.png', fullPage: true });
-        console.log('   📸 Screenshot: debug-sem-botao-boleto.png');
+        // debug screenshot salvo silenciosamente
       }
     }
   } catch (e) {
@@ -3774,26 +3780,101 @@ test('inscricao-pos', async ({ page, context }) => {
     } catch (e2) {}
   }
   
-  // Verifica se o PDF foi capturado via interceptação
-  if (pdfBoletoBuffer && pdfBoletoBuffer.length > 0) {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SALVAR BOLETO PDF - com múltiplas tentativas e fallbacks
+  // ═══════════════════════════════════════════════════════════════════════════
+  let boletoPdfSalvo = false;
+  
+  // MÉTODO 1: PDF capturado via interceptação de rede
+  if (pdfBoletoBuffer && pdfBoletoBuffer.length > 500) {
     try {
       fs.writeFileSync(boletoPath, pdfBoletoBuffer);
       const stats = fs.statSync(boletoPath);
-      console.log(`   ✅ BOLETO PDF SALVO VIA INTERCEPTAÇÃO: ${boletoPath} (${stats.size} bytes)`);
+      const isPdf = pdfBoletoBuffer.slice(0, 5).toString().includes('%PDF');
+      if (isPdf && stats.size > 1000) {
+        console.log(`   ✅ Boleto PDF salvo via interceptação: ${stats.size} bytes`);
+        boletoPdfSalvo = true;
+      } else {
+        console.log(`   ⚠️ Interceptação capturou ${stats.size} bytes mas não é PDF válido, tentando download direto...`);
+        fs.unlinkSync(boletoPath);
+      }
     } catch (e) {
-      console.log(`   ⚠️ Erro ao salvar PDF interceptado: ${e.message}`);
+      console.log(`   ⚠️ Erro ao salvar interceptação: ${e.message}`);
     }
   }
   
-  // Verifica se o PDF foi salvo (por qualquer método)
-  if (!fs.existsSync(boletoPath)) {
-    console.log('   ⚠️ PDF não foi salvo, tentando capturar screenshot da página atual...');
+  // MÉTODO 2: Download direto via URL do boleto (com retry 3x)
+  if (!boletoPdfSalvo && pdfBoletoUrl) {
+    console.log('   🔄 Tentando download direto do PDF...');
+    
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      try {
+        console.log(`   📥 Tentativa ${tentativa}/3: ${pdfBoletoUrl.substring(0, 80)}...`);
+        
+        // Usa o contexto do browser para manter cookies/sessão
+        const response = await siaaPage.context().request.get(pdfBoletoUrl);
+        const body = await response.body();
+        
+        if (body && body.length > 1000) {
+          fs.writeFileSync(boletoPath, body);
+          const isPdf = body.slice(0, 5).toString().includes('%PDF');
+          console.log(`   ✅ Download direto: ${body.length} bytes (PDF: ${isPdf})`);
+          boletoPdfSalvo = true;
+          break;
+        } else {
+          console.log(`   ⚠️ Resposta pequena: ${body ? body.length : 0} bytes`);
+        }
+      } catch (e) {
+        console.log(`   ⚠️ Tentativa ${tentativa} falhou: ${e.message}`);
+      }
+      
+      // Aguarda antes de tentar novamente
+      if (tentativa < 3) {
+        await siaaPage.waitForTimeout(2000);
+        // Recarrega a página do boleto para gerar nova URL
+        if (boletoPage) {
+          try {
+            await boletoPage.reload();
+            await boletoPage.waitForTimeout(3000);
+            pdfBoletoUrl = boletoPage.url();
+            console.log(`   🔄 Página recarregada, nova URL: ${pdfBoletoUrl.substring(0, 80)}...`);
+          } catch (e) {}
+        }
+      }
+    }
+  }
+  
+  // MÉTODO 3: Screenshot da página do boleto como fallback final
+  if (!boletoPdfSalvo) {
+    console.log('   ⚠️ PDF não obtido, salvando screenshot do boleto...');
     try {
-      await siaaPage.screenshot({ path: boletoPath.replace('.pdf', '.png'), fullPage: true });
-      console.log(`   ✅ Screenshot salvo: ${boletoPath.replace('.pdf', '.png')}`);
-    } catch (e) {}
+      if (boletoPage) {
+        const boletoPngPath = boletoPath.replace('.pdf', '.png');
+        await boletoPage.screenshot({ path: boletoPngPath, fullPage: true });
+        console.log(`   📸 Screenshot boleto: ${boletoPngPath}`);
+        
+        // Converte screenshot para PDF
+        const doc = new PDFDocument({ size: 'A4', margin: 20 });
+        const pdfStream = fs.createWriteStream(boletoPath);
+        doc.pipe(pdfStream);
+        doc.image(boletoPngPath, 20, 20, { fit: [555, 750] });
+        doc.end();
+        await new Promise((resolve) => pdfStream.on('finish', resolve));
+        console.log(`   ✅ Boleto PDF (screenshot): ${fs.statSync(boletoPath).size} bytes`);
+        boletoPdfSalvo = true;
+      } else {
+        await siaaPage.screenshot({ path: boletoPath.replace('.pdf', '.png'), fullPage: true });
+        console.log(`   📸 Screenshot SIAA salvo como fallback`);
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Falha no screenshot: ${e.message}`);
+    }
+  }
+  
+  if (boletoPdfSalvo) {
+    console.log(`   ✅ Boleto confirmado: ${boletoPath}`);
   } else {
-    console.log(`   ✅ Boleto PDF confirmado: ${boletoPath}`);
+    console.log('   ❌ Não foi possível obter o boleto PDF');
   }
   
   console.log('✅ ETAPA 14 CONCLUÍDA');
