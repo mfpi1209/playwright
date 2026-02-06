@@ -1348,7 +1348,7 @@ app.get('/db/health', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // INICIA SERVIDOR
 // ═══════════════════════════════════════════════════════════════════════════
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('🚀 SERVIDOR DE INSCRIÇÃO INICIADO');
@@ -1377,3 +1377,9 @@ app.listen(PORT, async () => {
   }
   console.log('');
 });
+
+// Timeout de 15 minutos para conexões HTTP (o Playwright pode demorar vários minutos)
+server.timeout = 15 * 60 * 1000;           // 15 min - tempo máximo de resposta
+server.keepAliveTimeout = 15 * 60 * 1000;  // 15 min - mantém conexão aberta
+server.headersTimeout = 15 * 60 * 1000 + 1000; // Deve ser > keepAliveTimeout
+console.log('⏱️  Timeout HTTP configurado: 15 minutos');
