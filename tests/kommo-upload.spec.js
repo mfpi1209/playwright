@@ -13,6 +13,12 @@ const UPLOAD_SELECTORS = {
   'Boleto_Inscricao': '#edit_card > div > div:nth-child(4) > div:nth-child(48) > div.linked-form__field__value > div > div.drive-field__controls > div > div'
 };
 
+// Seletores dos arquivos já existentes (quando há arquivo upado no campo)
+const FILE_EXISTING_SELECTORS = {
+  'Aceite_Inscricao': '#edit_card > div > div:nth-child(4) > div:nth-child(47) > div.linked-form__field__value > div > div.drive-field__controls.drive-field__controls_aligned > div',
+  'Boleto_Inscricao': '#edit_card > div > div:nth-child(4) > div:nth-child(48) > div.linked-form__field__value > div > div.drive-field__controls.drive-field__controls_aligned > div > span'
+};
+
 test('Upload arquivos para Kommo', async ({ page }) => {
   const KOMMO_EMAIL = process.env.KOMMO_EMAIL || 'adm@eduit.com.br';
   const KOMMO_PASSWORD = process.env.KOMMO_PASSWORD;
@@ -72,6 +78,21 @@ test('Upload arquivos para Kommo', async ({ page }) => {
     });
     await page.waitForTimeout(1000);
 
+    // ═════════════════════════════════════════════════════════════════════
+    // ETAPA 2: Excluir arquivos existentes nos campos (se houver)
+    // ═════════════════════════════════════════════════════════════════════
+    console.log('🗑️  Verificando arquivos existentes nos campos...');
+    
+    if (SCREENSHOT_PATH) {
+      await excluirArquivoExistente(page, 'Aceite_Inscricao');
+    }
+    if (BOLETO_PATH) {
+      await excluirArquivoExistente(page, 'Boleto_Inscricao');
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // ETAPA 3: Anexar novos arquivos
+    // ═════════════════════════════════════════════════════════════════════
     // Anexar Screenshot → Aceite_Inscricao
     if (SCREENSHOT_PATH) {
       console.log('📸 Anexando screenshot → Aceite_Inscricao...');
@@ -94,6 +115,61 @@ test('Upload arquivos para Kommo', async ({ page }) => {
     throw error;
   }
 });
+
+/**
+ * Excluir arquivo já existente em um campo do Kommo
+ * Clica no arquivo existente para abrir o menu de contexto, depois clica em "Excluir"
+ */
+async function excluirArquivoExistente(page, nomeCampo) {
+  const selector = FILE_EXISTING_SELECTORS[nomeCampo];
+
+  try {
+    const fileElement = page.locator(selector).first();
+    const isVisible = await fileElement.isVisible({ timeout: 3000 }).catch(() => false);
+
+    if (!isVisible) {
+      console.log(`   ℹ️  ${nomeCampo}: nenhum arquivo existente encontrado`);
+      return;
+    }
+
+    console.log(`   🗑️  ${nomeCampo}: arquivo existente detectado, excluindo...`);
+
+    // Clica no arquivo para abrir o menu de contexto
+    await fileElement.scrollIntoViewIfNeeded({ timeout: 5000 });
+    await page.waitForTimeout(500);
+    await fileElement.click();
+    await page.waitForTimeout(1000);
+
+    // Clica em "Excluir" no menu que aparece
+    const excluirButton = page.locator('text=Excluir').last();
+    const excluirVisible = await excluirButton.isVisible({ timeout: 3000 }).catch(() => false);
+
+    if (excluirVisible) {
+      await excluirButton.click();
+      await page.waitForTimeout(2000);
+
+      // Confirmar exclusão se aparecer diálogo de confirmação
+      const confirmarButton = page.locator('button:has-text("Confirmar"), button:has-text("Sim"), button:has-text("OK"), button:has-text("Excluir")').first();
+      const confirmarVisible = await confirmarButton.isVisible({ timeout: 2000 }).catch(() => false);
+      if (confirmarVisible) {
+        await confirmarButton.click();
+        await page.waitForTimeout(2000);
+      }
+
+      console.log(`   ✅ ${nomeCampo}: arquivo anterior excluído com sucesso`);
+    } else {
+      console.log(`   ⚠️  ${nomeCampo}: menu "Excluir" não apareceu, tentando fechar menu...`);
+      // Fecha o menu clicando fora
+      await page.locator('body').click({ position: { x: 10, y: 10 } });
+      await page.waitForTimeout(500);
+    }
+  } catch (error) {
+    console.log(`   ⚠️  ${nomeCampo}: não foi possível excluir arquivo existente (${error.message})`);
+    // Fecha qualquer menu aberto antes de continuar
+    await page.locator('body').click({ position: { x: 10, y: 10 } }).catch(() => {});
+    await page.waitForTimeout(500);
+  }
+}
 
 /**
  * Anexar arquivo no campo específico usando seletor CSS exato

@@ -956,7 +956,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
 
   // Validação básica
   if (!nome || !cpf || !email || !telefone || !nascimento) {
-    return res.status(400).json({
+    return res.status(202).json({
       sucesso: false,
       erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento'
     });
@@ -964,7 +964,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
 
   // Validação de campos obrigatórios de pós-graduação
   if (!curso) {
-    return res.status(400).json({
+    return res.status(202).json({
       sucesso: false,
       erro: 'Campo obrigatório para pós-graduação: curso'
     });
