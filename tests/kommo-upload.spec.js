@@ -7,10 +7,16 @@ const path = require('path');
 // Faz login no Kommo e anexa arquivos ao lead automaticamente
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Seletores base dos campos de arquivo no Kommo (div:nth-child do campo)
+// Seletores base dos campos de arquivo no Kommo
 const FIELD_SELECTORS = {
   'Aceite_Inscricao': '#edit_card > div > div:nth-child(4) > div:nth-child(47)',
   'Boleto_Inscricao': '#edit_card > div > div:nth-child(4) > div:nth-child(48)'
+};
+
+// Seletor do botão "Substituir" dentro do menu de cada campo
+const SUBSTITUIR_SELECTORS = {
+  'Aceite_Inscricao': '#edit_card > div > div:nth-child(4) > div:nth-child(47) > div.linked-form__field__value > div > div.js-tip-holder > div > div > div.tips-item.js-tips-item.drive-field__substitute.js-drive-field-substitute > label',
+  'Boleto_Inscricao': '#edit_card > div > div:nth-child(4) > div:nth-child(48) > div.linked-form__field__value > div > div.js-tip-holder > div > div > div.tips-item.js-tips-item.drive-field__substitute.js-drive-field-substitute > label'
 };
 
 test('Upload arquivos para Kommo', async ({ page }) => {
@@ -29,10 +35,8 @@ test('Upload arquivos para Kommo', async ({ page }) => {
   console.log(`📄 Boleto: ${BOLETO_PATH || '(nenhum)'}`);
   console.log('');
 
-  // Validação: KOMMO_PASSWORD é obrigatório
   if (!KOMMO_PASSWORD) {
-    console.error('❌ KOMMO_PASSWORD não configurado no .env do servidor!');
-    console.error('   Adicione: KOMMO_PASSWORD=sua_senha_aqui ao arquivo .env');
+    console.error('❌ KOMMO_PASSWORD não configurado!');
     throw new Error('KOMMO_PASSWORD não configurado. Configure no .env do servidor.');
   }
 
@@ -52,13 +56,25 @@ test('Upload arquivos para Kommo', async ({ page }) => {
     await page.waitForTimeout(2000);
     console.log('   ✅ Login OK');
 
-    // Navegar até o lead
+    // ═════════════════════════════════════════════════════════════════════
+    // ETAPA 2: Navegar até o lead
+    // ═════════════════════════════════════════════════════════════════════
     console.log(`🔍 Abrindo lead ${LEAD_ID}...`);
     await page.goto(`https://admamoeduitcombr.kommo.com/leads/detail/${LEAD_ID}`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3000);
 
-    // Rola até os campos de arquivo (são os últimos campos do lead)
+    // Fecha popup "Você atingiu o limite de sessões" se aparecer
+    try {
+      const closePopup = page.locator('.modal-body__close, .modal__close, [class*="modal"] .icon-close').first();
+      if (await closePopup.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log('   ⚠️  Popup de limite de sessões, fechando...');
+        await closePopup.click();
+        await page.waitForTimeout(1500);
+      }
+    } catch (e) { /* ignora */ }
+
+    // Scroll até os campos de arquivo
     const aceiteField = page.locator('text=Aceite_Inscricao').first();
     await aceiteField.scrollIntoViewIfNeeded({ timeout: 15000 }).catch(async () => {
       for (let i = 0; i < 15; i++) {
@@ -73,30 +89,16 @@ test('Upload arquivos para Kommo', async ({ page }) => {
     await page.waitForTimeout(1000);
 
     // ═════════════════════════════════════════════════════════════════════
-    // ETAPA 2: Excluir arquivos existentes nos campos (se houver)
-    // ═════════════════════════════════════════════════════════════════════
-    console.log('🗑️  Verificando arquivos existentes nos campos...');
-
-    if (SCREENSHOT_PATH) {
-      await excluirArquivoExistente(page, 'Aceite_Inscricao');
-    }
-    if (BOLETO_PATH) {
-      await excluirArquivoExistente(page, 'Boleto_Inscricao');
-    }
-
-    await page.waitForTimeout(1000);
-
-    // ═════════════════════════════════════════════════════════════════════
-    // ETAPA 3: Anexar novos arquivos
+    // ETAPA 3: Upload dos arquivos
     // ═════════════════════════════════════════════════════════════════════
     if (SCREENSHOT_PATH) {
-      console.log('📸 Anexando screenshot → Aceite_Inscricao...');
-      await anexarArquivo(page, SCREENSHOT_PATH, 'Aceite_Inscricao');
+      console.log('📸 Processando Aceite_Inscricao...');
+      await uploadParaCampo(page, SCREENSHOT_PATH, 'Aceite_Inscricao');
     }
 
     if (BOLETO_PATH) {
-      console.log('📄 Anexando boleto → Boleto_Inscricao...');
-      await anexarArquivo(page, BOLETO_PATH, 'Boleto_Inscricao');
+      console.log('📄 Processando Boleto_Inscricao...');
+      await uploadParaCampo(page, BOLETO_PATH, 'Boleto_Inscricao');
     }
 
     console.log('');
@@ -105,167 +107,76 @@ test('Upload arquivos para Kommo', async ({ page }) => {
 
   } catch (error) {
     console.error('❌ Erro:', error.message);
-    await page.screenshot({ path: `erro-kommo-upload-${Date.now()}.png`, fullPage: true });
+    await page.screenshot({ path: `erro-kommo-upload-${Date.now()}.png`, fullPage: true }).catch(() => {});
     throw error;
   }
 });
 
 /**
- * Excluir arquivo já existente em um campo do Kommo.
- * Detecta se o campo tem a classe "drive-field__controls_aligned" (indica arquivo presente).
- * Clica no arquivo para abrir menu de contexto, depois clica em "Excluir".
+ * Upload de arquivo para um campo do Kommo.
+ * 
+ * Se já existe arquivo: clica no arquivo → abre menu → clica "Substituir" (CSS exato) → file chooser
+ * Se campo vazio: clica no botão de upload → file chooser
  */
-async function excluirArquivoExistente(page, nomeCampo) {
-  const fieldBase = FIELD_SELECTORS[nomeCampo];
-
-  try {
-    // Verifica se o campo tem arquivo (classe _aligned aparece quando há arquivo)
-    const campoComArquivo = page.locator(`${fieldBase} .drive-field__controls_aligned`).first();
-    const temArquivo = await campoComArquivo.isVisible({ timeout: 3000 }).catch(() => false);
-
-    if (!temArquivo) {
-      console.log(`   ℹ️  ${nomeCampo}: campo vazio, nenhum arquivo para excluir`);
-      return;
-    }
-
-    console.log(`   🗑️  ${nomeCampo}: arquivo existente detectado, excluindo...`);
-
-    // Clica no nome do arquivo (link) ou no elemento do arquivo para abrir o menu
-    const fileLink = page.locator(`${fieldBase} .drive-field__controls_aligned a, ${fieldBase} .drive-field__controls_aligned span`).first();
-    await fileLink.scrollIntoViewIfNeeded({ timeout: 5000 });
-    await page.waitForTimeout(500);
-    await fileLink.click();
-    await page.waitForTimeout(1500);
-
-    // Procura o botão "Excluir" no menu de contexto/dropdown
-    const excluirButton = page.locator('text=Excluir').last();
-    const excluirVisible = await excluirButton.isVisible({ timeout: 3000 }).catch(() => false);
-
-    if (excluirVisible) {
-      await excluirButton.click();
-      await page.waitForTimeout(2000);
-
-      // Confirmar exclusão se aparecer diálogo de confirmação
-      const confirmarButton = page.locator('button:has-text("Confirmar"), button:has-text("Sim"), button:has-text("OK"), button:has-text("Delete")').first();
-      const confirmarVisible = await confirmarButton.isVisible({ timeout: 3000 }).catch(() => false);
-      if (confirmarVisible) {
-        await confirmarButton.click();
-        await page.waitForTimeout(2000);
-      }
-
-      // Verifica se o arquivo realmente foi removido
-      const aindaTemArquivo = await page.locator(`${fieldBase} .drive-field__controls_aligned`).first().isVisible({ timeout: 2000 }).catch(() => false);
-      if (!aindaTemArquivo) {
-        console.log(`   ✅ ${nomeCampo}: arquivo anterior excluído com sucesso`);
-      } else {
-        console.log(`   ⚠️  ${nomeCampo}: exclusão pode não ter funcionado, tentando prosseguir...`);
-      }
-    } else {
-      console.log(`   ⚠️  ${nomeCampo}: menu "Excluir" não apareceu, fechando menu...`);
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
-    }
-  } catch (error) {
-    console.log(`   ⚠️  ${nomeCampo}: erro ao excluir arquivo existente (${error.message})`);
-    // Fecha qualquer menu/popup aberto
-    await page.keyboard.press('Escape').catch(() => {});
-    await page.waitForTimeout(500);
-  }
-}
-
-/**
- * Anexar arquivo no campo específico.
- * Tenta 3 abordagens:
- *   1. Clica no botão "Fazer upload" (campo vazio)
- *   2. Se filechooser não abrir, tenta "Substituir" do menu de contexto (campo com arquivo)
- *   3. Fallback: exclui arquivo existente e tenta upload novamente
- */
-async function anexarArquivo(page, filePath, nomeCampo) {
+async function uploadParaCampo(page, filePath, nomeCampo) {
   const absolutePath = path.resolve(filePath);
   const fieldBase = FIELD_SELECTORS[nomeCampo];
 
-  // ─── Tentativa 1: Clicar no botão de upload (campo vazio) ───
-  const uploadButton = page.locator(`${fieldBase} .drive-field__controls div div`).first();
-  await uploadButton.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => {});
-  await page.waitForTimeout(500);
+  // Verifica se já tem arquivo no campo
+  const temArquivo = await page.locator(`${fieldBase} .drive-field__controls_aligned`).first()
+    .isVisible({ timeout: 3000 }).catch(() => false);
 
   let fileChooser = null;
 
-  try {
-    console.log(`   → Tentativa 1: clique direto no botão de upload...`);
-    [fileChooser] = await Promise.all([
-      page.waitForEvent('filechooser', { timeout: 8000 }),
-      uploadButton.click()
-    ]);
-  } catch (e) {
-    console.log(`   → Tentativa 1 falhou (${e.message.substring(0, 50)}...)`);
-  }
+  if (temArquivo) {
+    // ─── Campo com arquivo: abrir menu e clicar "Substituir" ───
+    console.log(`   → Arquivo existente detectado, abrindo menu...`);
 
-  // ─── Tentativa 2: Usar "Substituir" do menu de contexto ───
-  if (!fileChooser) {
-    try {
-      console.log(`   → Tentativa 2: usando "Substituir" do menu de contexto...`);
-      await page.waitForTimeout(500);
+    // Clica no arquivo para abrir o menu dropdown
+    const fileArea = page.locator(`${fieldBase} .drive-field__controls_aligned`).first();
+    await fileArea.scrollIntoViewIfNeeded({ timeout: 5000 });
+    await page.waitForTimeout(500);
+    await fileArea.click();
+    await page.waitForTimeout(1500);
 
-      // O menu de contexto pode já estar aberto do clique anterior
-      const substituirButton = page.locator('text=Substituir');
-      const substituirVisible = await substituirButton.isVisible({ timeout: 2000 }).catch(() => false);
+    // Clica em "Substituir" usando o seletor CSS exato
+    const substituirBtn = page.locator(SUBSTITUIR_SELECTORS[nomeCampo]);
+    const subVisible = await substituirBtn.isVisible({ timeout: 5000 }).catch(() => false);
 
-      if (substituirVisible) {
+    if (subVisible) {
+      console.log(`   → Clicando "Substituir"...`);
+      try {
         [fileChooser] = await Promise.all([
-          page.waitForEvent('filechooser', { timeout: 10000 }),
-          substituirButton.click()
+          page.waitForEvent('filechooser', { timeout: 15000 }),
+          substituirBtn.click()
         ]);
-      } else {
-        // Menu não está aberto, fecha qualquer coisa e tenta abrir de novo
+        console.log(`   → File chooser aberto via "Substituir"`);
+      } catch (e) {
+        console.log(`   → "Substituir" clicou mas file chooser não abriu: ${e.message.substring(0, 50)}`);
         await page.keyboard.press('Escape').catch(() => {});
         await page.waitForTimeout(500);
-
-        // Clica no arquivo para abrir o menu
-        const fileLink = page.locator(`${fieldBase} .drive-field__controls_aligned a, ${fieldBase} .drive-field__controls_aligned span`).first();
-        const fileLinkVisible = await fileLink.isVisible({ timeout: 2000 }).catch(() => false);
-
-        if (fileLinkVisible) {
-          await fileLink.click();
-          await page.waitForTimeout(1500);
-
-          const substituirBtn2 = page.locator('text=Substituir');
-          const subVisible2 = await substituirBtn2.isVisible({ timeout: 2000 }).catch(() => false);
-
-          if (subVisible2) {
-            [fileChooser] = await Promise.all([
-              page.waitForEvent('filechooser', { timeout: 10000 }),
-              substituirBtn2.click()
-            ]);
-          }
-        }
       }
-    } catch (e) {
-      console.log(`   → Tentativa 2 falhou (${e.message.substring(0, 50)}...)`);
+    } else {
+      console.log(`   → Menu "Substituir" não visível, fechando menu...`);
       await page.keyboard.press('Escape').catch(() => {});
       await page.waitForTimeout(500);
     }
   }
 
-  // ─── Tentativa 3: Excluir arquivo e tentar upload limpo ───
   if (!fileChooser) {
+    // ─── Campo vazio ou Substituir falhou: upload direto ───
+    console.log(`   → Upload direto no botão do campo...`);
+    const uploadBtn = page.locator(`${fieldBase} .drive-field__controls div div`).first();
+    await uploadBtn.scrollIntoViewIfNeeded({ timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(500);
+
     try {
-      console.log(`   → Tentativa 3: excluindo arquivo e tentando upload limpo...`);
-      await excluirArquivoExistente(page, nomeCampo);
-      await page.waitForTimeout(2000);
-
-      // Tenta clicar no botão de upload novamente
-      const uploadBtn2 = page.locator(`${fieldBase} .drive-field__controls div div`).first();
-      await uploadBtn2.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
-      await page.waitForTimeout(500);
-
       [fileChooser] = await Promise.all([
         page.waitForEvent('filechooser', { timeout: 15000 }),
-        uploadBtn2.click()
+        uploadBtn.click()
       ]);
     } catch (e) {
-      console.log(`   → Tentativa 3 falhou (${e.message.substring(0, 50)}...)`);
-      throw new Error(`Não foi possível abrir o seletor de arquivo para ${nomeCampo} após 3 tentativas`);
+      throw new Error(`Não foi possível abrir file chooser para ${nomeCampo}: ${e.message.substring(0, 80)}`);
     }
   }
 
@@ -274,5 +185,5 @@ async function anexarArquivo(page, filePath, nomeCampo) {
   console.log(`   → Arquivo enviado, aguardando processamento...`);
   await page.waitForTimeout(8000);
   await page.screenshot({ path: `kommo-uploaded-${nomeCampo}.png` });
-  console.log(`   ✅ ${nomeCampo}: ${path.basename(absolutePath)}`);
+  console.log(`   ✅ ${nomeCampo}: ${path.basename(absolutePath)} anexado`);
 }
