@@ -739,11 +739,198 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   }
   
-  // Fallback final
+  // Fallback final (seletor original)
   if (!cursoClicado) {
     const primeiroCard = page.locator('a[href*="/pos-"][href$="/p"]').first();
-    if (await primeiroCard.isVisible({ timeout: 3000 })) {
+    if (await primeiroCard.isVisible({ timeout: 3000 }).catch(() => false)) {
       await primeiroCard.click();
+      cursoClicado = true;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FALLBACKS AVANÇADOS - quando nenhum card de curso foi encontrado
+  // Cenários: VTEX redirecionou para página do produto, cards com seletor
+  // diferente, busca não retornou resultados, etc.
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (!cursoClicado) {
+    console.log('   🆘 Nenhum card encontrado com seletores padrão. Iniciando fallbacks avançados...');
+
+    // FALLBACK A: Verificar se VTEX já redirecionou para a página do produto
+    // (quando busca com match exato, VTEX às vezes vai direto para o produto)
+    const temBotaoInscreva = await page.locator(
+      'button:has-text("Inscreva-se"), a:has-text("Inscreva-se"), input[value*="Inscreva" i], [class*="inscreva" i]'
+    ).first().isVisible({ timeout: 3000 }).catch(() => false);
+
+    if (temBotaoInscreva) {
+      console.log('   ✅ FALLBACK A: Já estamos na página do produto (botão "Inscreva-se" detectado)');
+      cursoClicado = true;
+    }
+
+    // FALLBACK B: Seletores de card mais amplos (VTEX pode ter mudado classes)
+    if (!cursoClicado) {
+      const seletoresAmplos = [
+        'a[href$="/p"]',
+        '[class*="productSummary"] a',
+        '[class*="product-summary"] a',
+        '.vtex-product-summary-2-x-clearLink',
+        '[class*="shelf"] a[href*="/"]',
+      ];
+
+      for (const sel of seletoresAmplos) {
+        try {
+          const cardsAmplos = page.locator(sel);
+          const countAmplos = await cardsAmplos.count();
+          if (countAmplos > 0) {
+            console.log(`   ✅ FALLBACK B: ${countAmplos} cards via seletor "${sel}"`);
+            // Tenta achar o mais relevante
+            let clicou = false;
+            for (let i = 0; i < Math.min(countAmplos, 20); i++) {
+              const c = cardsAmplos.nth(i);
+              const txt = ((await c.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+              const hr = ((await c.getAttribute('href')) || '').toLowerCase();
+              if (palavrasChaveCurso.some(p => txt.includes(p) || hr.includes(p))) {
+                console.log(`   📍 Card relevante: "${txt.substring(0, 60).replace(/\s+/g, ' ')}..."`);
+                await c.scrollIntoViewIfNeeded().catch(() => {});
+                await c.click();
+                clicou = true;
+                break;
+              }
+            }
+            if (!clicou) {
+              await cardsAmplos.first().click();
+            }
+            cursoClicado = true;
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+
+    // FALLBACK C: Re-buscar com nome simplificado (sem duração/números)
+    if (!cursoClicado) {
+      const cursoSimples = CLIENTE.curso
+        .replace(/\d+\s*meses?/gi, '')
+        .replace(/\d+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      console.log(`   🔄 FALLBACK C: Re-buscando com termo curto: "${cursoSimples}"`);
+
+      try {
+        const searchRetry = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
+        await searchRetry.click({ force: true });
+        await searchRetry.fill('');
+        await page.waitForTimeout(500);
+        await searchRetry.fill(cursoSimples);
+        await searchRetry.press('Enter');
+        await page.waitForTimeout(6000);
+
+        const cardsRetry = page.locator('a[href$="/p"]');
+        const countRetry = await cardsRetry.count();
+        console.log(`   📋 FALLBACK C: ${countRetry} resultados`);
+
+        if (countRetry > 0) {
+          for (let i = 0; i < Math.min(countRetry, 20); i++) {
+            const card = cardsRetry.nth(i);
+            const texto = ((await card.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            if (palavrasChaveCurso.some(p => texto.includes(p))) {
+              console.log(`   ✅ FALLBACK C: Card relevante: "${texto.substring(0, 50)}..."`);
+              await card.click();
+              cursoClicado = true;
+              break;
+            }
+          }
+          if (!cursoClicado) {
+            await cardsRetry.first().click();
+            cursoClicado = true;
+            console.log('   ✅ FALLBACK C: Clicou no primeiro resultado');
+          }
+        }
+      } catch (e) {
+        console.log(`   ⚠️ FALLBACK C falhou: ${e.message}`);
+      }
+    }
+
+    // FALLBACK D: Navegação direta via URL slug construída do nome do curso
+    if (!cursoClicado) {
+      const slug = CLIENTE.curso
+        .toLowerCase()
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .trim();
+
+      const urlsTentativas = [
+        `https://cruzeirodosul.myvtex.com/${slug}/p`,
+        `https://cruzeirodosul.myvtex.com/pos-${slug}/p`,
+        `https://cruzeirodosul.myvtex.com/${slug.replace(/^mba-em-/, 'mba-')}/p`,
+      ];
+
+      for (const urlDireta of urlsTentativas) {
+        console.log(`   🔄 FALLBACK D: Tentando URL direta: ${urlDireta}`);
+        try {
+          const resp = await page.goto(urlDireta, { waitUntil: 'domcontentloaded', timeout: 15000 });
+          if (resp && resp.status() < 400) {
+            await page.waitForTimeout(3000);
+            const temConteudo = await page.locator(
+              'button:has-text("Inscreva-se"), input[placeholder*="nome" i], [class*="productName"], [class*="formContainer"]'
+            ).first().isVisible({ timeout: 5000 }).catch(() => false);
+            if (temConteudo) {
+              console.log('   ✅ FALLBACK D: Página do curso encontrada via URL direta!');
+              cursoClicado = true;
+              break;
+            }
+          }
+        } catch (e) {
+          console.log(`   ⚠️ URL ${urlDireta} falhou`);
+        }
+      }
+    }
+
+    // FALLBACK E: Volta para listagem /pos-graduacao e busca por link
+    if (!cursoClicado) {
+      console.log('   🔄 FALLBACK E: Voltando para listagem de pós-graduação...');
+      try {
+        await page.goto('https://cruzeirodosul.myvtex.com/pos-graduacao', { waitUntil: 'domcontentloaded', timeout: 20000 });
+        await page.waitForTimeout(5000);
+
+        // Faz scroll progressivo para carregar lazy-loaded cards
+        for (let s = 0; s < 5; s++) {
+          await page.evaluate((step) => window.scrollTo(0, (step + 1) * 800), s);
+          await page.waitForTimeout(1500);
+        }
+
+        const allLinks = page.locator('a[href$="/p"]');
+        const linkCount = await allLinks.count();
+        console.log(`   📋 FALLBACK E: ${linkCount} links de produto na listagem`);
+
+        for (let i = 0; i < linkCount; i++) {
+          const link = allLinks.nth(i);
+          const href = ((await link.getAttribute('href')) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          const texto = ((await link.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+          if (palavrasChaveCurso.some(p => texto.includes(p) || href.includes(p))) {
+            console.log(`   ✅ FALLBACK E: Curso encontrado na listagem!`);
+            await link.scrollIntoViewIfNeeded().catch(() => {});
+            await link.click();
+            cursoClicado = true;
+            break;
+          }
+        }
+      } catch (e) {
+        console.log(`   ⚠️ FALLBACK E falhou: ${e.message}`);
+      }
+    }
+
+    if (!cursoClicado) {
+      console.log('   ❌ TODOS OS FALLBACKS FALHARAM - continuando na página atual...');
+      // Screenshot para diagnóstico
+      try {
+        await page.screenshot({ path: 'debug-etapa4-fallback-falhou.png', fullPage: true });
+        console.log('   📸 Screenshot debug: debug-etapa4-fallback-falhou.png');
+      } catch (e) {}
     }
   }
   
