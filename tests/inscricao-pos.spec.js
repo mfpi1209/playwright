@@ -295,8 +295,9 @@ const CLIENTE = {
   duracao: process.env.CLIENTE_DURACAO || '6', // Duração em meses (ex: 6, 9, 3)
   polo: corrigirEncoding(process.env.CLIENTE_POLO || 'barra funda'),
   campanha: corrigirEncoding(process.env.CLIENTE_CAMPANHA || ''),
-  matricula: process.env.CLIENTE_MATRICULA || '99', // Valor da matrícula em reais
-  mensalidade: process.env.CLIENTE_MENSALIDADE || '184', // Valor da mensalidade em reais
+  // Limpa R$, espaços e vírgulas dos valores monetários para garantir que parseFloat funcione
+  matricula: (process.env.CLIENTE_MATRICULA || '99').replace(/[R$\s]/g, '').replace(',', '.').trim(),
+  mensalidade: (process.env.CLIENTE_MENSALIDADE || '184').replace(/[R$\s]/g, '').replace(',', '.').trim(),
 };
 
 // Função DESABILITADA - não mover o mouse para evitar popup "Antes de Você Sair"
@@ -646,7 +647,10 @@ test('inscricao-pos', async ({ page, context }) => {
   
   // Normaliza o nome do curso para busca
   const cursoNormalizado = CLIENTE.curso.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const palavrasChaveCurso = cursoNormalizado.split(' ').filter(p => p.length > 3);
+  // Remove palavras genéricas que matcham qualquer curso (meses, curso, pos, ead, etc.)
+  const palavrasGenericasCurso = ['meses', 'curso', 'cursos', 'graduacao', 'pos-graduacao', 'livre', 'livres', 'virtual', 'digital', 'presencial', 'semestre', 'semestres'];
+  const palavrasChaveCurso = cursoNormalizado.split(' ').filter(p => p.length > 3 && !palavrasGenericasCurso.includes(p) && !/^\d+$/.test(p));
+  console.log(`   🔑 Palavras-chave do curso: [${palavrasChaveCurso.join(', ')}]`);
   
   let cursoClicado = false;
   
@@ -719,19 +723,21 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   }
   
-  // Último fallback: clica no primeiro card que contenha o nome do curso
+  // Último fallback com seletores padrão: exige pelo menos metade das keywords
   if (!cursoClicado) {
-    console.log('   ⚠️ Selecionando primeiro curso disponível (duração pode não ser a desejada)...');
+    console.log('   ⚠️ Tentando match parcial com seletores padrão...');
+    const minMatchPadrao = Math.max(2, Math.floor(palavrasChaveCurso.length / 2));
     
     for (let i = 0; i < countCards; i++) {
       const card = todosCards.nth(i);
       const texto = await card.textContent() || '';
       const textoNormalizado = texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const href = ((await card.getAttribute('href')) || '').toLowerCase();
       
-      const matchNomeCurso = palavrasChaveCurso.some(palavra => textoNormalizado.includes(palavra));
+      const matchCount = palavrasChaveCurso.filter(palavra => textoNormalizado.includes(palavra) || href.includes(palavra)).length;
       
-      if (matchNomeCurso) {
-        console.log(`   📍 Clicando em: "${texto.substring(0, 50).replace(/\s+/g, ' ')}..."`);
+      if (matchCount >= minMatchPadrao) {
+        console.log(`   📍 Clicando em (${matchCount}/${palavrasChaveCurso.length} keywords): "${texto.substring(0, 50).replace(/\s+/g, ' ')}..."`);
         await card.click();
         cursoClicado = true;
         break;
@@ -752,9 +758,14 @@ test('inscricao-pos', async ({ page, context }) => {
   // FALLBACKS AVANÇADOS - quando nenhum card de curso foi encontrado
   // Cenários: VTEX redirecionou para página do produto, cards com seletor
   // diferente, busca não retornou resultados, etc.
+  // Ordem: A (já na página?) → B (URL direta) → C (re-busca curta) → D (seletores amplos) → E (listagem)
   // ═══════════════════════════════════════════════════════════════════════════
   if (!cursoClicado) {
     console.log('   🆘 Nenhum card encontrado com seletores padrão. Iniciando fallbacks avançados...');
+    
+    // Quantidade mínima de palavras-chave que devem bater para considerar relevante
+    const minKeywordsMatch = Math.max(2, Math.floor(palavrasChaveCurso.length / 2));
+    console.log(`   🔑 Exigindo pelo menos ${minKeywordsMatch}/${palavrasChaveCurso.length} keywords para match`);
 
     // FALLBACK A: Verificar se VTEX já redirecionou para a página do produto
     // (quando busca com match exato, VTEX às vezes vai direto para o produto)
@@ -767,92 +778,8 @@ test('inscricao-pos', async ({ page, context }) => {
       cursoClicado = true;
     }
 
-    // FALLBACK B: Seletores de card mais amplos (VTEX pode ter mudado classes)
-    if (!cursoClicado) {
-      const seletoresAmplos = [
-        'a[href$="/p"]',
-        '[class*="productSummary"] a',
-        '[class*="product-summary"] a',
-        '.vtex-product-summary-2-x-clearLink',
-        '[class*="shelf"] a[href*="/"]',
-      ];
-
-      for (const sel of seletoresAmplos) {
-        try {
-          const cardsAmplos = page.locator(sel);
-          const countAmplos = await cardsAmplos.count();
-          if (countAmplos > 0) {
-            console.log(`   ✅ FALLBACK B: ${countAmplos} cards via seletor "${sel}"`);
-            // Tenta achar o mais relevante
-            let clicou = false;
-            for (let i = 0; i < Math.min(countAmplos, 20); i++) {
-              const c = cardsAmplos.nth(i);
-              const txt = ((await c.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-              const hr = ((await c.getAttribute('href')) || '').toLowerCase();
-              if (palavrasChaveCurso.some(p => txt.includes(p) || hr.includes(p))) {
-                console.log(`   📍 Card relevante: "${txt.substring(0, 60).replace(/\s+/g, ' ')}..."`);
-                await c.scrollIntoViewIfNeeded().catch(() => {});
-                await c.click();
-                clicou = true;
-                break;
-              }
-            }
-            if (!clicou) {
-              await cardsAmplos.first().click();
-            }
-            cursoClicado = true;
-            break;
-          }
-        } catch (e) {}
-      }
-    }
-
-    // FALLBACK C: Re-buscar com nome simplificado (sem duração/números)
-    if (!cursoClicado) {
-      const cursoSimples = CLIENTE.curso
-        .replace(/\d+\s*meses?/gi, '')
-        .replace(/\d+/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      console.log(`   🔄 FALLBACK C: Re-buscando com termo curto: "${cursoSimples}"`);
-
-      try {
-        const searchRetry = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
-        await searchRetry.click({ force: true });
-        await searchRetry.fill('');
-        await page.waitForTimeout(500);
-        await searchRetry.fill(cursoSimples);
-        await searchRetry.press('Enter');
-        await page.waitForTimeout(6000);
-
-        const cardsRetry = page.locator('a[href$="/p"]');
-        const countRetry = await cardsRetry.count();
-        console.log(`   📋 FALLBACK C: ${countRetry} resultados`);
-
-        if (countRetry > 0) {
-          for (let i = 0; i < Math.min(countRetry, 20); i++) {
-            const card = cardsRetry.nth(i);
-            const texto = ((await card.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-            if (palavrasChaveCurso.some(p => texto.includes(p))) {
-              console.log(`   ✅ FALLBACK C: Card relevante: "${texto.substring(0, 50)}..."`);
-              await card.click();
-              cursoClicado = true;
-              break;
-            }
-          }
-          if (!cursoClicado) {
-            await cardsRetry.first().click();
-            cursoClicado = true;
-            console.log('   ✅ FALLBACK C: Clicou no primeiro resultado');
-          }
-        }
-      } catch (e) {
-        console.log(`   ⚠️ FALLBACK C falhou: ${e.message}`);
-      }
-    }
-
-    // FALLBACK D: Navegação direta via URL slug construída do nome do curso
+    // FALLBACK B: Navegação direta via URL slug construída do nome do curso
+    // (mais seguro que seletores amplos - vai direto para o produto correto)
     if (!cursoClicado) {
       const slug = CLIENTE.curso
         .toLowerCase()
@@ -869,7 +796,7 @@ test('inscricao-pos', async ({ page, context }) => {
       ];
 
       for (const urlDireta of urlsTentativas) {
-        console.log(`   🔄 FALLBACK D: Tentando URL direta: ${urlDireta}`);
+        console.log(`   🔄 FALLBACK B: Tentando URL direta: ${urlDireta}`);
         try {
           const resp = await page.goto(urlDireta, { waitUntil: 'domcontentloaded', timeout: 15000 });
           if (resp && resp.status() < 400) {
@@ -878,7 +805,7 @@ test('inscricao-pos', async ({ page, context }) => {
               'button:has-text("Inscreva-se"), input[placeholder*="nome" i], [class*="productName"], [class*="formContainer"]'
             ).first().isVisible({ timeout: 5000 }).catch(() => false);
             if (temConteudo) {
-              console.log('   ✅ FALLBACK D: Página do curso encontrada via URL direta!');
+              console.log('   ✅ FALLBACK B: Página do curso encontrada via URL direta!');
               cursoClicado = true;
               break;
             }
@@ -889,9 +816,107 @@ test('inscricao-pos', async ({ page, context }) => {
       }
     }
 
-    // FALLBACK E: Volta para listagem /pos-graduacao e busca por link
+    // FALLBACK C: Re-buscar com nome simplificado (sem duração/números)
     if (!cursoClicado) {
-      console.log('   🔄 FALLBACK E: Voltando para listagem de pós-graduação...');
+      const cursoSimples = CLIENTE.curso
+        .replace(/\d+\s*meses?/gi, '')
+        .replace(/\d+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      console.log(`   🔄 FALLBACK C: Re-buscando com termo curto: "${cursoSimples}"`);
+
+      try {
+        // Volta para a página de pós-graduação primeiro (para ter o campo de busca)
+        await page.goto('https://cruzeirodosul.myvtex.com/pos-graduacao', { waitUntil: 'domcontentloaded', timeout: 15000 });
+        await page.waitForTimeout(3000);
+        
+        const searchRetry = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
+        await searchRetry.click({ force: true });
+        await searchRetry.fill('');
+        await page.waitForTimeout(500);
+        await searchRetry.fill(cursoSimples);
+        await searchRetry.press('Enter');
+        await page.waitForTimeout(6000);
+
+        // Tenta com seletor específico de pós primeiro, depois amplo
+        let cardsRetry = page.locator('a[href*="/pos-"][href$="/p"]');
+        let countRetry = await cardsRetry.count();
+        
+        if (countRetry === 0) {
+          cardsRetry = page.locator('a[href$="/p"]');
+          countRetry = await cardsRetry.count();
+        }
+        
+        console.log(`   📋 FALLBACK C: ${countRetry} resultados`);
+
+        if (countRetry > 0) {
+          // Exige pelo menos minKeywordsMatch palavras-chave no card
+          for (let i = 0; i < Math.min(countRetry, 20); i++) {
+            const card = cardsRetry.nth(i);
+            const texto = ((await card.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            const href = ((await card.getAttribute('href')) || '').toLowerCase();
+            const matchCount = palavrasChaveCurso.filter(p => texto.includes(p) || href.includes(p)).length;
+            if (matchCount >= minKeywordsMatch) {
+              console.log(`   ✅ FALLBACK C: Card relevante (${matchCount}/${palavrasChaveCurso.length} keywords): "${texto.substring(0, 60).replace(/\s+/g, ' ')}..."`);
+              await card.click();
+              cursoClicado = true;
+              break;
+            }
+          }
+          // Se nenhum card relevante, NÃO clica no primeiro (evita selecionar curso errado)
+          if (!cursoClicado) {
+            console.log('   ⚠️ FALLBACK C: Nenhum card com keywords suficientes');
+          }
+        }
+      } catch (e) {
+        console.log(`   ⚠️ FALLBACK C falhou: ${e.message}`);
+      }
+    }
+
+    // FALLBACK D: Seletores de card mais amplos na página atual
+    // (último recurso com seletores - exige match rigoroso de múltiplas keywords)
+    if (!cursoClicado) {
+      console.log('   🔄 FALLBACK D: Tentando seletores amplos com match rigoroso...');
+      const seletoresAmplos = [
+        'a[href$="/p"]',
+        '[class*="productSummary"] a',
+        '[class*="product-summary"] a',
+        '.vtex-product-summary-2-x-clearLink',
+      ];
+
+      for (const sel of seletoresAmplos) {
+        try {
+          const cardsAmplos = page.locator(sel);
+          const countAmplos = await cardsAmplos.count();
+          if (countAmplos > 0) {
+            console.log(`   📋 FALLBACK D: ${countAmplos} cards via "${sel}"`);
+            for (let i = 0; i < Math.min(countAmplos, 20); i++) {
+              const c = cardsAmplos.nth(i);
+              const txt = ((await c.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+              const hr = ((await c.getAttribute('href')) || '').toLowerCase();
+              // Exige match rigoroso: pelo menos minKeywordsMatch keywords
+              const matchCount = palavrasChaveCurso.filter(p => txt.includes(p) || hr.includes(p)).length;
+              if (matchCount >= minKeywordsMatch) {
+                console.log(`   ✅ FALLBACK D: Card relevante (${matchCount}/${palavrasChaveCurso.length} keywords): "${txt.substring(0, 60).replace(/\s+/g, ' ')}..."`);
+                await c.scrollIntoViewIfNeeded().catch(() => {});
+                await c.click();
+                cursoClicado = true;
+                break;
+              }
+            }
+            if (cursoClicado) break;
+          }
+        } catch (e) {}
+      }
+      if (!cursoClicado) {
+        console.log('   ⚠️ FALLBACK D: Nenhum card com keywords suficientes');
+      }
+    }
+
+    // FALLBACK E: Volta para listagem /pos-graduacao e busca por link com scroll
+    if (!cursoClicado) {
+      console.log('   🔄 FALLBACK E: Voltando para listagem de pós-graduação com scroll...');
       try {
         await page.goto('https://cruzeirodosul.myvtex.com/pos-graduacao', { waitUntil: 'domcontentloaded', timeout: 20000 });
         await page.waitForTimeout(5000);
@@ -911,8 +936,9 @@ test('inscricao-pos', async ({ page, context }) => {
           const href = ((await link.getAttribute('href')) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
           const texto = ((await link.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-          if (palavrasChaveCurso.some(p => texto.includes(p) || href.includes(p))) {
-            console.log(`   ✅ FALLBACK E: Curso encontrado na listagem!`);
+          const matchCount = palavrasChaveCurso.filter(p => texto.includes(p) || href.includes(p)).length;
+          if (matchCount >= minKeywordsMatch) {
+            console.log(`   ✅ FALLBACK E: Curso encontrado na listagem (${matchCount}/${palavrasChaveCurso.length} keywords)!`);
             await link.scrollIntoViewIfNeeded().catch(() => {});
             await link.click();
             cursoClicado = true;

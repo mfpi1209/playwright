@@ -1014,8 +1014,9 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     CLIENTE_DURACAO: duracao || '',
     CLIENTE_POLO: polo || '',
     CLIENTE_CAMPANHA: campanha || '',
-    CLIENTE_MATRICULA: matricula || '',
-    CLIENTE_MENSALIDADE: mensalidade || '',
+    // Limpa R$, espaços e vírgulas dos valores monetários
+    CLIENTE_MATRICULA: (matricula || '').toString().replace(/[R$\s]/g, '').replace(',', '.').trim(),
+    CLIENTE_MENSALIDADE: (mensalidade || '').toString().replace(/[R$\s]/g, '').replace(',', '.').trim(),
     // Variáveis de integração n8n
     LEAD_ID: leadId || '',
     N8N_WEBHOOK_URL: webhookUrl || '',
