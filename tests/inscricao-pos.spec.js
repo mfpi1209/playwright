@@ -292,7 +292,12 @@ const CLIENTE = {
   estado: corrigirEncoding(process.env.CLIENTE_ESTADO || 'São Paulo'),
   cidade: corrigirEncoding(process.env.CLIENTE_CIDADE || 'São Paulo'),
   curso: corrigirEncoding(process.env.CLIENTE_CURSO || 'Engenharia de Produção'),
-  duracao: process.env.CLIENTE_DURACAO || '6', // Duração em meses (ex: 6, 9, 3)
+  // Duração: usa env var se fornecida, senão extrai do nome do curso (ex: "MBA... 9 Meses" → 9)
+  duracao: process.env.CLIENTE_DURACAO || (() => {
+    const cursoNome = corrigirEncoding(process.env.CLIENTE_CURSO || '');
+    const matchDur = cursoNome.match(/(\d+)\s*meses?/i);
+    return matchDur ? matchDur[1] : '6';
+  })(),
   polo: corrigirEncoding(process.env.CLIENTE_POLO || 'barra funda'),
   campanha: corrigirEncoding(process.env.CLIENTE_CAMPANHA || ''),
   // Limpa R$, espaços e vírgulas dos valores monetários para garantir que parseFloat funcione
@@ -766,6 +771,21 @@ test('inscricao-pos', async ({ page, context }) => {
     // Quantidade mínima de palavras-chave que devem bater para considerar relevante
     const minKeywordsMatch = Math.max(2, Math.floor(palavrasChaveCurso.length / 2));
     console.log(`   🔑 Exigindo pelo menos ${minKeywordsMatch}/${palavrasChaveCurso.length} keywords para match`);
+    console.log(`   📏 Duração desejada: ${CLIENTE.duracao} meses`);
+    
+    // Função auxiliar para verificar se um card/texto corresponde ao curso E à duração
+    const cardMatchCursoEDuracao = (texto, href) => {
+      const txtNorm = texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const hrNorm = (href || '').toLowerCase();
+      // Verifica keywords do nome do curso
+      const matchCount = palavrasChaveCurso.filter(p => txtNorm.includes(p) || hrNorm.includes(p)).length;
+      // Verifica duração (ex: "9 meses", "9meses", "9-meses")
+      const temDuracao = txtNorm.includes(`${CLIENTE.duracao} meses`) || 
+                         txtNorm.includes(`${CLIENTE.duracao}meses`) ||
+                         hrNorm.includes(`${CLIENTE.duracao}-meses`) ||
+                         hrNorm.includes(`-${CLIENTE.duracao}-`);
+      return { matchCount, temDuracao };
+    };
 
     // FALLBACK A: Verificar se VTEX já redirecionou para a página do produto
     // (quando busca com match exato, VTEX às vezes vai direto para o produto)
@@ -774,8 +794,18 @@ test('inscricao-pos', async ({ page, context }) => {
     ).first().isVisible({ timeout: 3000 }).catch(() => false);
 
     if (temBotaoInscreva) {
-      console.log('   ✅ FALLBACK A: Já estamos na página do produto (botão "Inscreva-se" detectado)');
-      cursoClicado = true;
+      // Verifica se a URL ou conteúdo da página contém a duração correta
+      const urlAtualA = page.url().toLowerCase();
+      const tituloA = await page.title().catch(() => '');
+      const { matchCount: mcA, temDuracao: tdA } = cardMatchCursoEDuracao(tituloA, urlAtualA);
+      
+      if (tdA || urlAtualA.includes(`${CLIENTE.duracao}-meses`) || urlAtualA.includes(CLIENTE.curso.toLowerCase().replace(/\s+/g, '-').normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 20))) {
+        console.log('   ✅ FALLBACK A: Já estamos na página do produto (botão "Inscreva-se" + duração OK)');
+        cursoClicado = true;
+      } else {
+        console.log(`   ⚠️ FALLBACK A: Botão "Inscreva-se" encontrado mas URL não confirma o curso/duração corretos`);
+        console.log(`      URL: ${urlAtualA.substring(0, 80)}`);
+      }
     }
 
     // FALLBACK B: Navegação direta via URL slug construída do nome do curso
@@ -851,20 +881,35 @@ test('inscricao-pos', async ({ page, context }) => {
         console.log(`   📋 FALLBACK C: ${countRetry} resultados`);
 
         if (countRetry > 0) {
-          // Exige pelo menos minKeywordsMatch palavras-chave no card
-          for (let i = 0; i < Math.min(countRetry, 20); i++) {
+          // PASSO 1: Busca card com keywords + duração correta
+          for (let i = 0; i < Math.min(countRetry, 30); i++) {
             const card = cardsRetry.nth(i);
-            const texto = ((await card.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-            const href = ((await card.getAttribute('href')) || '').toLowerCase();
-            const matchCount = palavrasChaveCurso.filter(p => texto.includes(p) || href.includes(p)).length;
-            if (matchCount >= minKeywordsMatch) {
-              console.log(`   ✅ FALLBACK C: Card relevante (${matchCount}/${palavrasChaveCurso.length} keywords): "${texto.substring(0, 60).replace(/\s+/g, ' ')}..."`);
+            const texto = (await card.textContent()) || '';
+            const href = (await card.getAttribute('href')) || '';
+            const { matchCount, temDuracao } = cardMatchCursoEDuracao(texto, href);
+            if (matchCount >= minKeywordsMatch && temDuracao) {
+              console.log(`   ✅ FALLBACK C: Card com keywords+duração (${matchCount} kw, ${CLIENTE.duracao}m): "${texto.substring(0, 60).replace(/\s+/g, ' ')}..."`);
               await card.click();
               cursoClicado = true;
               break;
             }
           }
-          // Se nenhum card relevante, NÃO clica no primeiro (evita selecionar curso errado)
+          // PASSO 2: Se não achou com duração, busca só por keywords (fallback mais fraco)
+          if (!cursoClicado) {
+            for (let i = 0; i < Math.min(countRetry, 30); i++) {
+              const card = cardsRetry.nth(i);
+              const texto = (await card.textContent()) || '';
+              const href = (await card.getAttribute('href')) || '';
+              const { matchCount } = cardMatchCursoEDuracao(texto, href);
+              if (matchCount >= minKeywordsMatch) {
+                console.log(`   ⚠️ FALLBACK C: Card sem duração confirmada (${matchCount} kw): "${texto.substring(0, 60).replace(/\s+/g, ' ')}..."`);
+                console.log(`      ⚠️ Duração ${CLIENTE.duracao}m não encontrada no card, selecionando mesmo assim`);
+                await card.click();
+                cursoClicado = true;
+                break;
+              }
+            }
+          }
           if (!cursoClicado) {
             console.log('   ⚠️ FALLBACK C: Nenhum card com keywords suficientes');
           }
@@ -891,14 +936,14 @@ test('inscricao-pos', async ({ page, context }) => {
           const countAmplos = await cardsAmplos.count();
           if (countAmplos > 0) {
             console.log(`   📋 FALLBACK D: ${countAmplos} cards via "${sel}"`);
-            for (let i = 0; i < Math.min(countAmplos, 20); i++) {
+            // PASSO 1: keywords + duração
+            for (let i = 0; i < Math.min(countAmplos, 30); i++) {
               const c = cardsAmplos.nth(i);
-              const txt = ((await c.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-              const hr = ((await c.getAttribute('href')) || '').toLowerCase();
-              // Exige match rigoroso: pelo menos minKeywordsMatch keywords
-              const matchCount = palavrasChaveCurso.filter(p => txt.includes(p) || hr.includes(p)).length;
-              if (matchCount >= minKeywordsMatch) {
-                console.log(`   ✅ FALLBACK D: Card relevante (${matchCount}/${palavrasChaveCurso.length} keywords): "${txt.substring(0, 60).replace(/\s+/g, ' ')}..."`);
+              const txt = (await c.textContent()) || '';
+              const hr = (await c.getAttribute('href')) || '';
+              const { matchCount, temDuracao } = cardMatchCursoEDuracao(txt, hr);
+              if (matchCount >= minKeywordsMatch && temDuracao) {
+                console.log(`   ✅ FALLBACK D: Card com keywords+duração (${matchCount} kw, ${CLIENTE.duracao}m): "${txt.substring(0, 60).replace(/\s+/g, ' ')}..."`);
                 await c.scrollIntoViewIfNeeded().catch(() => {});
                 await c.click();
                 cursoClicado = true;
@@ -906,11 +951,12 @@ test('inscricao-pos', async ({ page, context }) => {
               }
             }
             if (cursoClicado) break;
+            // PASSO 2: só keywords (sem duração), NÃO seleciona - muito arriscado com seletor amplo
           }
         } catch (e) {}
       }
       if (!cursoClicado) {
-        console.log('   ⚠️ FALLBACK D: Nenhum card com keywords suficientes');
+        console.log('   ⚠️ FALLBACK D: Nenhum card com keywords+duração suficientes');
       }
     }
 
@@ -931,18 +977,34 @@ test('inscricao-pos', async ({ page, context }) => {
         const linkCount = await allLinks.count();
         console.log(`   📋 FALLBACK E: ${linkCount} links de produto na listagem`);
 
+        // PASSO 1: Busca com keywords + duração
         for (let i = 0; i < linkCount; i++) {
           const link = allLinks.nth(i);
-          const href = ((await link.getAttribute('href')) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-          const texto = ((await link.textContent()) || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-
-          const matchCount = palavrasChaveCurso.filter(p => texto.includes(p) || href.includes(p)).length;
-          if (matchCount >= minKeywordsMatch) {
-            console.log(`   ✅ FALLBACK E: Curso encontrado na listagem (${matchCount}/${palavrasChaveCurso.length} keywords)!`);
+          const href = (await link.getAttribute('href')) || '';
+          const texto = (await link.textContent()) || '';
+          const { matchCount, temDuracao } = cardMatchCursoEDuracao(texto, href);
+          if (matchCount >= minKeywordsMatch && temDuracao) {
+            console.log(`   ✅ FALLBACK E: Curso+duração encontrados (${matchCount} kw, ${CLIENTE.duracao}m)!`);
             await link.scrollIntoViewIfNeeded().catch(() => {});
             await link.click();
             cursoClicado = true;
             break;
+          }
+        }
+        // PASSO 2: Só keywords se não encontrou com duração
+        if (!cursoClicado) {
+          for (let i = 0; i < linkCount; i++) {
+            const link = allLinks.nth(i);
+            const href = (await link.getAttribute('href')) || '';
+            const texto = (await link.textContent()) || '';
+            const { matchCount } = cardMatchCursoEDuracao(texto, href);
+            if (matchCount >= minKeywordsMatch) {
+              console.log(`   ⚠️ FALLBACK E: Curso sem duração confirmada (${matchCount} kw)`);
+              await link.scrollIntoViewIfNeeded().catch(() => {});
+              await link.click();
+              cursoClicado = true;
+              break;
+            }
           }
         }
       } catch (e) {

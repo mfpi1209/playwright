@@ -1067,7 +1067,10 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     }
     
     // Verifica se o processo foi concluído com sucesso
-    const processoCompleto = stdout.includes('PROCESSO COMPLETO DE INSCRIÇÃO PÓS-GRADUAÇÃO');
+    // Aceita múltiplas strings de sucesso (o fluxo pode terminar em diferentes pontos)
+    const processoCompleto = stdout.includes('PROCESSO COMPLETO DE INSCRIÇÃO PÓS-GRADUAÇÃO') ||
+                             stdout.includes('PROCESSO DE INSCRIÇÃO PÓS-GRADUAÇÃO FINALIZADO') ||
+                             (stdout.includes('INSCRIÇÃO PÓS-GRADUAÇÃO FINALIZADA COM SUCESSO') && code === 0);
     
     // Extrai informações do output
     const numeroInscricaoMatch = stdout.match(/Número de Inscrição:\s*(\d+)/);
