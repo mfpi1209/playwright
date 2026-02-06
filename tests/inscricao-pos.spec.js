@@ -395,19 +395,26 @@ test('inscricao-pos', async ({ page, context }) => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ETAPA 1: LOGIN ADMIN
+  // ETAPA 1: LOGIN ADMIN (randomiza entre dois logins)
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 1: Login Admin');
+  
+  const ADMINS = [
+    { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit777' },
+    { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'MFPedu!t678@!' },
+  ];
+  const adminEscolhido = ADMINS[Math.floor(Math.random() * ADMINS.length)];
+  console.log(`   🔑 Admin: ${adminEscolhido.email}`);
   
   await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
   await page.waitForTimeout(1000);
   
   await page.getByRole('textbox', { name: 'Email' }).click();
-  await page.getByRole('textbox', { name: 'Email' }).fill('fabio.boas50@polo.cruzeirodosul.edu.br');
+  await page.getByRole('textbox', { name: 'Email' }).fill(adminEscolhido.email);
   await page.getByRole('button', { name: 'Continuar' }).click();
   await page.waitForTimeout(1000);
   
-  await page.getByRole('textbox', { name: 'Senha' }).fill('Eduit777');
+  await page.getByRole('textbox', { name: 'Senha' }).fill(adminEscolhido.senha);
   await page.getByRole('button', { name: 'Continuar' }).click();
   await page.waitForTimeout(2000);
   
@@ -3023,7 +3030,26 @@ test('inscricao-pos', async ({ page, context }) => {
       const infoAprovacao = await siaaPage.locator('text=NOME:').first().textContent().catch(() => '');
       if (infoAprovacao) {
         console.log(`   📋 ${infoAprovacao.substring(0, 100)}...`);
+        
+        // Extrai número de inscrição do SIAA (ex: "Nº DE INSCRIÇÃO: 265222199")
+        const matchSiaa = infoAprovacao.match(/(?:N[ºo°]\s*(?:DE\s*)?INSCRI[CÇ][AÃ]O)\s*:\s*(\d+)/i);
+        if (matchSiaa) {
+          console.log(`   📋 Número Inscrição SIAA: ${matchSiaa[1]}`);
+          console.log(`NUMERO_INSCRICAO_SIAA: ${matchSiaa[1]}`);
+        }
       }
+      
+      // Tenta extrair também via seletores diretos na página
+      try {
+        const textoCompleto = await siaaPage.locator('body').textContent().catch(() => '');
+        if (textoCompleto) {
+          const matchSiaa2 = textoCompleto.match(/(?:N[ºo°]\s*(?:DE\s*)?INSCRI[CÇ][AÃ]O)\s*:\s*(\d+)/i);
+          if (matchSiaa2 && !infoAprovacao.includes(matchSiaa2[1])) {
+            console.log(`   📋 Número Inscrição SIAA (body): ${matchSiaa2[1]}`);
+            console.log(`NUMERO_INSCRICAO_SIAA: ${matchSiaa2[1]}`);
+          }
+        }
+      } catch (e) {}
       
       // Lê informações do plano de pagamento
       try {

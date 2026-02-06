@@ -1,12 +1,49 @@
 const express = require('express');
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 const db = require('./database/db');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const BASE_URL = process.env.BASE_URL || `https://playwright-playwright.6tqx2r.easypanel.host`;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Servir arquivos gerados (screenshots, boletos)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/files/:filename', (req, res) => {
+  const filename = req.params.filename;
+  
+  // Segurança: só permite arquivos com extensões conhecidas, sem path traversal
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+    return res.status(400).json({ erro: 'Nome de arquivo inválido' });
+  }
+  
+  const allowedExtensions = ['.png', '.pdf', '.jpg', '.jpeg'];
+  const ext = path.extname(filename).toLowerCase();
+  if (!allowedExtensions.includes(ext)) {
+    return res.status(400).json({ erro: 'Extensão não permitida' });
+  }
+  
+  const filePath = path.join(__dirname, filename);
+  
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ erro: 'Arquivo não encontrado' });
+  }
+  
+  const contentTypes = {
+    '.png': 'image/png',
+    '.pdf': 'application/pdf',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg'
+  };
+  
+  res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.sendFile(filePath);
+});
 
 // Status da execução atual
 let execucaoAtual = null;
@@ -906,6 +943,10 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     const numeroInscricaoMatch = stdout.match(/Número de Inscrição:\s*(\d+)/);
     const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
     
+    // Número de inscrição do SIAA (diferente do pedido VTEX)
+    const numeroSiaaMatch = stdout.match(/NUMERO_INSCRICAO_SIAA:\s*(\d+)/);
+    const numeroInscricaoSiaa = numeroSiaaMatch ? numeroSiaaMatch[1] : null;
+    
     const linhaDigitavelMatch = stdout.match(/Linha digitável:\s*([\d.\s]+)/);
     const linhaDigitavel = linhaDigitavelMatch ? linhaDigitavelMatch[1].trim() : null;
     
@@ -925,7 +966,8 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     
     if (processoCompleto) {
       console.log('✅ SUCESSO - Inscrição Pós-Graduação concluída!');
-      if (numeroInscricao) console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
+      if (numeroInscricao) console.log(`📋 Número Pedido VTEX: ${numeroInscricao}`);
+      if (numeroInscricaoSiaa) console.log(`📋 Número Inscrição SIAA: ${numeroInscricaoSiaa}`);
       if (linhaDigitavel) console.log(`📊 Linha Digitável: ${linhaDigitavel}`);
       
       if (logId) await db.finalizarLogSucesso(logId, {
@@ -935,9 +977,9 @@ app.post('/inscricao-pos/sync', async (req, res) => {
         valor_matricula: valorMatriculaMatch ? parseFloat(valorMatriculaMatch[1].replace(',', '.')) : (matricula ? parseFloat(matricula) : null),
         valor_mensalidade: valorMensalidadeMatch ? parseFloat(valorMensalidadeMatch[1].replace(',', '.')) : (mensalidade ? parseFloat(mensalidade) : null),
         qtd_parcelas: qtdParcelasMatch ? parseInt(qtdParcelasMatch[1]) : null,
-        numero_inscricao: numeroInscricao,
-        numero_inscricao_siaa: numeroInscricao,
-        output_final: `Campanha: ${campanhaUsada} | Boleto: ${boletoPath || 'N/A'}`,
+        numero_inscricao: numeroInscricaoSiaa || numeroInscricao,
+        numero_inscricao_siaa: numeroInscricaoSiaa,
+        output_final: `SIAA: ${numeroInscricaoSiaa || 'N/A'} | Campanha: ${campanhaUsada} | Boleto: ${boletoPath || 'N/A'}`,
         arquivo_aprovacao: screenshotPath,
         arquivo_boleto: boletoPath,
         arquivos: { screenshot: screenshotPath, boleto: boletoPath, linhaDigitavel }
@@ -945,10 +987,14 @@ app.post('/inscricao-pos/sync', async (req, res) => {
       
       return res.json({
         sucesso: true,
-        numeroInscricao,
+        numeroInscricao: numeroInscricaoSiaa || numeroInscricao,
+        numeroInscricaoSiaa,
+        numeroPedidoVtex: numeroInscricao,
         linhaDigitavel,
         screenshotPath,
         boletoPath,
+        screenshotUrl: screenshotPath ? `${BASE_URL}/files/${screenshotPath}` : null,
+        boletoUrl: boletoPath ? `${BASE_URL}/files/${boletoPath}` : null,
         campanhaUsada,
         mensagem: 'Inscrição Pós-Graduação concluída com sucesso!',
         logId,

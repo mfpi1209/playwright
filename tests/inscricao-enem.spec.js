@@ -312,9 +312,17 @@ test('test-enem', async ({ page }) => {
   await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
   await aguardarCarregamento('Página de login');
   
+  // Randomiza login admin
+  const ADMINS = [
+    { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit777' },
+    { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'MFPedu!t678@!' },
+  ];
+  const adminEscolhido = ADMINS[Math.floor(Math.random() * ADMINS.length)];
+  console.log(`   🔑 Admin: ${adminEscolhido.email}`);
+  
   // Email
   const emailInput = page.getByRole('textbox', { name: 'Email' });
-  await preencherCampo(emailInput, 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', 'Email admin', false);
+  await preencherCampo(emailInput, adminEscolhido.email, 'Email admin', false);
   
   // Clica continuar
   await page.getByRole('button', { name: 'Continuar' }).click();
@@ -323,7 +331,7 @@ test('test-enem', async ({ page }) => {
   // Senha
   const senhaInput = page.getByRole('textbox', { name: 'Senha' });
   await senhaInput.waitFor({ state: 'visible', timeout: 15000 });
-  await senhaInput.fill('MFPedu!t678@!');
+  await senhaInput.fill(adminEscolhido.senha);
   console.log('✅ Senha preenchida');
   
   // Clica continuar para login
