@@ -374,80 +374,57 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log('');
 
   let numeroInscricao = null;
-  let pdfBoletoBuffer = null; // Para capturar o PDF via interceptação de rede
+  let pdfBoletoBuffer = null; // Para capturar o PDF via listener passivo
+  let pdfBoletoUrl = null;    // URL do boleto para download direto
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // INTERCEPTAÇÃO DE REDE PARA CAPTURAR O PDF DO BOLETO DIRETAMENTE
-  // Captura QUALQUER request que contenha "boleto" na URL ou retorne PDF
+  // LISTENER PASSIVO DE REDE PARA CAPTURAR O PDF DO BOLETO
+  // Usa context.on('response') — NÃO interfere nas requisições (sem route.fetch)
   // ═══════════════════════════════════════════════════════════════════════════
-  let pdfBoletoUrl = null; // Para salvar a URL do boleto para download direto
-  
-  // Interceptor amplo: captura qualquer URL com "boleto" (getBoletoDiversos, gerarBoleto, etc.)
-  await context.route(/boleto/i, async (route) => {
-    const reqUrl = route.request().url();
-    console.log(`   🎯 [INTERCEPTOR] Request boleto detectado: ${reqUrl.substring(0, 100)}...`);
-    
-    // Salva a URL para download direto posterior (MÉTODO 2)
-    if (!pdfBoletoUrl) {
-      pdfBoletoUrl = reqUrl;
-    }
-    
+  context.on('response', async (response) => {
     try {
-      const response = await route.fetch();
-      const body = await response.body();
-      const contentType = response.headers()['content-type'] || '';
+      const url = response.url();
+      const status = response.status();
+      const contentType = (response.headers()['content-type'] || '').toLowerCase();
       
-      console.log(`   📦 [INTERCEPTOR] Resposta: ${body ? body.length : 0} bytes, type: ${contentType}`);
+      // Só processa URLs com "boleto", ".pdf", ou content-type de PDF
+      const urlMatch = /boleto|\.pdf(\?|$)|gerar.*boleto|emissao.*boleto/i.test(url);
+      const isPdfContentType = contentType.includes('pdf') || contentType.includes('octet-stream');
       
-      // Aceita: PDF explícito (content-type), ou começa com %PDF, ou é binário grande
-      const isPdf = body && body.length > 500 && (
-        contentType.includes('pdf') ||
-        body.slice(0, 5).toString().includes('%PDF') ||
-        (contentType.includes('octet-stream') && body.length > 5000)
-      );
+      if (!urlMatch && !isPdfContentType) return;
+      if (status < 200 || status >= 400) return;
       
-      if (isPdf && (!pdfBoletoBuffer || body.length > pdfBoletoBuffer.length)) {
-        pdfBoletoBuffer = body;
-        pdfBoletoUrl = reqUrl; // Atualiza URL com a que retornou PDF
-        console.log(`   ✅ [INTERCEPTOR] PDF capturado: ${body.length} bytes`);
-      } else if (body && body.length > 500 && !pdfBoletoBuffer) {
-        // Guarda mesmo se não for PDF confirmado (pode ser útil)
-        pdfBoletoBuffer = body;
-        console.log(`   ⚠️ [INTERCEPTOR] Conteúdo capturado (não-PDF): ${body.length} bytes`);
+      console.log(`   🎯 [LISTENER] Resposta boleto detectada: ${url.substring(0, 120)}`);
+      console.log(`      Status: ${status}, Content-Type: ${contentType}`);
+      
+      // Salva URL para download direto (MÉTODO 2)
+      if (!pdfBoletoUrl || url.includes('getBoletoDiversos') || url.includes('.pdf')) {
+        pdfBoletoUrl = url;
       }
       
-      await route.fulfill({ response });
-    } catch (e) {
-      console.log(`   ⚠️ [INTERCEPTOR] Erro ao fetch: ${e.message}`);
-      await route.continue();
-    }
-  });
-  
-  // Interceptor adicional para URLs comuns de PDF de boletos bancários
-  await context.route(/\.(pdf|PDF)(\?|$)|gerar.*boleto|emissao.*boleto|imprimir.*boleto/i, async (route) => {
-    const reqUrl = route.request().url();
-    console.log(`   🎯 [INTERCEPTOR-PDF] URL de PDF detectada: ${reqUrl.substring(0, 100)}...`);
-    
-    if (!pdfBoletoUrl) {
-      pdfBoletoUrl = reqUrl;
-    }
-    
-    try {
-      const response = await route.fetch();
-      const body = await response.body();
+      // Tenta capturar o body da resposta
+      const body = await response.body().catch(() => null);
       
-      if (body && body.length > 1000) {
+      if (body && body.length > 500) {
         const isPdf = body.slice(0, 5).toString().includes('%PDF');
-        if (isPdf && (!pdfBoletoBuffer || body.length > pdfBoletoBuffer.length)) {
+        const isBigBinary = !isPdf && isPdfContentType && body.length > 5000;
+        
+        console.log(`      Body: ${body.length} bytes, PDF: ${isPdf}, Binary: ${isBigBinary}`);
+        
+        if ((isPdf || isBigBinary) && (!pdfBoletoBuffer || body.length > pdfBoletoBuffer.length)) {
           pdfBoletoBuffer = body;
-          pdfBoletoUrl = reqUrl;
-          console.log(`   ✅ [INTERCEPTOR-PDF] PDF capturado: ${body.length} bytes`);
+          pdfBoletoUrl = url;
+          console.log(`   ✅ [LISTENER] PDF capturado: ${body.length} bytes`);
+        } else if (!pdfBoletoBuffer && body.length > 1000) {
+          pdfBoletoBuffer = body;
+          console.log(`   ⚠️ [LISTENER] Conteúdo capturado (verificar): ${body.length} bytes`);
         }
+      } else {
+        console.log(`      Body não disponível ou muito pequeno (${body ? body.length : 0} bytes)`);
       }
-      
-      await route.fulfill({ response });
     } catch (e) {
-      await route.continue();
+      // Listener passivo - erro não afeta a navegação
+      console.log(`   ⚠️ [LISTENER] Erro ao processar resposta: ${e.message}`);
     }
   });
 
@@ -3850,53 +3827,98 @@ test('inscricao-pos', async ({ page, context }) => {
   }
   
   // MÉTODO 2: Download direto via URL do boleto (com retry 3x)
-  // Se o interceptor não capturou URL, usa a URL da página do boleto
+  // Se o listener não capturou URL, usa a URL da página do boleto
   if (!pdfBoletoUrl && boletoPage) {
     const boletoPageUrl = boletoPage.url();
-    console.log(`   📌 Interceptor não capturou URL, usando URL da página: ${boletoPageUrl.substring(0, 80)}...`);
+    console.log(`   📌 Listener não capturou URL, usando URL da página: ${boletoPageUrl.substring(0, 100)}`);
     pdfBoletoUrl = boletoPageUrl;
   }
   
   if (!boletoPdfSalvo && pdfBoletoUrl) {
-    console.log('   🔄 Tentando download direto do PDF...');
+    console.log('   🔄 MÉTODO 2: Download direto do PDF (3 tentativas)...');
     
-    // Lista de URLs para tentar (interceptada + página do boleto)
+    // Coleta URLs únicas para tentar
     const urlsParaTentar = [pdfBoletoUrl];
     if (boletoPage && boletoPage.url() !== pdfBoletoUrl) {
       urlsParaTentar.push(boletoPage.url());
     }
     
     for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      if (boletoPdfSalvo) break;
       const urlAtual = urlsParaTentar[Math.min(tentativa - 1, urlsParaTentar.length - 1)];
       
+      // --- Abordagem A: context().request.get (usa cookies da sessão do browser) ---
       try {
-        console.log(`   📥 Tentativa ${tentativa}/3: ${urlAtual.substring(0, 100)}...`);
+        console.log(`   📥 Tentativa ${tentativa}/3 (API request): ${urlAtual.substring(0, 100)}...`);
         
-        // Usa o contexto do browser para manter cookies/sessão
         const response = await siaaPage.context().request.get(urlAtual);
         const statusCode = response.status();
         const contentType = response.headers()['content-type'] || '';
         const body = await response.body();
         
-        console.log(`   📦 Resposta: status=${statusCode}, type=${contentType}, size=${body ? body.length : 0}`);
+        console.log(`      Resposta: status=${statusCode}, type=${contentType}, size=${body ? body.length : 0}`);
         
         if (body && body.length > 1000) {
           const isPdf = body.slice(0, 5).toString().includes('%PDF');
-          fs.writeFileSync(boletoPath, body);
-          console.log(`   ✅ Download direto: ${body.length} bytes (PDF: ${isPdf})`);
-          boletoPdfSalvo = true;
-          break;
-        } else {
-          console.log(`   ⚠️ Resposta pequena: ${body ? body.length : 0} bytes`);
+          if (isPdf || contentType.includes('pdf') || contentType.includes('octet-stream')) {
+            fs.writeFileSync(boletoPath, body);
+            console.log(`   ✅ Download (API): ${body.length} bytes, PDF: ${isPdf}`);
+            boletoPdfSalvo = true;
+            break;
+          } else {
+            console.log(`      Conteúdo não é PDF (primeiros bytes: ${body.slice(0, 20).toString()})`);
+          }
         }
       } catch (e) {
-        console.log(`   ⚠️ Tentativa ${tentativa} falhou: ${e.message}`);
+        console.log(`      API request falhou: ${e.message}`);
       }
       
-      // Aguarda antes de tentar novamente
-      if (tentativa < 3) {
+      // --- Abordagem B: page.evaluate(fetch) (usa cookies do browser diretamente) ---
+      if (!boletoPdfSalvo) {
+        try {
+          const targetPage = boletoPage || siaaPage;
+          console.log(`   📥 Tentativa ${tentativa}/3 (fetch no browser): ${urlAtual.substring(0, 100)}...`);
+          
+          const base64Pdf = await targetPage.evaluate(async (url) => {
+            try {
+              const resp = await fetch(url, { credentials: 'include' });
+              if (!resp.ok) return { error: `HTTP ${resp.status}` };
+              const blob = await resp.blob();
+              return await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve({ data: reader.result.split(',')[1], size: blob.size, type: blob.type });
+                reader.onerror = () => reject('FileReader error');
+                reader.readAsDataURL(blob);
+              });
+            } catch (err) {
+              return { error: err.message || String(err) };
+            }
+          }, urlAtual);
+          
+          if (base64Pdf.error) {
+            console.log(`      Fetch no browser falhou: ${base64Pdf.error}`);
+          } else if (base64Pdf.data && base64Pdf.size > 1000) {
+            const buffer = Buffer.from(base64Pdf.data, 'base64');
+            const isPdf = buffer.slice(0, 5).toString().includes('%PDF');
+            console.log(`      Fetch recebeu: ${buffer.length} bytes, type=${base64Pdf.type}, PDF: ${isPdf}`);
+            
+            if (isPdf || base64Pdf.type.includes('pdf') || base64Pdf.type.includes('octet-stream')) {
+              fs.writeFileSync(boletoPath, buffer);
+              console.log(`   ✅ Download (fetch browser): ${buffer.length} bytes`);
+              boletoPdfSalvo = true;
+              break;
+            }
+          } else {
+            console.log(`      Resposta pequena: ${base64Pdf.size || 0} bytes`);
+          }
+        } catch (e) {
+          console.log(`      Fetch no browser erro: ${e.message}`);
+        }
+      }
+      
+      // Aguarda e recarrega antes da próxima tentativa
+      if (tentativa < 3 && !boletoPdfSalvo) {
         await siaaPage.waitForTimeout(3000);
-        // Recarrega a página do boleto para gerar nova URL
         if (boletoPage) {
           try {
             await boletoPage.reload();
@@ -3905,6 +3927,7 @@ test('inscricao-pos', async ({ page, context }) => {
             if (!urlsParaTentar.includes(novaUrl)) {
               urlsParaTentar.push(novaUrl);
             }
+            // Listener pode ter capturado novo buffer após reload
             console.log(`   🔄 Página recarregada, URL: ${novaUrl.substring(0, 80)}...`);
           } catch (e) {}
         }
