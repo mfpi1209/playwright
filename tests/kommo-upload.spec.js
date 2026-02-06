@@ -25,46 +25,42 @@ test('Upload arquivos para Kommo', async ({ page }) => {
   console.log('📤 UPLOAD DE ARQUIVOS NO KOMMO');
   console.log('═══════════════════════════════════════════════════════════════════════');
   console.log(`📋 Lead ID: ${LEAD_ID}`);
-  console.log(`📸 Screenshot: ${SCREENSHOT_PATH}`);
-  console.log(`📄 Boleto: ${BOLETO_PATH}`);
+  console.log(`📸 Screenshot: ${SCREENSHOT_PATH || '(nenhum)'}`);
+  console.log(`📄 Boleto: ${BOLETO_PATH || '(nenhum)'}`);
   console.log('');
+
+  // Validação: KOMMO_PASSWORD é obrigatório
+  if (!KOMMO_PASSWORD) {
+    console.error('❌ KOMMO_PASSWORD não configurado no .env do servidor!');
+    console.error('   Adicione: KOMMO_PASSWORD=sua_senha_aqui ao arquivo .env');
+    throw new Error('KOMMO_PASSWORD não configurado. Configure no .env do servidor.');
+  }
 
   try {
     // ═════════════════════════════════════════════════════════════════════
     // ETAPA 1: Login no Kommo
     // ═════════════════════════════════════════════════════════════════════
-    console.log('🔐 ETAPA 1: Fazendo login no Kommo...');
+    console.log('🔐 Fazendo login no Kommo...');
     await page.goto('https://admamoeduitcombr.kommo.com/');
     await page.waitForLoadState('domcontentloaded');
 
     await page.locator('input[placeholder="Login"]').first().fill(KOMMO_EMAIL);
-    console.log('   ✓ Email preenchido');
-
     await page.locator('input[placeholder="Password"]').first().fill(KOMMO_PASSWORD);
-    console.log('   ✓ Senha preenchida');
 
     await page.locator('button[type="submit"], button:has-text("Entrar"), input[type="submit"]').first().click();
-    console.log('   ✓ Clicou em Entrar');
-
     await page.waitForURL('**/chats/**|**/leads/**', { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(2000);
-    console.log('✅ Login realizado com sucesso!');
-    console.log('');
+    console.log('   ✅ Login OK');
 
-    // ═════════════════════════════════════════════════════════════════════
-    // ETAPA 2: Navegar até o lead
-    // ═════════════════════════════════════════════════════════════════════
-    console.log('🔍 ETAPA 2: Navegando até o lead...');
+    // Navegar até o lead
+    console.log(`🔍 Abrindo lead ${LEAD_ID}...`);
     await page.goto(`https://admamoeduitcombr.kommo.com/leads/detail/${LEAD_ID}`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3000);
-    console.log(`✅ Lead ${LEAD_ID} aberto`);
 
     // Rola até os campos de arquivo (são os últimos campos do lead)
-    console.log('   🔽 Rolando até os campos de arquivo...');
     const aceiteField = page.locator('text=Aceite_Inscricao').first();
     await aceiteField.scrollIntoViewIfNeeded({ timeout: 15000 }).catch(async () => {
-      // Fallback: rola manualmente
       for (let i = 0; i < 15; i++) {
         await page.evaluate(() => {
           document.querySelectorAll('[style*="overflow"], [class*="scroll"], .card-columns__column').forEach(el => el.scrollTop += 300);
@@ -75,32 +71,21 @@ test('Upload arquivos para Kommo', async ({ page }) => {
       }
     });
     await page.waitForTimeout(1000);
-    console.log('   ✅ Campos visíveis');
-    console.log('');
 
-    // ═════════════════════════════════════════════════════════════════════
-    // ETAPA 3: Anexar Screenshot → Aceite_Inscricao
-    // ═════════════════════════════════════════════════════════════════════
+    // Anexar Screenshot → Aceite_Inscricao
     if (SCREENSHOT_PATH) {
-      console.log('📸 ETAPA 3: Anexando screenshot em Aceite_Inscricao...');
+      console.log('📸 Anexando screenshot → Aceite_Inscricao...');
       await anexarArquivo(page, SCREENSHOT_PATH, 'Aceite_Inscricao');
-      console.log('✅ Screenshot anexado!');
-      console.log('');
     }
 
-    // ═════════════════════════════════════════════════════════════════════
-    // ETAPA 4: Anexar Boleto → Boleto_Inscricao
-    // ═════════════════════════════════════════════════════════════════════
+    // Anexar Boleto → Boleto_Inscricao
     if (BOLETO_PATH) {
-      console.log('📄 ETAPA 4: Anexando boleto em Boleto_Inscricao...');
+      console.log('📄 Anexando boleto → Boleto_Inscricao...');
       await anexarArquivo(page, BOLETO_PATH, 'Boleto_Inscricao');
-      console.log('✅ Boleto anexado!');
-      console.log('');
     }
 
-    console.log('═══════════════════════════════════════════════════════════════════════');
+    console.log('');
     console.log('✅ UPLOAD CONCLUÍDO COM SUCESSO!');
-    console.log('═══════════════════════════════════════════════════════════════════════');
     await page.waitForTimeout(2000);
 
   } catch (error) {
@@ -116,27 +101,18 @@ test('Upload arquivos para Kommo', async ({ page }) => {
 async function anexarArquivo(page, filePath, nomeCampo) {
   const absolutePath = path.resolve(filePath);
   const selector = UPLOAD_SELECTORS[nomeCampo];
-  console.log(`   → Arquivo: ${absolutePath}`);
 
-  // Rola até o campo
   const uploadButton = page.locator(selector);
   await uploadButton.scrollIntoViewIfNeeded({ timeout: 10000 });
   await page.waitForTimeout(500);
-  console.log(`   ✓ Campo "${nomeCampo}" visível`);
 
-  // Intercepta o diálogo de seleção de arquivo ANTES de clicar
   const [fileChooser] = await Promise.all([
     page.waitForEvent('filechooser', { timeout: 15000 }),
     uploadButton.click()
   ]);
-  console.log('   ✓ Diálogo de arquivo aberto');
 
-  // Seleciona o arquivo no diálogo
   await fileChooser.setFiles(absolutePath);
-  console.log('   ✓ Arquivo selecionado');
-
-  // Aguarda upload processar
   await page.waitForTimeout(8000);
   await page.screenshot({ path: `kommo-uploaded-${nomeCampo}.png` });
-  console.log('   ✅ Upload concluído');
+  console.log(`   ✅ ${nomeCampo}: ${path.basename(absolutePath)}`);
 }
