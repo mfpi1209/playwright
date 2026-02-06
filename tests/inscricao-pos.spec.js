@@ -3191,11 +3191,113 @@ test('inscricao-pos', async ({ page, context }) => {
     console.log(`   ⚠️ Erro verificando dropdown: ${e.message}`);
   }
   
-  // Scroll para encontrar o botão de Emitir Boleto
-  console.log('   📍 Fazendo scroll para botão Emitir Boleto...');
+  // Scroll para encontrar os botões de pagamento
+  console.log('   📍 Fazendo scroll para botões de pagamento...');
   await siaaPage.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
   await siaaPage.waitForTimeout(1000);
-  
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CAPTURAR LINK DO CARTÃO DE CRÉDITO (clica no botão → nova aba → copia URL)
+  // ═══════════════════════════════════════════════════════════════════════════
+  let linkCartaoCredito = null;
+  try {
+    console.log('   💳 Buscando botão "Cartão de Crédito" na página SIAA...');
+    
+    // Seletor exato fornecido + fallbacks
+    const seletoresCartao = [
+      '#formulario\\:acm\\:cartao_credito > span',
+      '#formulario\\:acm\\:cartao_credito',
+      'button:has-text("Cartão de Crédito")',
+      'a:has-text("Cartão de Crédito")',
+      '[id*="cartao_credito"]',
+      'span:has-text("Cartão de Crédito")'
+    ];
+
+    let btnCartao = null;
+    for (const sel of seletoresCartao) {
+      const btn = siaaPage.locator(sel).first();
+      const visivel = await btn.isVisible({ timeout: 1500 }).catch(() => false);
+      if (visivel) {
+        console.log(`   💳 Botão encontrado via seletor: ${sel}`);
+        btnCartao = btn;
+        break;
+      }
+    }
+
+    // Fallback: busca qualquer elemento que contenha "Cartão" no texto
+    if (!btnCartao) {
+      console.log('   💳 Tentando fallback por texto parcial...');
+      const allButtons = await siaaPage.evaluate(() => {
+        const elementos = document.querySelectorAll('button, a, input[type="button"], input[type="submit"], .ui-button, span.ui-button-text');
+        return Array.from(elementos).map((el, i) => ({
+          idx: i,
+          tag: el.tagName,
+          text: (el.textContent || el.value || '').trim().substring(0, 60),
+          id: el.id || '',
+          visible: el.offsetParent !== null
+        })).filter(e => e.visible && (e.text.toLowerCase().includes('cart') || e.id.toLowerCase().includes('cart')));
+      });
+      console.log(`   💳 Elementos com "cart" encontrados: ${allButtons.length}`);
+      allButtons.forEach((b, i) => console.log(`      ${i+1}. [${b.tag}] "${b.text}" (id: ${b.id})`));
+    }
+
+    if (btnCartao) {
+      console.log('   💳 Clicando no botão "Cartão de Crédito" e aguardando nova aba...');
+      
+      // Scroll até o botão para garantir visibilidade
+      await btnCartao.scrollIntoViewIfNeeded();
+      await siaaPage.waitForTimeout(500);
+      
+      // Clica e espera a nova aba/janela abrir
+      const newPagePromise = context.waitForEvent('page', { timeout: 15000 });
+      await btnCartao.click();
+      
+      try {
+        const cartaoPage = await newPagePromise;
+        
+        // Aguarda a página carregar completamente para ter a URL final (com redirects)
+        await cartaoPage.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+        await cartaoPage.waitForTimeout(3000);
+        
+        linkCartaoCredito = cartaoPage.url();
+        console.log(`   💳 ✅ Link Cartão de Crédito capturado!`);
+        console.log(`   💳 URL: ${linkCartaoCredito}`);
+        console.log(`LINK_CARTAO_CREDITO: ${linkCartaoCredito}`);
+        
+        // Fecha a aba do cartão - não precisamos dela
+        await cartaoPage.close();
+        console.log('   💳 Aba do cartão fechada');
+        
+      } catch (waitErr) {
+        console.log(`   ⚠️ Nova aba não abriu (timeout): ${waitErr.message}`);
+        
+        // Pode ter aberto na mesma aba - verifica se a URL mudou
+        await siaaPage.waitForTimeout(3000);
+        const urlAtual = siaaPage.url();
+        if (urlAtual.includes('getnet') || urlAtual.includes('finaliza-pagamento') || urlAtual.includes('pagamento')) {
+          linkCartaoCredito = urlAtual;
+          console.log(`   💳 ✅ Link capturado (mesma aba): ${linkCartaoCredito}`);
+          console.log(`LINK_CARTAO_CREDITO: ${linkCartaoCredito}`);
+          // Volta para a página SIAA
+          await siaaPage.goBack();
+          await siaaPage.waitForLoadState('domcontentloaded').catch(() => {});
+          await siaaPage.waitForTimeout(2000);
+        }
+      }
+    } else {
+      console.log('   ⚠️ Botão "Cartão de Crédito" não encontrado na página SIAA');
+      // Debug: screenshot para análise
+      await siaaPage.screenshot({ path: 'debug-cartao-nao-encontrado.png', fullPage: true });
+      console.log('   📸 Screenshot debug: debug-cartao-nao-encontrado.png');
+    }
+    
+    if (!linkCartaoCredito) {
+      console.log('   ⚠️ Link do Cartão de Crédito não capturado');
+    }
+  } catch (e) {
+    console.log(`   ⚠️ Erro ao capturar link do cartão: ${e.message}`);
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // DOWNLOAD DO BOLETO (via click e captura de nova página)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -3433,6 +3535,10 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log(`📋 Campanha: ${CLIENTE.campanha}`);
   console.log(`📸 Screenshot aprovação: ${screenshotPath}`);
   console.log(`📄 Boleto: ${boletoPath}`);
+  if (linkCartaoCredito) {
+    console.log(`💳 Link Cartão de Crédito: ${linkCartaoCredito}`);
+    console.log(`LINK_CARTAO_CREDITO: ${linkCartaoCredito}`);
+  }
   console.log('═══════════════════════════════════════════════════════════════════════════');
 
   // ═══════════════════════════════════════════════════════════════════════════

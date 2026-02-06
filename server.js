@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -43,6 +45,133 @@ app.get('/files/:filename', (req, res) => {
   res.setHeader('Content-Type', contentTypes[ext] || 'application/octet-stream');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
   res.sendFile(filePath);
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Upload seguro de arquivos para Kommo via Playwright
+// Valida CPF nos nomes dos arquivos para garantir correspondência com o lead
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/kommo/upload-lead', async (req, res) => {
+  const { leadId, cpf, screenshotPath, boletoPath } = req.body;
+
+  // Validação obrigatória
+  if (!leadId || !cpf) {
+    return res.status(400).json({ sucesso: false, erro: 'leadId e cpf são obrigatórios' });
+  }
+  if (!screenshotPath && !boletoPath) {
+    return res.status(400).json({ sucesso: false, erro: 'Pelo menos um arquivo (screenshotPath ou boletoPath) é necessário' });
+  }
+
+  // Sanitiza CPF (só números)
+  const cpfLimpo = cpf.replace(/\D/g, '');
+  if (cpfLimpo.length < 11) {
+    return res.status(400).json({ sucesso: false, erro: 'CPF inválido' });
+  }
+
+  // Sanitiza leadId (só números)
+  const leadIdLimpo = String(leadId).replace(/\D/g, '');
+  if (!leadIdLimpo) {
+    return res.status(400).json({ sucesso: false, erro: 'leadId inválido' });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SEGURANÇA: Valida que os arquivos pertencem ao CPF informado
+  // ═══════════════════════════════════════════════════════════════════════
+  const arquivosParaUpload = {};
+
+  if (screenshotPath) {
+    // Previne path traversal
+    const nomeArquivo = path.basename(screenshotPath);
+    if (nomeArquivo.includes('..') || nomeArquivo.includes('/') || nomeArquivo.includes('\\')) {
+      return res.status(400).json({ sucesso: false, erro: 'screenshotPath contém caracteres inválidos' });
+    }
+    // Valida que o CPF está no nome do arquivo
+    if (!nomeArquivo.includes(cpfLimpo)) {
+      return res.status(400).json({ sucesso: false, erro: `Screenshot "${nomeArquivo}" não corresponde ao CPF ${cpfLimpo}` });
+    }
+    const caminhoCompleto = path.join(__dirname, nomeArquivo);
+    if (!fs.existsSync(caminhoCompleto)) {
+      return res.status(404).json({ sucesso: false, erro: `Screenshot não encontrado: ${nomeArquivo}` });
+    }
+    arquivosParaUpload.screenshot = caminhoCompleto;
+  }
+
+  if (boletoPath) {
+    const nomeArquivo = path.basename(boletoPath);
+    if (nomeArquivo.includes('..') || nomeArquivo.includes('/') || nomeArquivo.includes('\\')) {
+      return res.status(400).json({ sucesso: false, erro: 'boletoPath contém caracteres inválidos' });
+    }
+    if (!nomeArquivo.includes(cpfLimpo)) {
+      return res.status(400).json({ sucesso: false, erro: `Boleto "${nomeArquivo}" não corresponde ao CPF ${cpfLimpo}` });
+    }
+    const caminhoCompleto = path.join(__dirname, nomeArquivo);
+    if (!fs.existsSync(caminhoCompleto)) {
+      return res.status(404).json({ sucesso: false, erro: `Boleto não encontrado: ${nomeArquivo}` });
+    }
+    arquivosParaUpload.boleto = caminhoCompleto;
+  }
+
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('📤 UPLOAD KOMMO - Iniciando');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log(`   Lead ID: ${leadIdLimpo}`);
+  console.log(`   CPF: ${cpfLimpo}`);
+  console.log(`   Screenshot: ${arquivosParaUpload.screenshot || '(nenhum)'}`);
+  console.log(`   Boleto: ${arquivosParaUpload.boleto || '(nenhum)'}`);
+  console.log('');
+
+  // Executa o Playwright para fazer upload no Kommo
+  const envUpload = {
+    ...process.env,
+    LEAD_ID: leadIdLimpo,
+    SCREENSHOT_PATH: arquivosParaUpload.screenshot || '',
+    BOLETO_PATH: arquivosParaUpload.boleto || ''
+  };
+
+  const processo = spawn('npx', ['playwright', 'test', 'tests/kommo-upload.spec.js', '--config=playwright.config.server.js'], {
+    env: envUpload,
+    cwd: __dirname,
+    shell: true
+  });
+
+  let stdout = '';
+  let stderr = '';
+
+  processo.stdout.on('data', (data) => {
+    const texto = data.toString();
+    stdout += texto;
+    process.stdout.write(texto);
+  });
+
+  processo.stderr.on('data', (data) => {
+    stderr += data.toString();
+  });
+
+  processo.on('close', (code) => {
+    const sucesso = code === 0 && stdout.includes('UPLOAD CONCLUÍDO COM SUCESSO');
+    
+    console.log('');
+    console.log(`📤 UPLOAD KOMMO - ${sucesso ? '✅ SUCESSO' : '❌ FALHA'} (código: ${code})`);
+    console.log('');
+
+    res.json({
+      sucesso,
+      leadId: leadIdLimpo,
+      cpf: cpfLimpo,
+      arquivos: {
+        screenshot: arquivosParaUpload.screenshot ? path.basename(arquivosParaUpload.screenshot) : null,
+        boleto: arquivosParaUpload.boleto ? path.basename(arquivosParaUpload.boleto) : null
+      },
+      mensagem: sucesso ? 'Arquivos anexados ao lead com sucesso' : 'Falha ao anexar arquivos',
+      logs: stdout.slice(-1000)
+    });
+  });
+
+  processo.on('error', (err) => {
+    res.status(500).json({ sucesso: false, erro: err.message });
+  });
 });
 
 // Status da execução atual
@@ -959,6 +1088,10 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     const campanhaMatch = stdout.match(/Campanha:\s*(.+)/);
     const campanhaUsada = campanhaMatch ? campanhaMatch[1].trim() : campanha;
     
+    // Extrai link do cartão de crédito
+    const linkCartaoMatch = stdout.match(/LINK_CARTAO_CREDITO:\s*(\S+)/);
+    const linkCartaoCredito = linkCartaoMatch ? linkCartaoMatch[1] : null;
+    
     // Extrai valores financeiros
     const valorMatriculaMatch = stdout.match(/Valor matrícula:\s*R?\$?\s*([\d,.]+)/);
     const valorMensalidadeMatch = stdout.match(/Valor mensalidade:\s*R?\$?\s*([\d,.]+)/);
@@ -985,17 +1118,84 @@ app.post('/inscricao-pos/sync', async (req, res) => {
         arquivos: { screenshot: screenshotPath, boleto: boletoPath, linhaDigitavel }
       });
       
+      // ═════════════════════════════════════════════════════════════════
+      // UPLOAD AUTOMÁTICO PARA KOMMO (se leadId foi fornecido)
+      // ═════════════════════════════════════════════════════════════════
+      let kommoUploadResult = null;
+
+      if (leadId && (screenshotPath || boletoPath)) {
+        console.log('');
+        console.log('📤 Iniciando upload automático para Kommo...');
+        console.log(`   Lead ID: ${leadId} | CPF: ${cpf}`);
+
+        try {
+          // Valida que os arquivos existem e correspondem ao CPF
+          const cpfLimpo = cpf.replace(/\D/g, '');
+          const screenshotAbsoluto = screenshotPath ? path.join(__dirname, screenshotPath) : null;
+          const boletoAbsoluto = boletoPath ? path.join(__dirname, boletoPath) : null;
+
+          const screenshotOk = screenshotAbsoluto && fs.existsSync(screenshotAbsoluto) && screenshotPath.includes(cpfLimpo);
+          const boletoOk = boletoAbsoluto && fs.existsSync(boletoAbsoluto) && boletoPath.includes(cpfLimpo);
+
+          if (screenshotOk || boletoOk) {
+            const envUpload = {
+              ...process.env,
+              LEAD_ID: String(leadId),
+              SCREENSHOT_PATH: screenshotOk ? screenshotAbsoluto : '',
+              BOLETO_PATH: boletoOk ? boletoAbsoluto : ''
+            };
+
+            kommoUploadResult = await new Promise((resolve) => {
+              const uploadProc = spawn('npx', ['playwright', 'test', 'tests/kommo-upload.spec.js', '--config=playwright.config.server.js'], {
+                env: envUpload,
+                cwd: __dirname,
+                shell: true
+              });
+
+              let uploadStdout = '';
+              uploadProc.stdout.on('data', (data) => {
+                uploadStdout += data.toString();
+                process.stdout.write(data.toString());
+              });
+              uploadProc.stderr.on('data', (data) => process.stderr.write(data.toString()));
+
+              uploadProc.on('close', (uploadCode) => {
+                const uploadOk = uploadCode === 0 && uploadStdout.includes('UPLOAD CONCLUÍDO COM SUCESSO');
+                console.log(`📤 Upload Kommo: ${uploadOk ? '✅ SUCESSO' : '❌ FALHA'}`);
+                resolve({
+                  sucesso: uploadOk,
+                  arquivos: {
+                    screenshot: screenshotOk ? screenshotPath : null,
+                    boleto: boletoOk ? boletoPath : null
+                  }
+                });
+              });
+
+              uploadProc.on('error', () => resolve({ sucesso: false, erro: 'Falha ao iniciar upload' }));
+            });
+          } else {
+            console.log('   ⚠️  Arquivos não encontrados ou CPF não corresponde, pulando upload Kommo');
+            kommoUploadResult = { sucesso: false, erro: 'Arquivos não validados' };
+          }
+        } catch (kommoErr) {
+          console.error('   ❌ Erro no upload Kommo:', kommoErr.message);
+          kommoUploadResult = { sucesso: false, erro: kommoErr.message };
+        }
+      }
+
       return res.json({
         sucesso: true,
         numeroInscricao: numeroInscricaoSiaa || numeroInscricao,
         numeroInscricaoSiaa,
         numeroPedidoVtex: numeroInscricao,
         linhaDigitavel,
+        linkCartaoCredito,
         screenshotPath,
         boletoPath,
         screenshotUrl: screenshotPath ? `${BASE_URL}/files/${screenshotPath}` : null,
         boletoUrl: boletoPath ? `${BASE_URL}/files/${boletoPath}` : null,
         campanhaUsada,
+        kommoUpload: kommoUploadResult,
         mensagem: 'Inscrição Pós-Graduação concluída com sucesso!',
         logId,
         cliente: { nome, cpf, email },
@@ -1121,14 +1321,16 @@ app.listen(PORT, async () => {
   console.log('   Endpoints disponíveis:');
   console.log('   POST /inscricao                    - Inicia inscrição (assíncrono)');
   console.log('   POST /inscricao/sync               - Inscrição vestibular (síncrono)');
-  console.log('   POST /inscricao-enem/sync           - Inscrição ENEM com notas');
-  console.log('   POST /inscricao-enem-sem-nota/sync  - Inscrição ENEM sem notas');
-  console.log('   POST /inscricao-pos/sync            - Inscrição PÓS-GRADUAÇÃO');
-  console.log('   GET  /status                        - Status da execução atual');
-  console.log('   GET  /logs                          - Logs de execução (?limite=50&status=sucesso&tipo=pos&cpf=xxx)');
-  console.log('   GET  /logs/:id                      - Log específico por ID');
-  console.log('   GET  /estatisticas                  - Estatísticas (?periodo=7 days)');
-  console.log('   GET  /db/health                     - Health check do banco');
+  console.log('   POST /inscricao-enem/sync          - Inscrição ENEM com notas');
+  console.log('   POST /inscricao-enem-sem-nota/sync - Inscrição ENEM sem notas');
+  console.log('   POST /inscricao-pos/sync           - Inscrição PÓS-GRADUAÇÃO');
+  console.log('   GET  /status                       - Status da execução atual');
+  console.log('   GET  /files/:filename              - Serve arquivos gerados');
+  console.log('   POST /kommo/upload-lead             - Upload seguro para Kommo (valida CPF)');
+  console.log('   GET  /logs                         - Logs de execução (?limite=50&status=sucesso&tipo=pos&cpf=xxx)');
+  console.log('   GET  /logs/:id                     - Log específico por ID');
+  console.log('   GET  /estatisticas                 - Estatísticas (?periodo=7 days)');
+  console.log('   GET  /db/health                    - Health check do banco');
   console.log('');
   
   // Testa conexão com o banco
