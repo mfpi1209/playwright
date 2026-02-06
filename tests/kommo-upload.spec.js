@@ -103,11 +103,18 @@ test('Upload arquivos para Kommo', async ({ page }) => {
 
     console.log('');
     console.log('✅ UPLOAD CONCLUÍDO COM SUCESSO!');
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1000);
+
+    // ═════════════════════════════════════════════════════════════════════
+    // ETAPA 4: Logoff do Kommo (liberar sessão)
+    // ═════════════════════════════════════════════════════════════════════
+    await fazerLogoff(page);
 
   } catch (error) {
     console.error('❌ Erro:', error.message);
     await page.screenshot({ path: `erro-kommo-upload-${Date.now()}.png`, fullPage: true }).catch(() => {});
+    // Tenta logoff mesmo em caso de erro
+    await fazerLogoff(page);
     throw error;
   }
 });
@@ -186,4 +193,19 @@ async function uploadParaCampo(page, filePath, nomeCampo) {
   await page.waitForTimeout(8000);
   await page.screenshot({ path: `kommo-uploaded-${nomeCampo}.png` });
   console.log(`   ✅ ${nomeCampo}: ${path.basename(absolutePath)} anexado`);
+}
+
+/**
+ * Faz logoff do Kommo para liberar a sessão ativa.
+ * Navega para /logout ou clica no menu do perfil → Sair.
+ */
+async function fazerLogoff(page) {
+  try {
+    console.log('🔓 Fazendo logoff do Kommo...');
+    await page.goto('https://admamoeduitcombr.kommo.com/logout', { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await page.waitForTimeout(2000);
+    console.log('   ✅ Logoff realizado com sucesso');
+  } catch (e) {
+    console.log(`   ⚠️  Logoff falhou (${e.message.substring(0, 50)}), sessão pode continuar ativa`);
+  }
 }
