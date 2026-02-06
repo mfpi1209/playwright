@@ -1415,11 +1415,41 @@ test('test-enem-sem-nota', async ({ page }) => {
   }
   
   let numeroInscricao = null;
+  let numeroInscricaoCapturado = null;
   
   if (novaAba) {
     console.log('⏳ Página aberta!');
     await novaAba.waitForTimeout(2000);
     console.log(`📍 URL da nova aba: ${novaAba.url()}`);
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INTERCEPTADOR DE REQUISIÇÃO - Captura numeroInscricao de getProvaUrl
+    // ═══════════════════════════════════════════════════════════════════════════
+    novaAba.on('request', request => {
+      const url = request.url();
+      if (url.includes('getProvaUrl')) {
+        console.log('');
+        console.log('🔍 INTERCEPTADO: Requisição getProvaUrl detectada!');
+        console.log(`   URL: ${url}`);
+        
+        try {
+          const urlObj = new URL(url);
+          const numeroInscricao = urlObj.searchParams.get('numeroInscricao');
+          if (numeroInscricao) {
+            numeroInscricaoCapturado = numeroInscricao;
+            console.log(`   ✅ NÚMERO DE INSCRIÇÃO CAPTURADO: ${numeroInscricao}`);
+          }
+          
+          // Log de todos os parâmetros para debug
+          console.log('   📋 Parâmetros da requisição:');
+          for (const [key, value] of urlObj.searchParams.entries()) {
+            console.log(`      - ${key}: ${value}`);
+          }
+        } catch (e) {
+          console.log(`   ⚠️ Erro ao parsear URL: ${e.message}`);
+        }
+      }
+    });
     
     // ═══════════════════════════════════════════════════════════════════════════
     // Capturar número de inscrição
@@ -1479,18 +1509,36 @@ test('test-enem-sem-nota', async ({ page }) => {
     const chegouNaPaginaCorreta = urlNovaAba.includes('minhas-inscricoes') || urlNovaAba.includes('account');
     
     // ═══════════════════════════════════════════════════════════════════════════
+    // NÚMERO DE INSCRIÇÃO FINAL - Prioriza o capturado da requisição getProvaUrl
+    // ═══════════════════════════════════════════════════════════════════════════
+    const numeroInscricaoFinal = numeroInscricaoCapturado || numeroInscricao;
+    
+    if (numeroInscricaoFinal) {
+      // Imprime no formato esperado pelo server.js para extração
+      console.log(`NUMERO_INSCRICAO_EXTRAIDO: ${numeroInscricaoFinal}`);
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════════
     // RESULTADO FINAL
     // ═══════════════════════════════════════════════════════════════════════════
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════════════════');
     if (chegouNaPaginaCorreta) {
       console.log('🎉 INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA COM SUCESSO!');
-      if (numeroInscricao) {
-        console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
+      if (numeroInscricaoFinal) {
+        console.log(`📋 Número de Inscrição: ${numeroInscricaoFinal}`);
+        if (numeroInscricaoCapturado) {
+          console.log(`   (Fonte: Requisição getProvaUrl)`);
+        } else {
+          console.log(`   (Fonte: Página - fallback)`);
+        }
       }
       console.log('📋 Notas do ENEM deverão ser preenchidas posteriormente pelo aluno.');
     } else {
       console.log('❌ INSCRIÇÃO ENEM (SEM NOTA) NÃO FINALIZADA - Não chegou à página de inscrições');
+      if (numeroInscricaoFinal) {
+        console.log(`📋 Número de Inscrição: ${numeroInscricaoFinal}`);
+      }
     }
     console.log(`📍 URL final: ${page.url()}`);
     console.log('═══════════════════════════════════════════════════════════════════════════');

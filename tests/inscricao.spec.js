@@ -1993,10 +1993,40 @@ test('test', async ({ page }) => {
   }
   
   let linkProva = null;
+  let numeroInscricaoCapturado = null;
   
   if (novaAba) {
    console.log('⏳ Página aberta, aguardando carregar...');
    console.log(`📍 URL da nova aba: ${novaAba.url()}`);
+   
+   // ═══════════════════════════════════════════════════════════════════════════
+   // INTERCEPTADOR DE REQUISIÇÃO - Captura numeroInscricao de getProvaUrl
+   // ═══════════════════════════════════════════════════════════════════════════
+   novaAba.on('request', request => {
+     const url = request.url();
+     if (url.includes('getProvaUrl')) {
+       console.log('');
+       console.log('🔍 INTERCEPTADO: Requisição getProvaUrl detectada!');
+       console.log(`   URL: ${url}`);
+       
+       try {
+         const urlObj = new URL(url);
+         const numeroInscricao = urlObj.searchParams.get('numeroInscricao');
+         if (numeroInscricao) {
+           numeroInscricaoCapturado = numeroInscricao;
+           console.log(`   ✅ NÚMERO DE INSCRIÇÃO CAPTURADO: ${numeroInscricao}`);
+         }
+         
+         // Log de todos os parâmetros para debug
+         console.log('   📋 Parâmetros da requisição:');
+         for (const [key, value] of urlObj.searchParams.entries()) {
+           console.log(`      - ${key}: ${value}`);
+         }
+       } catch (e) {
+         console.log(`   ⚠️ Erro ao parsear URL: ${e.message}`);
+       }
+     }
+   });
    
    // Aguarda a página carregar completamente
    console.log('⏳ Aguardando página de inscrições carregar (10s)...');
@@ -2209,6 +2239,16 @@ test('test', async ({ page }) => {
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
+  // NÚMERO DE INSCRIÇÃO FINAL - Prioriza o capturado da requisição getProvaUrl
+  // ═══════════════════════════════════════════════════════════════════════════
+  const numeroInscricaoFinal = numeroInscricaoCapturado || numeroInscricao;
+  
+  if (numeroInscricaoFinal) {
+    // Imprime no formato esperado pelo server.js para extração
+    console.log(`NUMERO_INSCRICAO_EXTRAIDO: ${numeroInscricaoFinal}`);
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════════
   // RESULTADO FINAL
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('');
@@ -2216,8 +2256,13 @@ test('test', async ({ page }) => {
   if (linkProva) {
     console.log('🎉 SUCESSO! LINK DA PROVA CAPTURADO:');
     console.log(`🔗 ${linkProva}`);
-    if (numeroInscricao) {
-      console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
+    if (numeroInscricaoFinal) {
+      console.log(`📋 Número de Inscrição: ${numeroInscricaoFinal}`);
+      if (numeroInscricaoCapturado) {
+        console.log(`   (Fonte: Requisição getProvaUrl)`);
+      } else {
+        console.log(`   (Fonte: Token JWT - fallback)`);
+      }
     }
     
     // Informa mudanças de polo e vestibular
@@ -2231,6 +2276,9 @@ test('test', async ({ page }) => {
     }
   } else {
     console.log('⚠️ FINALIZADO SEM LINK DA PROVA');
+    if (numeroInscricaoFinal) {
+      console.log(`📋 Número de Inscrição: ${numeroInscricaoFinal}`);
+    }
   }
   console.log(`📍 URL final: ${page.url()}`);
   console.log('═══════════════════════════════════════════════════════════════════════════');

@@ -1,6 +1,7 @@
 const express = require('express');
 const { spawn } = require('child_process');
 const path = require('path');
+const db = require('./database/db');
 
 const app = express();
 app.use(express.json());
@@ -9,6 +10,27 @@ const PORT = process.env.PORT || 3000;
 
 // Status da execução atual
 let execucaoAtual = null;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPER: Determinar tipo de inscrição
+// ═══════════════════════════════════════════════════════════════════════════
+function determinarTipoInscricao(tipoVestibular) {
+  if (!tipoVestibular) return 'multipla';
+  const tipo = tipoVestibular.toLowerCase();
+  if (tipo.includes('redac') || tipo.includes('redação')) return 'redacao';
+  if (tipo.includes('mult') || tipo.includes('múltipla')) return 'multipla';
+  return 'multipla';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPER: Calcular duração formatada
+// ═══════════════════════════════════════════════════════════════════════════
+function calcularDuracaoFormatada(inicioMs) {
+  const segundos = Math.round((Date.now() - inicioMs) / 1000);
+  const min = Math.floor(segundos / 60);
+  const seg = segundos % 60;
+  return min > 0 ? `${min}m ${seg}s` : `${seg}s`;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ROTA: Health Check
@@ -77,61 +99,101 @@ app.post('/inscricao', async (req, res) => {
     CLIENTE_TIPO_VESTIBULAR: tipoVestibular || ''
   };
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LOG NO BANCO DE DADOS
+  // ═══════════════════════════════════════════════════════════════════════════
+  const tipoInscricao = determinarTipoInscricao(tipoVestibular);
+  const inicioMs = Date.now();
+  const logDB = await db.iniciarLog({
+    tipo_inscricao: tipoInscricao,
+    nome, cpf, email, telefone, nascimento,
+    curso: curso || '',
+    polo: polo || '',
+    ip_origem: req.ip,
+    user_agent: req.get('User-Agent')
+  });
+  const logId = logDB ? logDB.id : null;
+
   // Marca início da execução
   execucaoAtual = {
     inicio: new Date(),
     cliente: { nome, cpf, email },
     status: 'executando',
-    resultado: null
+    resultado: null,
+    logId: logId
   };
 
   // Responde imediatamente (execução assíncrona)
   res.json({
     sucesso: true,
     mensagem: 'Inscrição iniciada! Acompanhe em GET /status',
+    logId: logId,
     cliente: { nome, cpf, email }
   });
 
+  // Passa LOG_ID para o Playwright
+  env.LOG_ID = logId ? logId.toString() : '';
+
   // Executa o Playwright em background
-  const comando = 'npx playwright test --config=playwright.config.server.js';
-  
-  exec(comando, { env, cwd: __dirname, timeout: 10 * 60 * 1000 }, (error, stdout, stderr) => {
+  const processo = spawn('npx', ['playwright', 'test', '--config=playwright.config.server.js'], {
+    env,
+    cwd: __dirname,
+    shell: true
+  });
+
+  let stdout = '';
+  let stderr = '';
+
+  processo.stdout.on('data', (data) => {
+    const texto = data.toString();
+    stdout += texto;
+    process.stdout.write(texto);
+    if (logId) db.appendOutput(logId, texto).catch(() => {});
+  });
+
+  processo.stderr.on('data', (data) => {
+    const texto = data.toString();
+    stderr += texto;
+    process.stderr.write(texto);
+  });
+
+  processo.on('close', async (code) => {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════');
     console.log('📤 RESULTADO DA EXECUÇÃO');
     console.log('═══════════════════════════════════════════════════════════════');
     
-    if (error) {
-      console.log('❌ ERRO:', error.message);
+    const linkMatch = stdout.match(/🔗\s*(https?:\/\/[^\s]+)/);
+    const linkProva = linkMatch ? linkMatch[1] : null;
+    let numeroInscricaoMatch = stdout.match(/NUMERO_INSCRICAO_EXTRAIDO:\s*(\d+)/);
+    if (!numeroInscricaoMatch) {
+      numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
+    }
+    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
+    
+    if (code !== 0 || !linkProva) {
+      console.log('❌ ERRO:', code !== 0 ? `Código ${code}` : 'Link não capturado');
       execucaoAtual.status = 'erro';
-      execucaoAtual.resultado = {
-        sucesso: false,
-        erro: error.message
-      };
+      execucaoAtual.resultado = { sucesso: false, erro: 'Execução falhou' };
+      if (logId) await db.finalizarLogErro(logId, {
+        erro_mensagem: code !== 0 ? `Processo terminou com código ${code}` : 'Link da prova não capturado',
+        etapa_erro: 'execucao_geral',
+        output_final: stdout.slice(-3000)
+      });
     } else {
       console.log('✅ SUCESSO');
-      
-      // Tenta extrair o link da prova do output (formato: 🔗 https://...)
-      const linkMatch = stdout.match(/🔗\s*(https?:\/\/[^\s]+)/);
-      const linkProva = linkMatch ? linkMatch[1] : null;
-      
       execucaoAtual.status = 'concluido';
-      execucaoAtual.resultado = {
-        sucesso: true,
-        linkProva: linkProva,
-        mensagem: linkProva ? 'Inscrição concluída com sucesso!' : 'Inscrição concluída (link não capturado)'
-      };
+      execucaoAtual.resultado = { sucesso: true, linkProva, mensagem: 'Inscrição concluída!' };
+      if (logId) await db.finalizarLogSucesso(logId, {
+        duracao_formatada: calcularDuracaoFormatada(inicioMs),
+        numero_inscricao: numeroInscricao,
+        output_final: `Link: ${linkProva}`
+      });
     }
     
     execucaoAtual.fim = new Date();
     execucaoAtual.duracao = (execucaoAtual.fim - execucaoAtual.inicio) / 1000;
-    
     console.log(`   Duração: ${execucaoAtual.duracao}s`);
-    console.log('');
-    
-    // Log completo para debug
-    if (stdout) console.log('STDOUT:', stdout);
-    if (stderr) console.log('STDERR:', stderr);
   });
 });
 
@@ -195,6 +257,22 @@ app.post('/inscricao/sync', async (req, res) => {
   console.log(`   Vestibular: ${tipoVestibular || '(padrão)'}`);
   console.log('');
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LOG NO BANCO DE DADOS
+  // ═══════════════════════════════════════════════════════════════════════════
+  const tipoInscricao = determinarTipoInscricao(tipoVestibular);
+  const inicioMs = Date.now();
+  const logDB = await db.iniciarLog({
+    tipo_inscricao: tipoInscricao,
+    nome, cpf, email, telefone, nascimento,
+    curso: curso || '',
+    polo: polo || '',
+    ip_origem: req.ip,
+    user_agent: req.get('User-Agent')
+  });
+  const logId = logDB ? logDB.id : null;
+  if (logId) await db.atualizarStatusEmAndamento(logId, 'Vestibular sync - iniciando Playwright');
+
   // Define variáveis de ambiente para o Playwright
   const env = {
     ...process.env,
@@ -210,7 +288,8 @@ app.post('/inscricao/sync', async (req, res) => {
     CLIENTE_CIDADE: cidade || '',
     CLIENTE_CURSO: curso || '',
     CLIENTE_POLO: polo || '',
-    CLIENTE_TIPO_VESTIBULAR: tipoVestibular || ''
+    CLIENTE_TIPO_VESTIBULAR: tipoVestibular || '',
+    LOG_ID: logId ? logId.toString() : ''
   };
 
   // Executa o Playwright com spawn para logs em tempo real
@@ -231,27 +310,29 @@ app.post('/inscricao/sync', async (req, res) => {
   processo.stdout.on('data', (data) => {
     const texto = data.toString();
     stdout += texto;
-    process.stdout.write(texto); // Mostra no console em tempo real
+    process.stdout.write(texto);
   });
 
   processo.stderr.on('data', (data) => {
     const texto = data.toString();
     stderr += texto;
-    process.stderr.write(texto); // Mostra erros em tempo real
+    process.stderr.write(texto);
   });
 
-  processo.on('close', (code) => {
+  processo.on('close', async (code) => {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════');
     console.log(`📤 PROCESSO FINALIZADO (código: ${code})`);
     console.log('═══════════════════════════════════════════════════════════════');
     
-    // Tenta extrair o link da prova do output (formato: 🔗 https://...)
+    // Tenta extrair o link da prova do output
     const linkMatch = stdout.match(/🔗\s*(https?:\/\/[^\s]+)/);
     const linkProva = linkMatch ? linkMatch[1] : null;
     
-    // Tenta extrair o número da inscrição do output (formato: Número de Inscrição extraído do token: XXXX)
-    const numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
+    let numeroInscricaoMatch = stdout.match(/NUMERO_INSCRICAO_EXTRAIDO:\s*(\d+)/);
+    if (!numeroInscricaoMatch) {
+      numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
+    }
     const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
     
     // Verifica se CPF já tinha inscrição
@@ -259,11 +340,8 @@ app.post('/inscricao/sync', async (req, res) => {
     
     if (cpfJaInscrito) {
       console.log('⚠️ CPF já possui inscrição');
-      return res.json({
-        sucesso: false,
-        erro: 'CPF já possui inscrição',
-        cliente: { nome, cpf, email }
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CPF já possui inscrição', etapa_erro: 'validacao_cpf', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'CPF já possui inscrição', logId, cliente: { nome, cpf, email } });
     }
     
     // Verifica se houve erro de CEP
@@ -271,118 +349,73 @@ app.post('/inscricao/sync', async (req, res) => {
     
     if (erroCep) {
       console.log('❌ ERRO - CEP não foi encontrado');
-      return res.json({
-        sucesso: false,
-        erro: 'CEP não foi encontrado. Verifique se o CEP está correto.',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CEP não encontrado', etapa_erro: 'validacao_cep', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'CEP não foi encontrado.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
-    // Verifica se houve erro de polo não encontrado (nenhum disponível)
+    // Verifica se houve erro de polo não encontrado
     const erroPolo = stdout.includes('NENHUM POLO DISPONÍVEL') || stdout.includes('POLO NÃO ENCONTRADO');
     
     if (erroPolo) {
-      // Tenta extrair o nome do polo solicitado
       const poloMatch = stdout.match(/Polo solicitado:\s*"([^"]+)"/);
       const poloSolicitado = poloMatch ? poloMatch[1] : polo;
-      
       console.log('❌ ERRO - Polo não foi encontrado');
-      return res.json({
-        sucesso: false,
-        erro: `Polo "${poloSolicitado}" não foi encontrado e nenhum polo alternativo está disponível para este curso.`,
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: `Polo "${poloSolicitado}" não encontrado`, etapa_erro: 'selecao_polo', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: `Polo "${poloSolicitado}" não encontrado.`, logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
-    // Verifica se usou polo alternativo (para incluir na resposta de sucesso)
     const poloAlternativoMatch = stdout.match(/POLO ALTERNATIVO UTILIZADO:\s*"([^"]+)"/);
     const poloUtilizado = poloAlternativoMatch ? poloAlternativoMatch[1] : polo;
     
-    // Verifica se usou vestibular alternativo (para incluir na resposta de sucesso)
     const vestibularAlternativoMatch = stdout.match(/VESTIBULAR ALTERNATIVO UTILIZADO:\s*"([^"]+)"/);
     const vestibularUtilizado = vestibularAlternativoMatch ? vestibularAlternativoMatch[1] : tipoVestibular;
     
-    // Verifica se CPF já possui inscrição em ambos os tipos
     const cpfJaInscritoAmbos = stdout.includes('CPF JÁ POSSUI INSCRIÇÃO EM AMBOS OS TIPOS');
     
     if (cpfJaInscritoAmbos) {
-      console.log('❌ ERRO - CPF já possui inscrição em ambos os tipos de vestibular');
-      return res.json({
-        sucesso: false,
-        erro: 'CPF já possui inscrição em ambos os tipos de vestibular (Múltipla Escolha e Redação). Não é possível realizar nova inscrição.',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      console.log('❌ ERRO - CPF já possui inscrição em ambos os tipos');
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CPF já possui inscrição em ambos os tipos', etapa_erro: 'validacao_cpf_dupla', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'CPF já possui inscrição em ambos os tipos de vestibular.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
-    // Verifica se não conseguiu ir para o checkout
     const erroCheckout = stdout.includes('NÃO CONSEGUIU IR PARA O CHECKOUT') || stdout.includes('Não conseguiu avançar para o checkout');
     
     if (erroCheckout) {
       console.log('❌ ERRO - Não conseguiu ir para o checkout');
-      return res.json({
-        sucesso: false,
-        erro: 'Não conseguiu avançar para o checkout. O botão "Continuar Inscrição" pode não estar funcionando.',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'Não conseguiu ir para o checkout', etapa_erro: 'checkout', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'Não conseguiu avançar para o checkout.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
     // Se capturou o link, considera SUCESSO
     if (linkProva) {
       console.log('✅ SUCESSO - Link capturado!');
-      if (numeroInscricao) {
-        console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
-      }
+      if (numeroInscricao) console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
       
-      // Monta mensagem com alterações
       let mensagemFinal = 'Inscrição concluída com sucesso!';
       const alteracoes = [];
+      if (poloUtilizado && poloUtilizado.toLowerCase() !== (polo || '').toLowerCase()) alteracoes.push(`Polo: ${poloUtilizado}`);
+      if (vestibularUtilizado && vestibularUtilizado.toLowerCase() !== (tipoVestibular || '').toLowerCase()) alteracoes.push(`Vestibular: ${vestibularUtilizado}`);
+      if (alteracoes.length > 0) mensagemFinal = `Inscrição concluída com sucesso! (Alterações: ${alteracoes.join(', ')})`;
       
-      if (poloUtilizado && poloUtilizado.toLowerCase() !== (polo || '').toLowerCase()) {
-        console.log(`📍 Polo utilizado: ${poloUtilizado} (solicitado: ${polo})`);
-        alteracoes.push(`Polo: ${poloUtilizado}`);
-      }
-      
-      if (vestibularUtilizado && vestibularUtilizado.toLowerCase() !== (tipoVestibular || '').toLowerCase()) {
-        console.log(`📝 Vestibular utilizado: ${vestibularUtilizado} (solicitado: ${tipoVestibular})`);
-        alteracoes.push(`Vestibular: ${vestibularUtilizado}`);
-      }
-      
-      if (alteracoes.length > 0) {
-        mensagemFinal = `Inscrição concluída com sucesso! (Alterações: ${alteracoes.join(', ')})`;
-      }
-      
-      return res.json({
-        sucesso: true,
-        linkProva: linkProva,
-        numeroInscricao: numeroInscricao,
-        poloUtilizado: poloUtilizado || polo,
-        vestibularUtilizado: vestibularUtilizado || tipoVestibular,
-        poloSolicitado: polo,
-        vestibularSolicitado: tipoVestibular,
-        mensagem: mensagemFinal,
-        cliente: { nome, cpf, email }
+      if (logId) await db.finalizarLogSucesso(logId, {
+        duracao_formatada: calcularDuracaoFormatada(inicioMs),
+        numero_inscricao: numeroInscricao,
+        output_final: `Link: ${linkProva} | Polo: ${poloUtilizado} | Vestibular: ${vestibularUtilizado}`
       });
+      
+      return res.json({ sucesso: true, linkProva, numeroInscricao, poloUtilizado: poloUtilizado || polo, vestibularUtilizado: vestibularUtilizado || tipoVestibular, poloSolicitado: polo, vestibularSolicitado: tipoVestibular, mensagem: mensagemFinal, logId, cliente: { nome, cpf, email } });
     }
     
-    // Se NÃO capturou o link, é ERRO (independente do código de saída)
+    // ERRO
     console.log('❌ ERRO - Link da prova NÃO foi capturado');
-    return res.json({
-      sucesso: false,
-      erro: code !== 0 ? `Processo terminou com código ${code}` : 'Link da prova não foi capturado',
-      logs: stdout.slice(-2000) // Últimos 2000 chars para debug
-    });
+    if (logId) await db.finalizarLogErro(logId, { erro_mensagem: code !== 0 ? `Processo terminou com código ${code}` : 'Link não capturado', etapa_erro: 'finalizacao', output_final: stdout.slice(-3000) });
+    return res.json({ sucesso: false, erro: code !== 0 ? `Processo terminou com código ${code}` : 'Link da prova não foi capturado', logId, logs: stdout.slice(-2000) });
   });
 
-  processo.on('error', (err) => {
+  processo.on('error', async (err) => {
     console.log('❌ ERRO ao iniciar processo:', err.message);
-    res.json({
-      sucesso: false,
-      erro: err.message
-    });
+    if (logId) await db.finalizarLogErro(logId, { erro_mensagem: err.message, etapa_erro: 'spawn_processo', output_final: '' });
+    res.json({ sucesso: false, erro: err.message, logId });
   });
 });
 
@@ -445,6 +478,21 @@ app.post('/inscricao-enem/sync', async (req, res) => {
   console.log(`   Ano: ${enemAno}`);
   console.log('');
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LOG NO BANCO DE DADOS
+  // ═══════════════════════════════════════════════════════════════════════════
+  const inicioMs = Date.now();
+  const logDB = await db.iniciarLog({
+    tipo_inscricao: 'enem_com_nota',
+    nome, cpf, email, telefone, nascimento,
+    curso: curso || '',
+    polo: polo || '',
+    ip_origem: req.ip,
+    user_agent: req.get('User-Agent')
+  });
+  const logId = logDB ? logDB.id : null;
+  if (logId) await db.atualizarStatusEmAndamento(logId, 'ENEM com nota - iniciando Playwright');
+
   // Define variáveis de ambiente para o Playwright
   const env = {
     ...process.env,
@@ -466,14 +514,14 @@ app.post('/inscricao-enem/sync', async (req, res) => {
     ENEM_LINGUAGENS: enemLinguagens,
     ENEM_MATEMATICA: enemMatematica,
     ENEM_REDACAO: enemRedacao,
-    ENEM_ANO: enemAno
+    ENEM_ANO: enemAno,
+    LOG_ID: logId ? logId.toString() : ''
   };
 
   // Executa o Playwright com spawn para logs em tempo real
   console.log('🚀 Iniciando Playwright (ENEM)...');
   console.log('');
   
-  // IMPORTANTE: Usa o script inscricao-enem.spec.js (caminho completo)
   const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao-enem.spec.js', '--config=playwright.config.server.js'], {
     env,
     cwd: __dirname,
@@ -483,119 +531,71 @@ app.post('/inscricao-enem/sync', async (req, res) => {
   let stdout = '';
   let stderr = '';
 
-  // Mostra logs em tempo real
   processo.stdout.on('data', (data) => {
     const texto = data.toString();
     stdout += texto;
-    process.stdout.write(texto); // Mostra no console em tempo real
+    process.stdout.write(texto);
   });
 
   processo.stderr.on('data', (data) => {
     const texto = data.toString();
     stderr += texto;
-    process.stderr.write(texto); // Mostra erros em tempo real
+    process.stderr.write(texto);
   });
 
-  processo.on('close', (code) => {
+  processo.on('close', async (code) => {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════');
     console.log(`📤 PROCESSO ENEM FINALIZADO (código: ${code})`);
     console.log('═══════════════════════════════════════════════════════════════');
     
-    // Verifica se CPF já tinha inscrição
     const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição');
-    
     if (cpfJaInscrito) {
-      console.log('⚠️ CPF já possui inscrição');
-      return res.json({
-        sucesso: false,
-        erro: 'CPF já possui inscrição',
-        cliente: { nome, cpf, email }
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CPF já possui inscrição', etapa_erro: 'validacao_cpf', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'CPF já possui inscrição', logId, cliente: { nome, cpf, email } });
     }
     
-    // Verifica se houve erro de CEP
     const erroCep = stdout.includes('CEP NÃO FOI ENCONTRADO') || stdout.includes('CEP não encontrado');
-    
     if (erroCep) {
-      console.log('❌ ERRO - CEP não foi encontrado');
-      return res.json({
-        sucesso: false,
-        erro: 'CEP não foi encontrado. Verifique se o CEP está correto.',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CEP não encontrado', etapa_erro: 'validacao_cep', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'CEP não encontrado.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
-    // Verifica se não conseguiu finalizar o checkout
     const erroCheckout = stdout.includes('NÃO CONSEGUIU FINALIZAR O CHECKOUT') || stdout.includes('Checkout não foi concluído');
-    
     if (erroCheckout) {
-      console.log('❌ ERRO - Checkout não foi concluído');
-      return res.json({
-        sucesso: false,
-        erro: 'Checkout não foi concluído. Pode haver campos obrigatórios faltando.',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'Checkout não concluído', etapa_erro: 'checkout', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'Checkout não foi concluído.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
-    // Verifica se a inscrição ENEM foi finalizada com sucesso
-    // IMPORTANTE: Verifica a mensagem específica de SUCESSO, não apenas "FINALIZADA"
     const inscricaoFinalizadaComSucesso = stdout.includes('INSCRIÇÃO ENEM FINALIZADA COM SUCESSO');
     const inscricaoNaoFinalizada = stdout.includes('INSCRIÇÃO ENEM NÃO FINALIZADA');
     
-    // Tenta extrair o número da inscrição do output
-    const numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
-    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
+    let numeroInscricaoMatchEnem = stdout.match(/NUMERO_INSCRICAO_EXTRAIDO:\s*(\d+)/);
+    if (!numeroInscricaoMatchEnem) numeroInscricaoMatchEnem = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
+    const numeroInscricao = numeroInscricaoMatchEnem ? numeroInscricaoMatchEnem[1] : null;
     
     if (inscricaoFinalizadaComSucesso && !inscricaoNaoFinalizada) {
       console.log('✅ SUCESSO - Inscrição ENEM concluída!');
-      if (numeroInscricao) {
-        console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
-      }
-      return res.json({
-        sucesso: true,
-        numeroInscricao: numeroInscricao,
-        mensagem: 'Inscrição ENEM concluída com sucesso! Notas enviadas para análise.',
-        cliente: { nome, cpf, email },
-        enem: {
-          cienciasHumanas: enemCienciasHumanas,
-          cienciasNatureza: enemCienciasNatureza,
-          linguagens: enemLinguagens,
-          matematica: enemMatematica,
-          redacao: enemRedacao,
-          ano: enemAno
-        }
+      if (logId) await db.finalizarLogSucesso(logId, {
+        duracao_formatada: calcularDuracaoFormatada(inicioMs),
+        numero_inscricao: numeroInscricao,
+        output_final: 'Inscrição ENEM com nota finalizada com sucesso'
       });
+      return res.json({ sucesso: true, numeroInscricao, mensagem: 'Inscrição ENEM concluída com sucesso! Notas enviadas para análise.', logId, cliente: { nome, cpf, email }, enem: { cienciasHumanas: enemCienciasHumanas, cienciasNatureza: enemCienciasNatureza, linguagens: enemLinguagens, matematica: enemMatematica, redacao: enemRedacao, ano: enemAno } });
     }
     
-    // Se a inscrição não foi finalizada corretamente
     if (inscricaoNaoFinalizada) {
-      console.log('❌ ERRO - Inscrição ENEM não foi finalizada');
-      return res.json({
-        sucesso: false,
-        erro: 'Inscrição ENEM não foi finalizada - processo interrompido antes da conclusão',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'Inscrição ENEM não finalizada', etapa_erro: 'finalizacao', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'Inscrição ENEM não finalizada.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
-    // Se NÃO encontrou mensagem de finalização, é ERRO
-    console.log('❌ ERRO - Inscrição ENEM não foi finalizada corretamente');
-    return res.json({
-      sucesso: false,
-      erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição ENEM não foi finalizada corretamente',
-      logs: stdout.slice(-2000)
-    });
+    if (logId) await db.finalizarLogErro(logId, { erro_mensagem: code !== 0 ? `Código ${code}` : 'Não finalizada', etapa_erro: 'finalizacao', output_final: stdout.slice(-3000) });
+    return res.json({ sucesso: false, erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição ENEM não finalizada.', logId, logs: stdout.slice(-2000) });
   });
 
-  processo.on('error', (err) => {
-    console.log('❌ ERRO ao iniciar processo ENEM:', err.message);
-    res.json({
-      sucesso: false,
-      erro: err.message
-    });
+  processo.on('error', async (err) => {
+    if (logId) await db.finalizarLogErro(logId, { erro_mensagem: err.message, etapa_erro: 'spawn_processo', output_final: '' });
+    res.json({ sucesso: false, erro: err.message, logId });
   });
 });
 
@@ -641,6 +641,21 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
   console.log('   ⚠️ NOTAS DO ENEM: Não disponíveis (serão preenchidas depois)');
   console.log('');
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LOG NO BANCO DE DADOS
+  // ═══════════════════════════════════════════════════════════════════════════
+  const inicioMs = Date.now();
+  const logDB = await db.iniciarLog({
+    tipo_inscricao: 'enem_sem_nota',
+    nome, cpf, email, telefone, nascimento,
+    curso: curso || '',
+    polo: polo || '',
+    ip_origem: req.ip,
+    user_agent: req.get('User-Agent')
+  });
+  const logId = logDB ? logDB.id : null;
+  if (logId) await db.atualizarStatusEmAndamento(logId, 'ENEM sem nota - iniciando Playwright');
+
   // Define variáveis de ambiente para o Playwright
   const env = {
     ...process.env,
@@ -655,14 +670,14 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
     CLIENTE_ESTADO: estado || '',
     CLIENTE_CIDADE: cidade || '',
     CLIENTE_CURSO: curso || '',
-    CLIENTE_POLO: polo || ''
+    CLIENTE_POLO: polo || '',
+    LOG_ID: logId ? logId.toString() : ''
   };
 
   // Executa o Playwright com spawn para logs em tempo real
   console.log('🚀 Iniciando Playwright (ENEM SEM NOTA)...');
   console.log('');
   
-  // IMPORTANTE: Usa o script inscricao-enem-sem-nota.spec.js
   const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao-enem-sem-nota.spec.js', '--config=playwright.config.server.js'], {
     env,
     cwd: __dirname,
@@ -672,7 +687,6 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
   let stdout = '';
   let stderr = '';
 
-  // Mostra logs em tempo real
   processo.stdout.on('data', (data) => {
     const texto = data.toString();
     stdout += texto;
@@ -685,99 +699,59 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
     process.stderr.write(texto);
   });
 
-  processo.on('close', (code) => {
+  processo.on('close', async (code) => {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════');
     console.log(`📤 PROCESSO ENEM SEM NOTA FINALIZADO (código: ${code})`);
     console.log('═══════════════════════════════════════════════════════════════');
     
-    // Verifica se CPF já tinha inscrição
     const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição');
-    
     if (cpfJaInscrito) {
-      console.log('⚠️ CPF já possui inscrição');
-      return res.json({
-        sucesso: false,
-        erro: 'CPF já possui inscrição',
-        cliente: { nome, cpf, email }
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CPF já possui inscrição', etapa_erro: 'validacao_cpf', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'CPF já possui inscrição', logId, cliente: { nome, cpf, email } });
     }
     
-    // Verifica se houve erro de CEP
     const erroCep = stdout.includes('CEP NÃO FOI ENCONTRADO') || stdout.includes('CEP não encontrado');
-    
     if (erroCep) {
-      console.log('❌ ERRO - CEP não foi encontrado');
-      return res.json({
-        sucesso: false,
-        erro: 'CEP não foi encontrado. Verifique se o CEP está correto.',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CEP não encontrado', etapa_erro: 'validacao_cep', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'CEP não encontrado.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
-    // Verifica se não conseguiu finalizar o checkout
     const erroCheckout = stdout.includes('NÃO CONSEGUIU FINALIZAR O CHECKOUT') || stdout.includes('Checkout não foi concluído');
-    
     if (erroCheckout) {
-      console.log('❌ ERRO - Checkout não foi concluído');
-      return res.json({
-        sucesso: false,
-        erro: 'Checkout não foi concluído. Pode haver campos obrigatórios faltando.',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'Checkout não concluído', etapa_erro: 'checkout', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'Checkout não concluído.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
-    // Verifica se a inscrição foi finalizada com sucesso
-    // IMPORTANTE: Verifica a mensagem específica de SUCESSO
     const inscricaoFinalizadaComSucesso = stdout.includes('INSCRIÇÃO ENEM (SEM NOTA) FINALIZADA COM SUCESSO');
     const inscricaoNaoFinalizada = stdout.includes('INSCRIÇÃO ENEM (SEM NOTA) NÃO FINALIZADA');
     
-    // Tenta extrair o número da inscrição do output
-    const numeroInscricaoMatch = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
-    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
+    let numeroInscricaoMatchSemNota = stdout.match(/NUMERO_INSCRICAO_EXTRAIDO:\s*(\d+)/);
+    if (!numeroInscricaoMatchSemNota) numeroInscricaoMatchSemNota = stdout.match(/Número de Inscrição extraído do token:\s*(\d+)/);
+    const numeroInscricao = numeroInscricaoMatchSemNota ? numeroInscricaoMatchSemNota[1] : null;
     
     if (inscricaoFinalizadaComSucesso && !inscricaoNaoFinalizada) {
       console.log('✅ SUCESSO - Inscrição ENEM (sem nota) concluída!');
-      if (numeroInscricao) {
-        console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
-      }
-      return res.json({
-      sucesso: true,
-        numeroInscricao: numeroInscricao,
-        mensagem: 'Inscrição ENEM concluída! Notas deverão ser preenchidas posteriormente pelo aluno.',
-        notasPendentes: true,
-      cliente: { nome, cpf, email }
+      if (logId) await db.finalizarLogSucesso(logId, {
+        duracao_formatada: calcularDuracaoFormatada(inicioMs),
+        numero_inscricao: numeroInscricao,
+        output_final: 'Inscrição ENEM sem nota finalizada com sucesso'
       });
+      return res.json({ sucesso: true, numeroInscricao, mensagem: 'Inscrição ENEM concluída! Notas deverão ser preenchidas posteriormente pelo aluno.', notasPendentes: true, logId, cliente: { nome, cpf, email } });
     }
     
-    // Se a inscrição não foi finalizada corretamente
     if (inscricaoNaoFinalizada) {
-      console.log('❌ ERRO - Inscrição ENEM (sem nota) não foi finalizada');
-      return res.json({
-        sucesso: false,
-        erro: 'Inscrição ENEM (sem nota) não foi finalizada - processo interrompido antes da conclusão',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'Inscrição ENEM sem nota não finalizada', etapa_erro: 'finalizacao', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'Inscrição ENEM (sem nota) não finalizada.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
-    // Se NÃO encontrou mensagem de finalização, é ERRO
-    console.log('❌ ERRO - Inscrição ENEM (sem nota) não foi finalizada corretamente');
-    return res.json({
-      sucesso: false,
-      erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição ENEM não foi finalizada corretamente',
-      logs: stdout.slice(-2000)
-    });
+    if (logId) await db.finalizarLogErro(logId, { erro_mensagem: code !== 0 ? `Código ${code}` : 'Não finalizada', etapa_erro: 'finalizacao', output_final: stdout.slice(-3000) });
+    return res.json({ sucesso: false, erro: code !== 0 ? `Processo terminou com código ${code}` : 'Não finalizada.', logId, logs: stdout.slice(-2000) });
   });
 
-  processo.on('error', (err) => {
-    console.log('❌ ERRO ao iniciar processo ENEM SEM NOTA:', err.message);
-    res.json({
-      sucesso: false,
-      erro: err.message
-    });
+  processo.on('error', async (err) => {
+    if (logId) await db.finalizarLogErro(logId, { erro_mensagem: err.message, etapa_erro: 'spawn_processo', output_final: '' });
+    res.json({ sucesso: false, erro: err.message, logId });
   });
 });
 
@@ -840,6 +814,22 @@ app.post('/inscricao-pos/sync', async (req, res) => {
   console.log(`   Webhook URL: ${webhookUrl || '(não informado)'}`);
   console.log('');
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LOG NO BANCO DE DADOS
+  // ═══════════════════════════════════════════════════════════════════════════
+  const inicioMs = Date.now();
+  const logDB = await db.iniciarLog({
+    tipo_inscricao: 'pos',
+    nome, cpf, email, telefone, nascimento,
+    curso: curso || '',
+    duracao: duracao || '',
+    polo: polo || '',
+    ip_origem: req.ip,
+    user_agent: req.get('User-Agent')
+  });
+  const logId = logDB ? logDB.id : null;
+  if (logId) await db.atualizarStatusEmAndamento(logId, 'Pós-Graduação - iniciando Playwright');
+
   // Define variáveis de ambiente para o Playwright
   const env = {
     ...process.env,
@@ -862,14 +852,14 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     CLIENTE_MENSALIDADE: mensalidade || '',
     // Variáveis de integração n8n
     LEAD_ID: leadId || '',
-    N8N_WEBHOOK_URL: webhookUrl || ''
+    N8N_WEBHOOK_URL: webhookUrl || '',
+    LOG_ID: logId ? logId.toString() : ''
   };
 
   // Executa o Playwright com spawn para logs em tempo real
   console.log('🚀 Iniciando Playwright (PÓS-GRADUAÇÃO)...');
   console.log('');
   
-  // IMPORTANTE: Usa o script inscricao-pos.spec.js
   const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao-pos.spec.js', '--config=playwright.config.server.js'], {
     env,
     cwd: __dirname,
@@ -879,7 +869,6 @@ app.post('/inscricao-pos/sync', async (req, res) => {
   let stdout = '';
   let stderr = '';
 
-  // Mostra logs em tempo real
   processo.stdout.on('data', (data) => {
     const texto = data.toString();
     stdout += texto;
@@ -892,35 +881,22 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     process.stderr.write(texto);
   });
 
-  processo.on('close', (code) => {
+  processo.on('close', async (code) => {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════');
     console.log(`📤 PROCESSO PÓS-GRADUAÇÃO FINALIZADO (código: ${code})`);
     console.log('═══════════════════════════════════════════════════════════════');
     
-    // Verifica se CPF já tinha inscrição
     const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição') || stdout.includes('cpf já cadastrado');
-    
     if (cpfJaInscrito) {
-      console.log('⚠️ CPF já possui inscrição');
-      return res.json({
-        sucesso: false,
-        erro: 'CPF já possui inscrição',
-        cliente: { nome, cpf, email }
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CPF já possui inscrição', etapa_erro: 'validacao_cpf', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'CPF já possui inscrição', logId, cliente: { nome, cpf, email } });
     }
     
-    // Verifica se houve erro de CEP
     const erroCep = stdout.includes('CEP NÃO FOI ENCONTRADO') || stdout.includes('CEP não encontrado');
-    
     if (erroCep) {
-      console.log('❌ ERRO - CEP não foi encontrado');
-      return res.json({
-        sucesso: false,
-        erro: 'CEP não foi encontrado. Verifique se o CEP está correto.',
-        cliente: { nome, cpf, email },
-        logs: stdout.slice(-2000)
-      });
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CEP não encontrado', etapa_erro: 'validacao_cep', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: 'CEP não encontrado.', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
     // Verifica se o processo foi concluído com sucesso
@@ -942,55 +918,154 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     const campanhaMatch = stdout.match(/Campanha:\s*(.+)/);
     const campanhaUsada = campanhaMatch ? campanhaMatch[1].trim() : campanha;
     
+    // Extrai valores financeiros
+    const valorMatriculaMatch = stdout.match(/Valor matrícula:\s*R?\$?\s*([\d,.]+)/);
+    const valorMensalidadeMatch = stdout.match(/Valor mensalidade:\s*R?\$?\s*([\d,.]+)/);
+    const qtdParcelasMatch = stdout.match(/Parcelas:\s*(\d+)/);
+    
     if (processoCompleto) {
       console.log('✅ SUCESSO - Inscrição Pós-Graduação concluída!');
-      if (numeroInscricao) {
-        console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
-      }
-      if (linhaDigitavel) {
-        console.log(`📊 Linha Digitável: ${linhaDigitavel}`);
-      }
+      if (numeroInscricao) console.log(`📋 Número da Inscrição: ${numeroInscricao}`);
+      if (linhaDigitavel) console.log(`📊 Linha Digitável: ${linhaDigitavel}`);
+      
+      if (logId) await db.finalizarLogSucesso(logId, {
+        duracao_formatada: calcularDuracaoFormatada(inicioMs),
+        campanha_codigo: campanha || '',
+        campanha_nome: campanhaUsada || '',
+        valor_matricula: valorMatriculaMatch ? parseFloat(valorMatriculaMatch[1].replace(',', '.')) : (matricula ? parseFloat(matricula) : null),
+        valor_mensalidade: valorMensalidadeMatch ? parseFloat(valorMensalidadeMatch[1].replace(',', '.')) : (mensalidade ? parseFloat(mensalidade) : null),
+        qtd_parcelas: qtdParcelasMatch ? parseInt(qtdParcelasMatch[1]) : null,
+        numero_inscricao: numeroInscricao,
+        numero_inscricao_siaa: numeroInscricao,
+        output_final: `Campanha: ${campanhaUsada} | Boleto: ${boletoPath || 'N/A'}`,
+        arquivo_aprovacao: screenshotPath,
+        arquivo_boleto: boletoPath,
+        arquivos: { screenshot: screenshotPath, boleto: boletoPath, linhaDigitavel }
+      });
       
       return res.json({
         sucesso: true,
-        numeroInscricao: numeroInscricao,
-        linhaDigitavel: linhaDigitavel,
-        screenshotPath: screenshotPath,
-        boletoPath: boletoPath,
-        campanhaUsada: campanhaUsada,
+        numeroInscricao,
+        linhaDigitavel,
+        screenshotPath,
+        boletoPath,
+        campanhaUsada,
         mensagem: 'Inscrição Pós-Graduação concluída com sucesso!',
+        logId,
         cliente: { nome, cpf, email },
-        curso: {
-          nome: curso,
-          duracao: duracao,
-          matricula: matricula,
-          mensalidade: mensalidade
-        }
+        curso: { nome: curso, duracao, matricula, mensalidade }
       });
     }
     
-    // Se NÃO encontrou mensagem de finalização, é ERRO
-    console.log('❌ ERRO - Inscrição Pós-Graduação não foi finalizada corretamente');
-    return res.json({
-      sucesso: false,
-      erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição Pós-Graduação não foi finalizada corretamente',
-      logs: stdout.slice(-2000)
+    // ERRO
+    console.log('❌ ERRO - Inscrição Pós-Graduação não finalizada');
+    if (logId) await db.finalizarLogErro(logId, {
+      erro_mensagem: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição Pós-Graduação não finalizada',
+      etapa_erro: 'finalizacao',
+      output_final: stdout.slice(-3000)
     });
+    return res.json({ sucesso: false, erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição Pós-Graduação não finalizada.', logId, logs: stdout.slice(-2000) });
   });
 
-  processo.on('error', (err) => {
-    console.log('❌ ERRO ao iniciar processo PÓS-GRADUAÇÃO:', err.message);
-    res.json({
-      sucesso: false,
-      erro: err.message
-    });
+  processo.on('error', async (err) => {
+    if (logId) await db.finalizarLogErro(logId, { erro_mensagem: err.message, etapa_erro: 'spawn_processo', output_final: '' });
+    res.json({ sucesso: false, erro: err.message, logId });
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Listar Logs de Execução
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/logs', async (req, res) => {
+  try {
+    const limite = parseInt(req.query.limite || req.query.limit || '50');
+    const filtros = {};
+    
+    if (req.query.status) filtros.status = req.query.status;
+    if (req.query.tipo) filtros.tipo_inscricao = req.query.tipo;
+    if (req.query.cpf) filtros.cpf = req.query.cpf;
+    if (req.query.data_inicio) filtros.data_inicio = req.query.data_inicio;
+    if (req.query.data_fim) filtros.data_fim = req.query.data_fim;
+    
+    const logs = await db.buscarLogsRecentes(limite, filtros);
+    res.json({
+      sucesso: true,
+      total: logs.length,
+      filtros,
+      logs
+    });
+  } catch (err) {
+    res.status(500).json({ sucesso: false, erro: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Buscar Log por ID
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/logs/:id', async (req, res) => {
+  try {
+    const log = await db.buscarLogPorId(parseInt(req.params.id));
+    if (!log) {
+      return res.status(404).json({ sucesso: false, erro: 'Log não encontrado' });
+    }
+    res.json({ sucesso: true, log });
+  } catch (err) {
+    res.status(500).json({ sucesso: false, erro: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Estatísticas de Execução
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/estatisticas', async (req, res) => {
+  try {
+    const periodo = req.query.periodo || '7 days';
+    const stats = await db.obterEstatisticas(periodo);
+    
+    // Calcula totais
+    let totalExecucoes = 0;
+    let totalSucesso = 0;
+    let totalErro = 0;
+    
+    stats.forEach(s => {
+      const count = parseInt(s.total);
+      totalExecucoes += count;
+      if (s.status === 'sucesso') totalSucesso += count;
+      if (s.status === 'erro') totalErro += count;
+    });
+    
+    res.json({
+      sucesso: true,
+      periodo,
+      resumo: {
+        total: totalExecucoes,
+        sucesso: totalSucesso,
+        erro: totalErro,
+        taxa_sucesso: totalExecucoes > 0 ? `${((totalSucesso / totalExecucoes) * 100).toFixed(1)}%` : '0%'
+      },
+      detalhes: stats
+    });
+  } catch (err) {
+    res.status(500).json({ sucesso: false, erro: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Health Check do Banco de Dados
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/db/health', async (req, res) => {
+  try {
+    const ok = await db.testarConexao();
+    res.json({ sucesso: ok, banco: ok ? 'conectado' : 'desconectado' });
+  } catch (err) {
+    res.status(500).json({ sucesso: false, erro: err.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INICIA SERVIDOR
 // ═══════════════════════════════════════════════════════════════════════════
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('🚀 SERVIDOR DE INSCRIÇÃO INICIADO');
@@ -998,11 +1073,22 @@ app.listen(PORT, () => {
   console.log(`   URL: http://localhost:${PORT}`);
   console.log('');
   console.log('   Endpoints disponíveis:');
-  console.log('   POST /inscricao                - Inicia inscrição (assíncrono)');
-  console.log('   POST /inscricao/sync           - Inicia inscrição vestibular (aguarda resultado)');
-  console.log('   POST /inscricao-enem/sync      - Inicia inscrição ENEM com notas');
-  console.log('   POST /inscricao-enem-sem-nota/sync - Inicia inscrição ENEM sem notas');
-  console.log('   POST /inscricao-pos/sync       - Inicia inscrição PÓS-GRADUAÇÃO');
-  console.log('   GET  /status                   - Status da execução atual');
+  console.log('   POST /inscricao                    - Inicia inscrição (assíncrono)');
+  console.log('   POST /inscricao/sync               - Inscrição vestibular (síncrono)');
+  console.log('   POST /inscricao-enem/sync           - Inscrição ENEM com notas');
+  console.log('   POST /inscricao-enem-sem-nota/sync  - Inscrição ENEM sem notas');
+  console.log('   POST /inscricao-pos/sync            - Inscrição PÓS-GRADUAÇÃO');
+  console.log('   GET  /status                        - Status da execução atual');
+  console.log('   GET  /logs                          - Logs de execução (?limite=50&status=sucesso&tipo=pos&cpf=xxx)');
+  console.log('   GET  /logs/:id                      - Log específico por ID');
+  console.log('   GET  /estatisticas                  - Estatísticas (?periodo=7 days)');
+  console.log('   GET  /db/health                     - Health check do banco');
+  console.log('');
+  
+  // Testa conexão com o banco
+  const dbOk = await db.testarConexao();
+  if (!dbOk) {
+    console.log('⚠️  Banco de dados não está acessível. Logs serão ignorados.');
+  }
   console.log('');
 });

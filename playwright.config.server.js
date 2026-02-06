@@ -18,7 +18,7 @@ export default defineConfig({
     headless: true,
     screenshot: 'off', // Desabilitado no servidor
     video: 'off', // Desabilitado no servidor
-    slowMo: 500, // Delay entre ações para parecer humano (aumentado para servidor)
+    slowMo: 500, // Delay entre ações para parecer humano
     actionTimeout: 45000,
     navigationTimeout: 90000,
     // Configurações para parecer mais humano

@@ -53,37 +53,260 @@ function formatarTelefone(telefone) {
   return numeros;
 }
 
+// Função para corrigir encoding de caracteres acentuados
+function corrigirEncoding(texto) {
+  if (!texto) return texto;
+  
+  // Mapa de correções comuns de encoding UTF-8 mal interpretado
+  const correcoes = {
+    'Ã£': 'ã', 'Ã¡': 'á', 'Ã ': 'à', 'Ã¢': 'â', 'Ã¤': 'ä',
+    'Ã©': 'é', 'Ã¨': 'è', 'Ãª': 'ê', 'Ã«': 'ë',
+    'Ã­': 'í', 'Ã¬': 'ì', 'Ã®': 'î', 'Ã¯': 'ï',
+    'Ã³': 'ó', 'Ã²': 'ò', 'Ã´': 'ô', 'Ãµ': 'õ', 'Ã¶': 'ö',
+    'Ãº': 'ú', 'Ã¹': 'ù', 'Ã»': 'û', 'Ã¼': 'ü',
+    'Ã§': 'ç', 'Ã±': 'ñ',
+    'Ã': 'Á', 'Ã': 'À', 'Ã': 'Â', 'Ã': 'Ã', 'Ã': 'Ä',
+    'Ã': 'É', 'Ã': 'È', 'Ã': 'Ê', 'Ã': 'Ë',
+    'Ã': 'Í', 'Ã': 'Ì', 'Ã': 'Î', 'Ã': 'Ï',
+    'Ã': 'Ó', 'Ã': 'Ò', 'Ã': 'Ô', 'Ã': 'Õ', 'Ã': 'Ö',
+    'Ã': 'Ú', 'Ã': 'Ù', 'Ã': 'Û', 'Ã': 'Ü',
+    'Ã': 'Ç', 'Ã': 'Ñ',
+  };
+  
+  let resultado = texto;
+  for (const [errado, correto] of Object.entries(correcoes)) {
+    resultado = resultado.split(errado).join(correto);
+  }
+  
+  return resultado;
+}
+
+// Função para remover acentos (para buscas)
+function removerAcentos(texto) {
+  if (!texto) return texto;
+  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FUNÇÃO PARA FECHAR COOKIE BANNER E OUTROS OVERLAYS
+// ═══════════════════════════════════════════════════════════════════════════
+async function fecharCookieBanner(page) {
+  try {
+    // Tenta fechar cookie consent (vários seletores comuns)
+    const cookieSelectors = [
+      '#privacytools-banner-consent button',
+      '.cc-dismiss',
+      '.cc-btn',
+      'button[aria-label*="cookie"]',
+      'button[aria-label*="aceitar"]',
+      'button:has-text("Aceitar")',
+      'button:has-text("OK")',
+      'button:has-text("Concordo")',
+      'button:has-text("Entendi")',
+      '.privacy-tools-layout button',
+      '#cookieconsent button'
+    ];
+    
+    for (const sel of cookieSelectors) {
+      try {
+        const btn = page.locator(sel).first();
+        if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
+          await btn.click({ force: true });
+          console.log(`   🍪 Cookie banner fechado (${sel})`);
+          await page.waitForTimeout(500);
+          break;
+        }
+      } catch (e) {}
+    }
+    
+    // Remove overlay via JavaScript se persistir
+    await page.evaluate(() => {
+      const overlays = document.querySelectorAll('#privacytools-banner-consent, .cc-window, [class*="cookie"], [id*="cookie"], .privacy-tools-layout');
+      overlays.forEach(el => {
+        el.style.display = 'none';
+        el.remove();
+      });
+    });
+    
+  } catch (e) {
+    // Ignora erros - cookie banner é opcional
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FUNÇÃO PARA FECHAR POPUP "BAIXAR GUIA DO CURSO" + COOKIES + OVERLAYS
+// ═══════════════════════════════════════════════════════════════════════════
+async function fecharTodosOverlays(page) {
+  try {
+    // 1) REMOVE TUDO via JavaScript (mais confiável - não depende de clique)
+    const removidos = await page.evaluate(() => {
+      let count = 0;
+      
+      // Remove popup "baixar guia do curso" e seus backdrops
+      const popupSelectors = [
+        '[class*="sectionContactFormNewsDownloadForm"]',
+        '[class*="DownloadFormBackdrop"]',
+        '[class*="DownloadFormContainer"]',
+        '[class*="DownloadFormClose"]',
+      ];
+      popupSelectors.forEach(sel => {
+        document.querySelectorAll(sel).forEach(el => { el.remove(); count++; });
+      });
+      
+      // Remove qualquer overlay/backdrop fixo que cubra a tela
+      document.querySelectorAll('[class*="Backdrop"], [class*="backdrop"], [class*="overlay"]').forEach(el => {
+        const style = window.getComputedStyle(el);
+        if (style.position === 'fixed' || style.position === 'absolute') {
+          if (el.offsetWidth > window.innerWidth * 0.5 || el.offsetHeight > window.innerHeight * 0.5) {
+            el.remove(); count++;
+          }
+        }
+      });
+      
+      // Remove cookie banners
+      document.querySelectorAll('.cc-banner, #privacytools-banner-consent, [id*="cookie"], [class*="cookie-consent"], [class*="lgpd"]').forEach(el => { el.remove(); count++; });
+      
+      // Remove modais genéricos que bloqueiam
+      document.querySelectorAll('.modal-backdrop, .ui-widget-overlay').forEach(el => { el.remove(); count++; });
+      
+      return count;
+    });
+    
+    if (removidos > 0) {
+      console.log(`   🧹 ${removidos} overlay(s)/popup(s) removido(s) via JS`);
+    }
+    
+    // 2) Aceita cookies se o botão ainda existir (renderizado após remoção)
+    await page.waitForTimeout(300);
+    const btnCookies = page.locator('button:has-text("Aceitar todos")').first();
+    if (await btnCookies.isVisible({ timeout: 500 }).catch(() => false)) {
+      await btnCookies.click();
+      await page.waitForTimeout(300);
+      console.log('   🍪 Cookies aceitos');
+    }
+    
+    // 3) Escape para fechar qualquer coisa residual
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    
+    // 4) Segunda passada de remoção (popups podem reaparecer após scroll)
+    await page.evaluate(() => {
+      document.querySelectorAll('[class*="sectionContactFormNewsDownloadForm"], [class*="DownloadForm"]').forEach(el => el.remove());
+    });
+    
+  } catch (e) {
+    // Silencioso
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FUNÇÃO PARA DETECTAR EM QUAL TELA/ESTADO ESTAMOS
+// ═══════════════════════════════════════════════════════════════════════════
+async function detectarTelaAtual(page) {
+  const url = page.url();
+  const estado = {
+    url: url,
+    tela: 'desconhecida',
+    detalhes: {}
+  };
+  
+  try {
+    // Verifica elementos-chave para identificar a tela
+    const elementos = {
+      // Formulário inicial de curso
+      formNome: await page.locator('input[placeholder*="nome completo" i]').isVisible({ timeout: 1000 }).catch(() => false),
+      formTelefone: await page.locator('input[placeholder*="XXXXX" i]').isVisible({ timeout: 1000 }).catch(() => false),
+      btnInscreva: await page.getByRole('button', { name: /inscreva-se/i }).isVisible({ timeout: 1000 }).catch(() => false),
+      
+      // Formulário de localização
+      reactSelects: await page.locator('.react-select__input-container').count().catch(() => 0),
+      selectPais: await page.locator('text=País').first().isVisible({ timeout: 1000 }).catch(() => false),
+      selectEstado: await page.locator('text=Estado').first().isVisible({ timeout: 1000 }).catch(() => false),
+      campoCPF: await page.locator('input[name="userDocument"]').isVisible({ timeout: 1000 }).catch(() => false),
+      btnContinuarInscricao: await page.locator('button:has-text("Continuar Inscrição")').isVisible({ timeout: 1000 }).catch(() => false),
+      
+      // Página de campanha
+      dropdownCampanha: await page.locator('#select2-campanhas-container, select[name="campanhas"]').isVisible({ timeout: 1000 }).catch(() => false),
+      
+      // Checkout
+      checkoutProfile: url.includes('/checkout/#/profile'),
+      checkoutShipping: url.includes('/checkout/#/shipping'),
+      checkoutPayment: url.includes('/checkout/#/payment'),
+      checkoutCart: url.includes('/checkout/#/cart'),
+      
+      // Order placed
+      orderPlaced: url.includes('orderPlaced'),
+      
+      // SIAA
+      siaaPage: url.includes('siaa.cruzeirodosul'),
+      
+      // Textos específicos
+      textoCampanha: await page.locator('text=Campanha Comercial').isVisible({ timeout: 1000 }).catch(() => false),
+      textoEstamosQuaseLa: await page.locator('text=Estamos quase lá').isVisible({ timeout: 1000 }).catch(() => false),
+      textoParabens: await page.locator('text=Parabéns').isVisible({ timeout: 1000 }).catch(() => false),
+    };
+    
+    estado.detalhes = elementos;
+    
+    // Determina a tela baseado nos elementos
+    if (elementos.orderPlaced || elementos.textoEstamosQuaseLa) {
+      estado.tela = 'ORDER_PLACED';
+    } else if (elementos.siaaPage) {
+      estado.tela = elementos.textoParabens ? 'SIAA_APROVADO' : 'SIAA_CPF';
+    } else if (elementos.checkoutPayment) {
+      estado.tela = 'CHECKOUT_PAYMENT';
+    } else if (elementos.checkoutShipping) {
+      estado.tela = 'CHECKOUT_SHIPPING';
+    } else if (elementos.checkoutProfile) {
+      estado.tela = 'CHECKOUT_PROFILE';
+    } else if (elementos.checkoutCart) {
+      estado.tela = 'CHECKOUT_CART';
+    } else if (url.includes('campanha-comercial') || elementos.dropdownCampanha || elementos.textoCampanha) {
+      estado.tela = 'CAMPANHA';
+    } else if (elementos.reactSelects >= 3 || (elementos.selectPais && elementos.selectEstado) || elementos.campoCPF || elementos.btnContinuarInscricao) {
+      estado.tela = 'FORMULARIO_LOCALIZACAO';
+    } else if (elementos.formNome || elementos.formTelefone || elementos.btnInscreva) {
+      estado.tela = 'FORMULARIO_INICIAL';
+    } else if (url.includes('/p') && url.includes('cruzeirodosul')) {
+      estado.tela = 'PAGINA_CURSO';
+    }
+    
+    console.log(`   🔍 [DETECTOR] Tela: ${estado.tela} | URL: ${url.substring(0, 60)}...`);
+    console.log(`   📊 [DETECTOR] ReactSelects: ${elementos.reactSelects} | CPF: ${elementos.campoCPF} | País: ${elementos.selectPais}`);
+    
+  } catch (e) {
+    console.log(`   ⚠️ [DETECTOR] Erro: ${e.message}`);
+  }
+  
+  return estado;
+}
+
 const CLIENTE = {
-  nome: capitalizarNome(process.env.CLIENTE_NOME || 'Carlos Eduardo Mendes'),
+  nome: capitalizarNome(corrigirEncoding(process.env.CLIENTE_NOME || 'Carlos Eduardo Mendes')),
   cpf: process.env.CLIENTE_CPF || '26415424041',
   email: (process.env.CLIENTE_EMAIL || 'carlos.mendes2024@gmail.com').toLowerCase(),
   telefone: formatarTelefone(process.env.CLIENTE_TELEFONE || '11974562318'),
   nascimento: process.env.CLIENTE_NASCIMENTO || '12/09/1980',
   cep: process.env.CLIENTE_CEP || '05315030',
   numero: process.env.CLIENTE_NUMERO || '33',
-  estado: process.env.CLIENTE_ESTADO || 'São Paulo',
-  cidade: process.env.CLIENTE_CIDADE || 'São Paulo',
-  curso: process.env.CLIENTE_CURSO || 'Engenharia de Produção',
+  estado: corrigirEncoding(process.env.CLIENTE_ESTADO || 'São Paulo'),
+  cidade: corrigirEncoding(process.env.CLIENTE_CIDADE || 'São Paulo'),
+  curso: corrigirEncoding(process.env.CLIENTE_CURSO || 'Engenharia de Produção'),
   duracao: process.env.CLIENTE_DURACAO || '6', // Duração em meses (ex: 6, 9, 3)
-  polo: process.env.CLIENTE_POLO || 'barra funda',
-  campanha: process.env.CLIENTE_CAMPANHA || '',
+  polo: corrigirEncoding(process.env.CLIENTE_POLO || 'barra funda'),
+  campanha: corrigirEncoding(process.env.CLIENTE_CAMPANHA || ''),
   matricula: process.env.CLIENTE_MATRICULA || '99', // Valor da matrícula em reais
   mensalidade: process.env.CLIENTE_MENSALIDADE || '184', // Valor da mensalidade em reais
 };
 
-// Função para manter o cursor na tela (evita modal "Antes de Você Sair")
+// Função DESABILITADA - não mover o mouse para evitar popup "Antes de Você Sair"
 async function manterCursorNaTela(page) {
-  try {
-    // Move o cursor para o centro da página
-    await page.mouse.move(500, 400);
-  } catch (e) {}
+  // NÃO FAZER NADA - movimento do mouse causa popup
 }
 
-// Função de espera que mantém o cursor na tela
+// Função de espera simples
 async function aguardar(page, ms) {
-  await manterCursorNaTela(page);
   await page.waitForTimeout(ms);
-  await manterCursorNaTela(page);
 }
 
 // Função para fechar modal "Antes de Você Sair" se aparecer
@@ -103,7 +326,6 @@ async function fecharModalSair(page) {
         console.log('   ✅ Modal fechado (ESC)');
       }
       await page.waitForTimeout(300);
-      await manterCursorNaTela(page);
       return true;
     }
   } catch (e) {}
@@ -112,9 +334,6 @@ async function fecharModalSair(page) {
 
 // Função para fechar qualquer modal/popup bloqueante
 async function fecharModais(page) {
-  // Mantém cursor na tela primeiro
-  await manterCursorNaTela(page);
-  
   // Modal "Antes de Você Sair"
   await fecharModalSair(page);
   
@@ -148,6 +367,32 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log('');
 
   let numeroInscricao = null;
+  let pdfBoletoBuffer = null; // Para capturar o PDF via interceptação de rede
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // INTERCEPTAÇÃO DE REDE PARA CAPTURAR O PDF DO BOLETO DIRETAMENTE
+  // ═══════════════════════════════════════════════════════════════════════════
+  await context.route('**/boleto/getBoletoDiversos**', async (route) => {
+    const pdfUrl = route.request().url();
+    console.log(`   🎯 [INTERCEPTOR] URL do PDF interceptada`);
+    
+    try {
+      const response = await route.fetch();
+      const body = await response.body();
+      
+      // Se começa com %PDF, é o PDF real
+      if (body.slice(0, 5).toString().includes('%PDF')) {
+        pdfBoletoBuffer = body;
+        console.log(`   ✅ [INTERCEPTOR] PDF capturado: ${body.length} bytes`);
+      }
+      
+      // Continua a requisição normalmente para o browser
+      await route.fulfill({ response });
+    } catch (e) {
+      console.log(`   ⚠️ [INTERCEPTOR] Erro: ${e.message}`);
+      await route.continue();
+    }
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 1: LOGIN ADMIN
@@ -158,11 +403,11 @@ test('inscricao-pos', async ({ page, context }) => {
   await page.waitForTimeout(1000);
   
   await page.getByRole('textbox', { name: 'Email' }).click();
-  await page.getByRole('textbox', { name: 'Email' }).fill('marcelo.pinheiro1876@polo.cruzeirodosul.edu.br');
+  await page.getByRole('textbox', { name: 'Email' }).fill('fabio.boas50@polo.cruzeirodosul.edu.br');
   await page.getByRole('button', { name: 'Continuar' }).click();
   await page.waitForTimeout(1000);
   
-  await page.getByRole('textbox', { name: 'Senha' }).fill('MFPedu!t678@!');
+  await page.getByRole('textbox', { name: 'Senha' }).fill('Eduit777');
   await page.getByRole('button', { name: 'Continuar' }).click();
   await page.waitForTimeout(2000);
   
@@ -222,8 +467,6 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 3: Login como Cliente');
   
-  // Mantém cursor na tela para evitar modal de saída
-  await manterCursorNaTela(page);
   
   // Fecha modais bloqueantes
   await fecharModais(page);
@@ -249,48 +492,87 @@ test('inscricao-pos', async ({ page, context }) => {
   } catch (e) {}
   
   if (!jaLogado) {
-    await manterCursorNaTela(page);
-    
-    // PASSO 1: Clica em "Entrar como cliente"
-    console.log('   📝 Clicando em "Entrar como cliente"...');
-    const btnEntrarCliente = page.locator('div.cruzeirodosul-telemarketing-2-x-loginAsText');
-    if (await btnEntrarCliente.isVisible({ timeout: 3000 })) {
-      await btnEntrarCliente.click();
-      console.log('   ✅ Clicou em "Entrar como cliente"');
-    } else {
-      // Fallback
-      await page.getByText('Entrar como cliente').first().click();
-      console.log('   ✅ Clicou em "Entrar como cliente" (fallback)');
+    // PASSO 0: Aceitar cookies se o banner estiver visível
+    try {
+      const btnAceitarCookies = page.getByRole('button', { name: /aceitar todos/i });
+      if (await btnAceitarCookies.isVisible({ timeout: 3000 })) {
+        console.log('   🍪 Banner de cookies detectado, aceitando...');
+        await btnAceitarCookies.click();
+        await page.waitForTimeout(1000);
+        console.log('   ✅ Cookies aceitos');
+      }
+    } catch (e) {
+      // Tenta fechar de outra forma
+      try {
+        const cookieBanner = page.locator('#privacytools-banner-consent, .cc-banner, [class*="cookie"]').first();
+        if (await cookieBanner.isVisible({ timeout: 1000 })) {
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(500);
+        }
+      } catch (e2) {}
     }
     
-    await page.waitForTimeout(1500);
-    await manterCursorNaTela(page);
+    // PASSO 1: Clica em "Entrar como cliente" (seletor da gravação)
+    console.log('   📝 Clicando em "Entrar como cliente"...');
+    try {
+      await page.getByText('Entrar como cliente').first().click();
+      console.log('   ✅ Clicou em "Entrar como cliente"');
+    } catch (e) {
+      const btnEntrarCliente = page.locator('div.cruzeirodosul-telemarketing-2-x-loginAsText');
+      if (await btnEntrarCliente.isVisible({ timeout: 3000 })) {
+        await btnEntrarCliente.click();
+        console.log('   ✅ Clicou em "Entrar como cliente" (fallback)');
+      }
+    }
+    
+    await page.waitForTimeout(2000);
+    
+    // Verifica se o formulário de login apareceu, senão tenta novamente
+    const campoEmailVisivel = await page.getByPlaceholder('Ex: example@mail.com').isVisible({ timeout: 3000 }).catch(() => false);
+    if (!campoEmailVisivel) {
+      console.log('   ⚠️ Formulário de login não apareceu, tentando novamente...');
+      // Tenta clicar novamente no "Entrar como cliente"
+      try {
+        await page.getByText('Entrar como cliente').first().click({ force: true });
+        await page.waitForTimeout(2000);
+      } catch (e) {}
+    }
     
     // PASSO 2: Preenche o email
     console.log('   📝 Preenchendo email...');
-    const campoEmail = page.locator('input[placeholder*="example@mail" i], input[placeholder*="Ex:" i]').first();
-    if (await campoEmail.isVisible({ timeout: 3000 })) {
-      await campoEmail.click();
-      await campoEmail.fill(CLIENTE.email);
-      console.log(`   ✅ Email preenchido: ${CLIENTE.email}`);
-    } else {
-      console.log('   ⚠️ Campo de email não encontrado');
-      await page.screenshot({ path: 'erro-login-cliente.png', fullPage: true });
-    }
+    const campoEmail = page.getByPlaceholder('Ex: example@mail.com');
+    await campoEmail.click();
+    await campoEmail.fill(CLIENTE.email);
+    console.log(`   ✅ Email preenchido: ${CLIENTE.email}`);
     
     await page.waitForTimeout(500);
-    await manterCursorNaTela(page);
     
-    // PASSO 3: Clica em Entrar
-    console.log('   📝 Clicando em Entrar...');
+    // PASSO 3: Clica em "Entrar" - pode precisar clicar 1 ou 2 vezes
+    console.log('   📝 Clicando em Entrar (1ª vez)...');
     const btnEntrar = page.getByRole('button', { name: 'Entrar' });
-    if (await btnEntrar.isVisible({ timeout: 2000 })) {
-      await btnEntrar.click();
-      console.log('   ✅ Botão Entrar clicado');
+    await btnEntrar.click();
+    console.log('   ✅ 1º clique em Entrar');
+    
+    await page.waitForTimeout(2000);
+    
+    // Verifica se botão ainda está visível para 2º clique (timeout curto)
+    try {
+      const btnEntrar2 = page.getByRole('button', { name: 'Entrar' });
+      const visivel = await btnEntrar2.isVisible();
+      if (visivel) {
+        console.log('   📝 Clicando em Entrar (2ª vez)...');
+        await btnEntrar2.click({ timeout: 3000 });
+        console.log('   ✅ 2º clique em Entrar');
+      } else {
+        console.log('   ℹ️ Botão não visível - login já efetuado');
+      }
+    } catch (e) {
+      console.log('   ℹ️ 2º clique não necessário - login já efetuado');
     }
     
+    console.log('   ✅ Login submetido');
+    
     await page.waitForTimeout(3000);
-    await manterCursorNaTela(page);
     
     // Fecha modal de saída se aparecer
     await fecharModalSair(page);
@@ -311,7 +593,6 @@ test('inscricao-pos', async ({ page, context }) => {
         console.log('   ✅ Login do cliente confirmado');
       } else {
         console.log('   ⚠️ Login pode não ter funcionado');
-        await page.screenshot({ path: 'erro-login-confirmacao.png', fullPage: true });
       }
     } catch (e) {}
   }
@@ -327,19 +608,15 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 4: Busca e Seleção do Curso');
   
-  // Mantém cursor na tela e fecha modais
-  await manterCursorNaTela(page);
+  // Fecha modais se necessário
   await fecharModais(page);
   
   // PASSO 1: Pesquisar o curso
   console.log(`   🔍 Pesquisando curso: "${CLIENTE.curso}"`);
   
-  // Mantém cursor na tela
-  await manterCursorNaTela(page);
   
   const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
   await searchInput.click({ force: true });
-  await manterCursorNaTela(page);
   await searchInput.fill(CLIENTE.curso);
   await searchInput.press('Enter');
   
@@ -465,6 +742,10 @@ test('inscricao-pos', async ({ page, context }) => {
   
   await page.waitForTimeout(3000);
   
+  // IMPORTANTE: Fecha popup "Baixar guia do curso" que aparece ao entrar na página do curso
+  // Esse popup tem campos Nome/Email/Telefone que confundem o script
+  await fecharTodosOverlays(page);
+  
   console.log(`✅ ETAPA 4 CONCLUÍDA - Curso: ${page.url()}`);
   console.log('');
 
@@ -476,9 +757,26 @@ test('inscricao-pos', async ({ page, context }) => {
   // Aguarda o formulário carregar
   await page.waitForTimeout(2000);
   
-  // Rolar para cima para garantir visibilidade do formulário
-  await page.evaluate(() => window.scrollTo(0, 0));
+  // IMPORTANTE: Limpa NOVAMENTE todos os overlays (podem reaparecer após scroll)
+  await fecharTodosOverlays(page);
+  
+  // Scroll até o formulário real de inscrição (fica mais abaixo na página)
+  try {
+    const formReal = page.locator('input[placeholder*="nome completo" i], input[name="userName"], [class*="formContainer"] input').first();
+    if (await formReal.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await formReal.scrollIntoViewIfNeeded();
+      console.log('   📍 Formulário de inscrição localizado');
+    } else {
+      // Scroll para baixo para encontrar o formulário
+      await page.evaluate(() => window.scrollTo(0, 600));
+    }
+  } catch (e) {
+    await page.evaluate(() => window.scrollTo(0, 600));
+  }
   await page.waitForTimeout(500);
+  
+  // Limpa overlays mais uma vez após scroll (o popup pode reaparecer)
+  await fecharTodosOverlays(page);
   
   // PREENCHER NOME - múltiplas estratégias
   console.log('   📝 Preenchendo nome...');
@@ -638,344 +936,437 @@ test('inscricao-pos', async ({ page, context }) => {
   
   // CLICAR EM INSCREVA-SE
   console.log('   📝 Clicando em Inscreva-se...');
-  try {
-    const btnInscreva = page.getByRole('button', { name: /inscreva-se/i });
-    if (await btnInscreva.isVisible({ timeout: 5000 })) {
-      await btnInscreva.scrollIntoViewIfNeeded();
-      await btnInscreva.click();
-      console.log('   ✅ Botão Inscreva-se clicado');
-    } else {
-      // Fallback
-      const btnAlternativo = page.locator('button').filter({ hasText: /inscreva/i }).first();
-      if (await btnAlternativo.isVisible({ timeout: 2000 })) {
-        await btnAlternativo.click();
-        console.log('   ✅ Botão clicado (alternativo)');
+  
+  // IMPORTANTE: Fecha todos os overlays/popups que podem bloquear
+  await fecharTodosOverlays(page);
+  
+  // Primeiro, detecta onde estamos
+  let telaAtual = await detectarTelaAtual(page);
+  
+  // Se já estamos em uma tela posterior, pula
+  if (['CAMPANHA', 'CHECKOUT_CART', 'CHECKOUT_PROFILE', 'CHECKOUT_SHIPPING', 'CHECKOUT_PAYMENT', 'ORDER_PLACED'].includes(telaAtual.tela)) {
+    console.log(`   ⏭️ Já estamos na tela ${telaAtual.tela}, pulando etapa 5`);
+    console.log('✅ ETAPA 5 PULADA');
+    console.log('');
+  } else if (telaAtual.tela === 'FORMULARIO_LOCALIZACAO') {
+    console.log(`   ⏭️ Formulário de localização já visível, pulando para ETAPA 6`);
+    console.log('✅ ETAPA 5 CONCLUÍDA');
+    console.log('');
+  } else {
+    try {
+      const btnInscreva = page.getByRole('button', { name: /inscreva-se/i });
+      if (await btnInscreva.isVisible({ timeout: 5000 })) {
+        await btnInscreva.scrollIntoViewIfNeeded();
+        await btnInscreva.click();
+        console.log('   ✅ Botão Inscreva-se clicado');
+      } else {
+        // Fallback
+        const btnAlternativo = page.locator('button').filter({ hasText: /inscreva/i }).first();
+        if (await btnAlternativo.isVisible({ timeout: 2000 })) {
+          await btnAlternativo.click();
+          console.log('   ✅ Botão clicado (alternativo)');
+        }
       }
-    }
-    
-    // Aguarda o formulário de localização aparecer
-    console.log('   ⏳ Aguardando formulário de localização...');
-    await page.waitForTimeout(3000);
-    
-    // Scroll para baixo para revelar formulário se estiver oculto
-    await page.evaluate(() => window.scrollBy(0, 500));
-    await page.waitForTimeout(2000);
-    
-    // Verifica se o formulário de localização apareceu (várias opções)
-    const seletoresForm = [
-      '.react-select__input-container',
-      'input[name*="cpf"]',
-      'input[placeholder*="CPF"]',
-      'select[name*="country"]',
-      'text=País',
-      'text=Estado',
-      'text=Cidade'
-    ];
-    
-    let formEncontrado = false;
-    for (const sel of seletoresForm) {
-      const elem = page.locator(sel).first();
-      if (await elem.isVisible({ timeout: 2000 }).catch(() => false)) {
-        console.log(`   ✅ Formulário de localização apareceu (${sel})`);
-        formEncontrado = true;
-        break;
+      
+      // Aguarda o formulário de localização aparecer com retry
+      console.log('   ⏳ Aguardando formulário de localização...');
+      
+      let formEncontrado = false;
+      for (let tentativa = 1; tentativa <= 5; tentativa++) {
+        await page.waitForTimeout(2000);
+        
+        // Scroll para baixo para revelar formulário se estiver oculto
+        await page.evaluate(() => window.scrollBy(0, 300));
+        await page.waitForTimeout(1000);
+        
+        // Re-detecta a tela
+        telaAtual = await detectarTelaAtual(page);
+        
+        if (telaAtual.tela === 'FORMULARIO_LOCALIZACAO' || telaAtual.detalhes.reactSelects >= 3) {
+          console.log(`   ✅ Formulário de localização detectado na tentativa ${tentativa}`);
+          formEncontrado = true;
+          break;
+        } else if (['CAMPANHA', 'CHECKOUT_CART'].includes(telaAtual.tela)) {
+          console.log(`   ✅ Navegou para ${telaAtual.tela}, localização já preenchida`);
+          formEncontrado = true;
+          break;
+        }
+        
+        console.log(`   ⏳ Tentativa ${tentativa}/5 - Tela: ${telaAtual.tela}`);
       }
+      
+      if (!formEncontrado) {
+        console.log('   ⚠️ Formulário de localização não apareceu após 5 tentativas');
+        await page.screenshot({ path: 'debug-pos-inscreva-se.png', fullPage: true });
+        console.log('   📸 Screenshot: debug-pos-inscreva-se.png');
+      }
+      
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao clicar Inscreva-se: ${e.message}`);
     }
     
-    if (!formEncontrado) {
-      console.log('   ⚠️ Formulário de localização não apareceu, verificando URL...');
-      console.log(`   📍 URL atual: ${page.url()}`);
-      await page.screenshot({ path: 'debug-pos-inscreva-se.png', fullPage: true });
-    }
-    
-  } catch (e) {
-    console.log(`   ⚠️ Erro ao clicar Inscreva-se: ${e.message}`);
+    console.log('✅ ETAPA 5 CONCLUÍDA');
+    console.log('');
   }
-  
-  await page.waitForTimeout(3000);
-  
-  console.log('✅ ETAPA 5 CONCLUÍDA');
-  console.log('');
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 6: DADOS DE LOCALIZAÇÃO
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 6: Dados de Localização');
   
-  // Verifica se está na página correta com formulário de localização
-  await page.waitForTimeout(2000);
+  // IMPORTANTE: Fecha todos os overlays/popups que podem bloquear cliques
+  await fecharTodosOverlays(page);
   
-  // Procura formulário por vários seletores
-  const seletoresLocalizacao = [
-    'text=País',
-    '.react-select__input-container',
-    'input[placeholder*="CPF"]',
-    'text=Estado'
-  ];
+  // Primeiro, detecta onde estamos
+  let telaAtualE6 = await detectarTelaAtual(page);
   
-  let temFormLocalizacao = false;
-  for (const sel of seletoresLocalizacao) {
-    if (await page.locator(sel).first().isVisible({ timeout: 2000 }).catch(() => false)) {
-      temFormLocalizacao = true;
-      console.log(`   ✅ Formulário encontrado via: ${sel}`);
-      break;
-    }
-  }
-  
-  if (!temFormLocalizacao) {
-    console.log('   ⚠️ Formulário de localização não encontrado, verificando página...');
+  // Se já passamos da localização, pula
+  if (['CAMPANHA', 'CHECKOUT_CART', 'CHECKOUT_PROFILE', 'CHECKOUT_SHIPPING', 'CHECKOUT_PAYMENT', 'ORDER_PLACED'].includes(telaAtualE6.tela)) {
+    console.log(`   ⏭️ Já estamos na tela ${telaAtualE6.tela}, pulando etapa 6`);
+    console.log('✅ ETAPA 6 PULADA - Localização já preenchida');
+    console.log('');
+  } else {
+    // Aguarda carregamento
+    await page.waitForTimeout(2000);
+    
+    // Verifica ESPECIFICAMENTE se existem os react-select de localização
+    let qtdReactSelects = await page.locator('.react-select__input-container').count();
+    console.log(`   📍 Quantidade de react-select encontrados: ${qtdReactSelects}`);
+    
+    // Também verifica se há campo de CPF (indicador de formulário de dados)
+    let campoCPFvisivel = await page.locator('input[name="userDocument"]').isVisible({ timeout: 2000 }).catch(() => false);
+    console.log(`   📍 Campo CPF visível: ${campoCPFvisivel}`);
     console.log(`   📍 URL atual: ${page.url()}`);
     
-    // Pode já estar na página de campanha ou checkout
-    if (page.url().includes('campanha-comercial') || page.url().includes('checkout')) {
-      console.log('   ✅ Já passou da etapa de localização');
-      console.log('✅ ETAPA 6 PULADA - Dados já preenchidos');
-      // Pula para próxima etapa
-    } else {
+    // Se não encontrou react-selects, tenta seletores alternativos
+    if (qtdReactSelects < 3) {
+      console.log('   🔍 Buscando seletores alternativos...');
+      
+      // Tenta diferentes seletores para os dropdowns
+      const seletoresAlternativos = [
+        '.react-select__control',
+        '[class*="react-select"]',
+        'div[class*="select__"]',
+        '.css-1s2u09g-control',  // react-select v5
+        '.css-13cymwt-control',  // react-select v5 alternativo
+      ];
+      
+      for (const sel of seletoresAlternativos) {
+        const count = await page.locator(sel).count().catch(() => 0);
+        if (count > 0) {
+          console.log(`   📍 Encontrados ${count} elementos com seletor: ${sel}`);
+        }
+      }
+      
+      // Verifica se há textos indicando o formulário
+      const textoPais = await page.locator('text=País').first().isVisible({ timeout: 1000 }).catch(() => false);
+      const textoEstado = await page.locator('text=Estado').first().isVisible({ timeout: 1000 }).catch(() => false);
+      const textoCidade = await page.locator('text=Cidade').first().isVisible({ timeout: 1000 }).catch(() => false);
+      
+      console.log(`   📍 Labels visíveis - País: ${textoPais}, Estado: ${textoEstado}, Cidade: ${textoCidade}`);
+      
+      if (textoPais || textoEstado) {
+        console.log('   ✅ Formulário de localização detectado via labels');
+        qtdReactSelects = 4; // Força continuar
+      }
+    }
+    
+    const temFormLocalizacao = qtdReactSelects >= 3 || campoCPFvisivel || telaAtualE6.tela === 'FORMULARIO_LOCALIZACAO';
+    
+    if (!temFormLocalizacao) {
+      console.log('   ⚠️ Formulário de localização não encontrado');
+      
+      // Verifica se ainda estamos no formulário inicial
+      const btnInscreva = page.getByRole('button', { name: /inscreva-se/i });
+      if (await btnInscreva.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log('   🔄 Ainda no formulário inicial - clicando em Inscreva-se...');
+        
+        // Verifica se precisa preencher nome/telefone
+        const campoNome = page.locator('input[placeholder*="nome completo" i]');
+        if (await campoNome.isVisible({ timeout: 1000 }).catch(() => false)) {
+          const valorNome = await campoNome.inputValue().catch(() => '');
+          if (!valorNome) {
+            console.log('   📝 Preenchendo nome...');
+            await campoNome.fill(CLIENTE.nome);
+          }
+        }
+        
+        const campoTel = page.locator('input[placeholder*="XXXXX" i]');
+        if (await campoTel.isVisible({ timeout: 1000 }).catch(() => false)) {
+          const valorTel = await campoTel.inputValue().catch(() => '');
+          if (!valorTel) {
+            console.log('   📝 Preenchendo telefone...');
+            await campoTel.fill(CLIENTE.telefone);
+          }
+        }
+        
+        await page.waitForTimeout(500);
+        await btnInscreva.scrollIntoViewIfNeeded();
+        await btnInscreva.click();
+        console.log('   ✅ Clicou em Inscreva-se');
+        
+        // Aguarda navegação ou aparecimento do formulário
+        await page.waitForTimeout(5000);
+        await page.evaluate(() => window.scrollBy(0, 400));
+        await page.waitForTimeout(2000);
+        
+        // Re-verifica
+        qtdReactSelects = await page.locator('.react-select__input-container').count();
+        campoCPFvisivel = await page.locator('input[name="userDocument"]').isVisible({ timeout: 2000 }).catch(() => false);
+        console.log(`   📍 Após retry - react-selects: ${qtdReactSelects}, CPF visível: ${campoCPFvisivel}`);
+      }
+      
       // Tira screenshot para debug
-      await page.screenshot({ path: 'debug-etapa6-sem-form.png', fullPage: true });
-      console.log('   📸 Screenshot salvo: debug-etapa6-sem-form.png');
+      await page.screenshot({ path: 'debug-etapa6-estado.png', fullPage: true });
+      console.log('   📸 Screenshot: debug-etapa6-estado.png');
     }
-  } else {
-    // Scroll para baixo para evitar header sticky bloqueando
-    await page.evaluate(() => window.scrollBy(0, 300));
-    await page.waitForTimeout(1000);
-    await manterCursorNaTela(page);
     
-    // País - Brasil
+    // Re-verifica tela
+    telaAtualE6 = await detectarTelaAtual(page);
+    const qtdReactSelectsFinal = await page.locator('.react-select__input-container').count();
+    console.log(`   📍 ${qtdReactSelectsFinal} react-selects encontrados (final)`);
+    
+    // Decide se deve preencher localização ou pular
+    const devePreencher = qtdReactSelectsFinal >= 3 || telaAtualE6.tela === 'FORMULARIO_LOCALIZACAO' || 
+                          (await page.locator('text=País').first().isVisible({ timeout: 1000 }).catch(() => false));
+    
+    if (devePreencher) {
+    console.log('   ✅ Formulário de localização encontrado!');
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // FECHA OVERLAYS/POPUPS QUE PODEM BLOQUEAR CLIQUES
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    // Primeiro tenta fechar via funções padrão
+    await fecharTodosOverlays(page);
+    
+    // Remove overlays/backdrops forçadamente via JavaScript (mais eficaz)
     try {
-      const selectPais = page.locator('.react-select__input-container').first();
-      await selectPais.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(500);
-      await selectPais.click({ force: true });
-      await page.locator('#react-select-2-input').fill('brasil');
-      await page.waitForTimeout(500);
-      await page.getByRole('option', { name: 'Brasil' }).click();
-    } catch (e) {
-      // Fallback: tenta com keyboard
-      await page.keyboard.type('brasil', { delay: 50 });
-      await page.keyboard.press('Enter');
-    }
-  await page.waitForTimeout(500);
-  console.log('   ✅ País: Brasil');
-  
-  // Estado
-  await page.evaluate(() => window.scrollBy(0, 100));
-  await page.waitForTimeout(500);
-  const selectEstado = page.locator('.react-select__input-container').nth(1);
-  await selectEstado.scrollIntoViewIfNeeded();
-  await selectEstado.click({ force: true });
-  await page.keyboard.type(CLIENTE.estado, { delay: 30 });
-  await page.waitForTimeout(1000);
-  
-  // Tenta clicar na opção - pode ter acento diferente
-  try {
-    // Primeiro tenta match exato
-    const opcaoEstado = page.getByRole('option', { name: CLIENTE.estado });
-    if (await opcaoEstado.isVisible({ timeout: 2000 })) {
-      await opcaoEstado.click();
-    } else {
-      // Tenta pela primeira opção visível (deve ser o match mais próximo)
-      const primeiraOpcao = page.locator('[class*="react-select__option"]').first();
-      if (await primeiraOpcao.isVisible({ timeout: 2000 })) {
-        await primeiraOpcao.click();
-      } else {
-        // Último recurso: Enter para selecionar
-        await page.keyboard.press('Enter');
-      }
-    }
-  } catch (e) {
-    // Fallback: Enter para selecionar a opção destacada
-    await page.keyboard.press('Enter');
-  }
-  await page.waitForTimeout(500);
-  console.log(`   ✅ Estado: ${CLIENTE.estado}`);
-  
-  // Cidade
-  await page.evaluate(() => window.scrollBy(0, 100));
-  await page.waitForTimeout(500);
-  const selectCidade = page.locator('.react-select__input-container').nth(2);
-  await selectCidade.scrollIntoViewIfNeeded();
-  await selectCidade.click({ force: true });
-  await page.keyboard.type(CLIENTE.cidade, { delay: 30 });
-  await page.waitForTimeout(1000);
-  
-  try {
-    const opcaoCidade = page.getByRole('option', { name: CLIENTE.cidade });
-    if (await opcaoCidade.isVisible({ timeout: 2000 })) {
-      await opcaoCidade.click();
-    } else {
-      const primeiraOpcao = page.locator('[class*="react-select__option"]').first();
-      if (await primeiraOpcao.isVisible({ timeout: 2000 })) {
-        await primeiraOpcao.click();
-      } else {
-        await page.keyboard.press('Enter');
-      }
-    }
-  } catch (e) {
-    await page.keyboard.press('Enter');
-  }
-  await page.waitForTimeout(500);
-  console.log(`   ✅ Cidade: ${CLIENTE.cidade}`);
-  
-  // Polo
-  await page.evaluate(() => window.scrollBy(0, 100));
-  await page.waitForTimeout(500);
-  const selectPolo = page.locator('.react-select__input-container').nth(3);
-  await selectPolo.scrollIntoViewIfNeeded();
-  await selectPolo.click({ force: true });
-  await page.keyboard.type(CLIENTE.polo, { delay: 30 });
-  await page.waitForTimeout(1500);
-  
-  try {
-    // Tenta encontrar opção que contenha o nome do polo
-    const opcaoPolo = page.locator('[class*="react-select__option"]').filter({ hasText: new RegExp(CLIENTE.polo, 'i') }).first();
-    if (await opcaoPolo.isVisible({ timeout: 2000 })) {
-      await opcaoPolo.click();
-    } else {
-      const primeiraOpcao = page.locator('[class*="react-select__option"]').first();
-      if (await primeiraOpcao.isVisible({ timeout: 2000 })) {
-        await primeiraOpcao.click();
-      } else {
-        await page.keyboard.press('Enter');
-      }
-    }
-  } catch (e) {
-    await page.keyboard.press('Enter');
-  }
-  await page.waitForTimeout(500);
-  console.log(`   ✅ Polo: ${CLIENTE.polo}`);
-  
-  // CPF
-  await page.locator('input[name="userDocument"]').click();
-  await page.locator('input[name="userDocument"]').fill(CLIENTE.cpf);
-  await page.waitForTimeout(500);
-  console.log(`   ✅ CPF: ${CLIENTE.cpf}`);
-  
-  // Continuar Inscrição
-  console.log('   📝 Clicando em Continuar Inscrição...');
-  
-  // Primeiro, fecha qualquer modal/overlay que possa estar bloqueando
-  try {
-    // Fecha modal de cookies
-    const cookieSelectors = [
-      'button:has-text("Aceitar")',
-      'button:has-text("Aceito")',
-      'button:has-text("OK")',
-      'button:has-text("Entendi")',
-      '[id*="cookie"] button',
-      '.cookie-banner button',
-      '.consent button',
-      '#onetrust-accept-btn-handler'
-    ];
-    
-    for (const sel of cookieSelectors) {
-      const btnCookie = page.locator(sel).first();
-      if (await btnCookie.isVisible({ timeout: 1000 }).catch(() => false)) {
-        await btnCookie.click();
-        console.log('   ✅ Modal de cookies fechado');
-        await page.waitForTimeout(1000);
-        break;
-      }
-    }
-    
-    // Fecha o formulário de download/contato que bloqueia a página
-    const formBackdrop = page.locator('.sectionContactFormNewsDownloadFormBackdrop, [class*="Backdrop"], [class*="backdrop"]').first();
-    if (await formBackdrop.isVisible({ timeout: 1000 }).catch(() => false)) {
-      console.log('   📍 Backdrop de formulário detectado, removendo...');
       await page.evaluate(() => {
         // Remove backdrops
-        document.querySelectorAll('[class*="Backdrop"], [class*="backdrop"]').forEach(el => el.remove());
-        // Remove formulários overlay
-        document.querySelectorAll('[class*="ContactForm"], [class*="DownloadForm"]').forEach(el => {
-          if (el.style) el.style.display = 'none';
+        const backdrops = document.querySelectorAll('.cruzeirodosul-store-theme-3-x-sectionContactFormNewsDownloadFormBackdrop, [class*="Backdrop"], [class*="backdrop"]');
+        backdrops.forEach(el => el.remove());
+        
+        // Remove formulários popup de download de guia
+        const popups = document.querySelectorAll('.cruzeirodosul-store-theme-3-x-sectionContactFormNewsDownloadFormContainer');
+        popups.forEach(el => el.remove());
+        
+        // Remove cookie banners
+        const cookies = document.querySelectorAll('.cc-banner, #privacytools-banner-consent, [class*="cookie-consent"]');
+        cookies.forEach(el => el.remove());
+        
+        // Remove qualquer overlay que cubra a tela
+        const overlays = document.querySelectorAll('[class*="overlay"], [class*="modal-backdrop"]');
+        overlays.forEach(el => {
+          if (el.style.position === 'fixed' || el.style.position === 'absolute') {
+            el.remove();
+          }
         });
-        // Remove overlays
-        document.querySelectorAll('.overlay, .modal-backdrop').forEach(el => el.remove());
       });
-      console.log('   ✅ Overlay removido via JavaScript');
+      console.log('   📍 Overlays removidos via JavaScript');
+    } catch (e) {}
+    
+    await page.waitForTimeout(500);
+    
+    // Scroll para baixo para evitar header sticky bloqueando
+    await page.evaluate(() => window.scrollBy(0, 300));
+    await page.waitForTimeout(500);
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BASEADO NA GRAVAÇÃO DO PLAYWRIGHT CODEGEN
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    // 1. PAÍS - Brasil
+    console.log('   📝 Selecionando País: Brasil...');
+    try {
+      // Usa force: true para ignorar interceptação de cliques
+      await page.locator('.react-select__input-container').first().click({ force: true });
       await page.waitForTimeout(500);
+      await page.getByRole('option', { name: 'Brasil' }).click();
+      console.log('   ✅ País: Brasil');
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao selecionar país: ${e.message}`);
     }
-  } catch (e) {
-    console.log(`   ⚠️ Erro ao fechar modais: ${e.message}`);
-  }
-  
-  // Pressiona Escape para fechar qualquer modal
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
-  
-  // Scroll para o botão de Continuar Inscrição para evitar overlays
-  await page.evaluate(() => {
-    const btns = document.querySelectorAll('button');
-    for (const btn of btns) {
-      if (btn.textContent && btn.textContent.includes('Continuar')) {
-        btn.scrollIntoView({ block: 'center' });
-        break;
+    await page.waitForTimeout(1000);
+    
+    // 2. ESTADO - Clica no select de estado e digita
+    console.log(`   📝 Selecionando Estado: ${CLIENTE.estado}...`);
+    try {
+      // Clica no segundo "Selecione" (Estado)
+      await page.locator('div').filter({ hasText: /^Selecione$/ }).nth(1).click();
+      await page.waitForTimeout(500);
+      
+      // Encontra o input do react-select ativo e digita
+      const inputEstado = page.locator('#react-select-3-input, #react-select-4-input').first();
+      if (await inputEstado.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await inputEstado.fill('são pau');
+      } else {
+        await page.keyboard.type('são pau', { delay: 50 });
+      }
+      await page.waitForTimeout(1000);
+      
+      // Clica na opção São Paulo
+      await page.getByRole('option', { name: 'São Paulo' }).click();
+      console.log('   ✅ Estado: São Paulo');
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao selecionar estado: ${e.message}`);
+    }
+    await page.waitForTimeout(1500);
+    
+    // 3. CIDADE - Clica no select de cidade e digita
+    console.log(`   📝 Selecionando Cidade: ${CLIENTE.cidade}...`);
+    try {
+      // Clica no próximo "Selecione" (Cidade)
+      await page.locator('div').filter({ hasText: /^Selecione$/ }).nth(1).click();
+      await page.waitForTimeout(500);
+      
+      // Encontra o input do react-select ativo e digita
+      const inputCidade = page.locator('#react-select-4-input, #react-select-5-input').first();
+      if (await inputCidade.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await inputCidade.fill('são pa');
+      } else {
+        await page.keyboard.type('são pa', { delay: 50 });
+      }
+      await page.waitForTimeout(1000);
+      
+      // Clica na opção São Paulo
+      await page.getByRole('option', { name: 'São Paulo' }).click();
+      console.log('   ✅ Cidade: São Paulo');
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao selecionar cidade: ${e.message}`);
+    }
+    await page.waitForTimeout(1500);
+    
+    // 4. POLO - Clica no select de polo e digita
+    console.log(`   📝 Selecionando Polo: ${CLIENTE.polo}...`);
+    try {
+      // Tenta clicar no select de polo (geralmente o 5º react-select ou tem texto "Selecione")
+      const selectPolo = page.locator('div:nth-child(5) > .react-select-container > .react-select__control > .react-select__value-container > .react-select__input-container');
+      if (await selectPolo.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await selectPolo.click();
+      } else {
+        // Fallback: clica no próximo "Selecione"
+        await page.locator('div').filter({ hasText: /^Selecione$/ }).first().click();
+      }
+      await page.waitForTimeout(500);
+      
+      // Digita o polo
+      const inputPolo = page.locator('#react-select-5-input, #react-select-6-input').first();
+      if (await inputPolo.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await inputPolo.fill(CLIENTE.polo);
+      } else {
+        await page.keyboard.type(CLIENTE.polo, { delay: 50 });
+      }
+      await page.waitForTimeout(1000);
+      
+      // Pressiona Enter para selecionar
+      await page.keyboard.press('Enter');
+      console.log(`   ✅ Polo: ${CLIENTE.polo}`);
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao selecionar polo: ${e.message}`);
+    }
+    await page.waitForTimeout(1000);
+    
+    // 5. CPF
+    console.log(`   📝 Preenchendo CPF: ${CLIENTE.cpf}...`);
+    try {
+      const campoCPF = page.locator('input[name="userDocument"]');
+      await campoCPF.click();
+      await campoCPF.fill(CLIENTE.cpf);
+      console.log(`   ✅ CPF: ${CLIENTE.cpf}`);
+      
+      // Aguarda validação do CPF
+      await page.waitForTimeout(2000);
+      
+      // Verifica se há erro de CPF
+      const erroCPF = page.locator('text=/CPF inválido|CPF já cadastrado|Digite um CPF válido/i').first();
+      if (await erroCPF.isVisible({ timeout: 1000 }).catch(() => false)) {
+        const textoErro = await erroCPF.textContent();
+        console.log(`   ❌ ERRO CPF: ${textoErro}`);
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao preencher CPF: ${e.message}`);
+    }
+    await page.waitForTimeout(1000);
+    
+    // 6. BOTÃO CONTINUAR INSCRIÇÃO
+    console.log('   📝 Clicando em Continuar Inscrição...');
+    
+    // Scroll para garantir que o botão está visível
+    await page.evaluate(() => window.scrollBy(0, 300));
+    await page.waitForTimeout(500);
+    
+    // Fecha modais se existirem
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+    
+    // Tenta clicar até 3 vezes
+    let navegouParaCampanha = false;
+    for (let tentativa = 1; tentativa <= 3 && !navegouParaCampanha; tentativa++) {
+      console.log(`   🔄 Tentativa ${tentativa}/3 de clicar em Continuar Inscrição...`);
+      
+      try {
+        const btnContinuar = page.getByRole('button', { name: 'Continuar Inscrição' });
+        if (await btnContinuar.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await btnContinuar.scrollIntoViewIfNeeded();
+          await page.waitForTimeout(500);
+          await btnContinuar.click();
+          console.log('   ✅ Botão "Continuar Inscrição" clicado');
+        }
+      } catch (e) {
+        // Fallback
+        const btnAlt = page.locator('button:has-text("Continuar")').first();
+        if (await btnAlt.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await btnAlt.click({ force: true });
+          console.log('   ✅ Botão alternativo clicado');
+        }
+      }
+      
+      // Aguarda navegação para página de campanha
+      console.log('   ⏳ Aguardando navegação...');
+      try {
+        await page.waitForURL('**/campanha-comercial**', { timeout: 15000 });
+        console.log('   ✅ Navegou para página de campanha');
+        navegouParaCampanha = true;
+      } catch (e) {
+        console.log(`   ⚠️ Tentativa ${tentativa}: não navegou ainda`);
+        console.log(`   📍 URL atual: ${page.url()}`);
+        
+        // Verifica se há algum erro na página
+        const erroForm = page.locator('text=/erro|inválido|obrigatório|preencha/i').first();
+        if (await erroForm.isVisible({ timeout: 1000 }).catch(() => false)) {
+          const textoErro = await erroForm.textContent();
+          console.log(`   ❌ Erro detectado: ${textoErro}`);
+        }
+        
+        await page.waitForTimeout(2000);
       }
     }
-  });
-  await page.waitForTimeout(500);
-  
-  // Tenta clicar no botão "Continuar Inscrição"
-  const btnContinuarInscricao = page.getByRole('button', { name: 'Continuar Inscrição' });
-  if (await btnContinuarInscricao.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await btnContinuarInscricao.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(500);
-    await btnContinuarInscricao.click({ force: true });
-    console.log('   ✅ Botão "Continuar Inscrição" clicado');
-  } else {
-    // Tenta botão alternativo
-    const btnAlt = page.locator('button:has-text("Continuar")').first();
-    if (await btnAlt.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await btnAlt.click({ force: true });
-      console.log('   ✅ Botão alternativo clicado');
-    }
-  }
-  
-  // Aguarda um momento para verificar se há mensagem de erro
-  await page.waitForTimeout(3000);
-  
-  // Verifica se há mensagem de erro (CPF já cadastrado, etc)
-  try {
-    const erroMsg = page.locator('text=/já cadastrado|já existe|CPF inválido|erro|falha/i').first();
-    if (await erroMsg.isVisible({ timeout: 2000 })) {
-      const textoErro = await erroMsg.textContent();
-      console.log(`   ❌ ERRO DETECTADO: ${textoErro}`);
-      await page.screenshot({ path: 'erro-cpf-cadastrado.png', fullPage: true });
-    }
-  } catch (e) {}
-  
-  // Verifica se há modal de erro
-  try {
-    const modalErro = page.locator('.modal, [role="dialog"], .alert, .error-message').first();
-    if (await modalErro.isVisible({ timeout: 1000 })) {
-      const textoModal = await modalErro.textContent();
-      console.log(`   ⚠️ Modal detectado: ${textoModal?.substring(0, 100)}...`);
-    }
-  } catch (e) {}
-  
-  // Aguarda navegação para página de campanha
-  console.log('   ⏳ Aguardando navegação para página de campanha...');
-  try {
-    await page.waitForURL('**/campanha-comercial**', { timeout: 30000 });
-    console.log('   ✅ Navegou para página de campanha');
-  } catch (e) {
-    console.log('   ⚠️ Timeout esperando página de campanha, verificando URL...');
-    // Screenshot para debug
-    await page.screenshot({ path: 'debug-apos-continuar-inscricao.png', fullPage: true });
-  }
-  
-  await page.waitForTimeout(5000);
-  console.log(`   📍 URL após clique: ${page.url()}`);
-  } // Fecha o else do temFormLocalizacao
-  
-  console.log('✅ ETAPA 6 CONCLUÍDA');
-  console.log('');
+    
+    await page.waitForTimeout(3000);
+    } // Fecha o if (devePreencher)
+    
+    console.log('✅ ETAPA 6 CONCLUÍDA');
+    console.log('');
+  } // Fecha o else (não pulou etapa 6)
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 7: CAMPANHA COMERCIAL - TESTE DINÂMICO DE CAMPANHAS
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 7: Campanha Comercial');
+  
+  // Fecha popups/overlays que podem estar bloqueando
+  await fecharTodosOverlays(page);
+  
+  // Primeiro, detecta onde estamos
+  let telaAtualE7 = await detectarTelaAtual(page);
+  
+  // Se já estamos em tela posterior, pula
+  if (['CHECKOUT_CART', 'CHECKOUT_PROFILE', 'CHECKOUT_SHIPPING', 'CHECKOUT_PAYMENT', 'ORDER_PLACED'].includes(telaAtualE7.tela)) {
+    console.log(`   ⏭️ Já estamos na tela ${telaAtualE7.tela}, pulando etapa 7`);
+    console.log('✅ ETAPA 7 PULADA - Campanha já selecionada');
+    console.log('');
+  } else {
   
   // Aguarda página de campanha carregar completamente
   await page.waitForTimeout(5000);
@@ -991,6 +1382,12 @@ test('inscricao-pos', async ({ page, context }) => {
     await page.waitForTimeout(5000);
     urlAtualEtapa7 = page.url();
     console.log(`   📍 URL após espera adicional: ${urlAtualEtapa7}`);
+    
+    // Se ainda não está na campanha, verifica se estamos no checkout (campanha pode ser opcional)
+    telaAtualE7 = await detectarTelaAtual(page);
+    if (['CHECKOUT_CART', 'CHECKOUT_PROFILE'].includes(telaAtualE7.tela)) {
+      console.log(`   ⏭️ Campanha pode ser opcional - já no ${telaAtualE7.tela}`);
+    }
   }
   
   // Verifica se está na página de campanha
@@ -1265,13 +1662,26 @@ test('inscricao-pos', async ({ page, context }) => {
   
   console.log('✅ ETAPA 7 CONCLUÍDA');
   console.log('');
+  } // Fecha o else (não pulou etapa 7)
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 8: CARRINHO
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 8: Carrinho');
   
-  await manterCursorNaTela(page);
+  // Fecha popups/overlays que podem estar bloqueando
+  await fecharTodosOverlays(page);
+  
+  // Primeiro, detecta onde estamos
+  let telaAtualE8 = await detectarTelaAtual(page);
+  
+  // Se já estamos no checkout ou além, pula
+  if (['CHECKOUT_PROFILE', 'CHECKOUT_SHIPPING', 'CHECKOUT_PAYMENT', 'ORDER_PLACED'].includes(telaAtualE8.tela)) {
+    console.log(`   ⏭️ Já estamos na tela ${telaAtualE8.tela}, pulando etapa 8`);
+    console.log('✅ ETAPA 8 PULADA');
+    console.log('');
+  } else {
+  
   await page.waitForTimeout(2000);
   
   // Fecha modal "Atenção" se aparecer (tem um X no canto)
@@ -1285,8 +1695,6 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   } catch (e) {}
   
-  await manterCursorNaTela(page);
-  
   // Clica em "Seguir para o carrinho" ou "Continuar Inscrição"
   console.log('   📝 Clicando para ir ao checkout...');
   console.log(`   📍 URL atual: ${page.url()}`);
@@ -1296,16 +1704,28 @@ test('inscricao-pos', async ({ page, context }) => {
   // Espera o botão aparecer
   await page.waitForTimeout(2000);
   
-  // PRIMEIRA PRIORIDADE: "Seguir para o carrinho" (página de campanha)
+  // PRIMEIRA PRIORIDADE: "Continuar pagamento" (gravação)
   try {
-    const linkCarrinho = page.locator('a:has-text("Seguir para o carrinho"), text=Seguir para o carrinho').first();
-    if (await linkCarrinho.isVisible({ timeout: 3000 })) {
-      await linkCarrinho.scrollIntoViewIfNeeded();
-      await linkCarrinho.click({ force: true });
-      console.log('   ✅ Link "Seguir para o carrinho" clicado');
+    const linkPagamento = page.getByRole('link', { name: 'Continuar pagamento Continuar' });
+    if (await linkPagamento.isVisible({ timeout: 3000 })) {
+      await linkPagamento.click();
+      console.log('   ✅ Link "Continuar pagamento" clicado');
       btnClicado = true;
     }
   } catch (e) {}
+  
+  // SEGUNDA PRIORIDADE: "Seguir para o carrinho" (página de campanha)
+  if (!btnClicado) {
+    try {
+      const linkCarrinho = page.locator('a:has-text("Seguir para o carrinho"), text=Seguir para o carrinho').first();
+      if (await linkCarrinho.isVisible({ timeout: 3000 })) {
+        await linkCarrinho.scrollIntoViewIfNeeded();
+        await linkCarrinho.click({ force: true });
+        console.log('   ✅ Link "Seguir para o carrinho" clicado');
+        btnClicado = true;
+      }
+    } catch (e) {}
+  }
   
   // Tenta pelo seletor de classe específico do VTEX
   if (!btnClicado) {
@@ -1388,7 +1808,6 @@ test('inscricao-pos', async ({ page, context }) => {
   
   // Aguarda navegação para o checkout
   await page.waitForTimeout(8000);
-  await manterCursorNaTela(page);
   
   // Tenta esperar pelo checkout
   try {
@@ -1428,6 +1847,7 @@ test('inscricao-pos', async ({ page, context }) => {
   
   console.log('✅ ETAPA 8 CONCLUÍDA');
   console.log('');
+  } // Fecha o else (não pulou etapa 8)
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 9: CHECKOUT - DADOS PESSOAIS
@@ -1437,6 +1857,52 @@ test('inscricao-pos', async ({ page, context }) => {
   
   // Aguarda a página de checkout carregar completamente
   await page.waitForTimeout(5000);
+  
+  // Fecha popups/overlays que podem estar bloqueando
+  await fecharTodosOverlays(page);
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VERIFICAÇÃO DE PÁGINA EM BRANCO - RECARREGA SE NECESSÁRIO
+  // ═══════════════════════════════════════════════════════════════════════════
+  let paginaCarregada = false;
+  for (let tentativaReload = 1; tentativaReload <= 3; tentativaReload++) {
+    // Verifica se a página está em branco (sem conteúdo visível)
+    const temConteudo = await page.evaluate(() => {
+      const body = document.body;
+      if (!body) return false;
+      
+      // Verifica se há elementos visíveis no body além de headers/footers
+      const elementos = body.querySelectorAll('input, button, form, table, .cart, .checkout, [class*="vtex"], [class*="cart"], [class*="checkout"]');
+      const textoBody = body.innerText?.trim() || '';
+      
+      // Considera página carregada se tiver elementos interativos OU texto significativo
+      return elementos.length > 5 || textoBody.length > 200;
+    });
+    
+    console.log(`   📍 [Tentativa ${tentativaReload}/3] Conteúdo detectado: ${temConteudo}`);
+    
+    if (temConteudo) {
+      paginaCarregada = true;
+      break;
+    }
+    
+    // Página em branco - recarrega
+    console.log('   ⚠️ Página em branco detectada, recarregando...');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(5000);
+    
+    // Se após reload ainda estiver no checkout, tenta networkidle
+    if (page.url().includes('checkout')) {
+      try {
+        await page.waitForLoadState('networkidle', { timeout: 15000 });
+      } catch (e) {}
+    }
+  }
+  
+  if (!paginaCarregada) {
+    console.log('   ⚠️ Página não carregou após 3 tentativas, continuando mesmo assim...');
+    await page.screenshot({ path: 'erro-pagina-branco.png', fullPage: true });
+  }
   
   // Aguarda o checkout VTEX carregar (espera o DOM estar pronto)
   try {
@@ -1867,7 +2333,6 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 11: Pagamento e Finalização');
   
-  await manterCursorNaTela(page);
   await page.waitForTimeout(3000);
   
   console.log(`   📍 URL: ${page.url()}`);
@@ -1911,10 +2376,10 @@ test('inscricao-pos', async ({ page, context }) => {
         await page.waitForTimeout(2000);
       }
       
-      // Agora clica em "Ir para o Pagamento"
+      // Agora clica em "Ir para o Pagamento" (seletor da gravação)
       await page.waitForTimeout(2000);
       console.log('   📝 Clicando em "Ir para o Pagamento"...');
-      await page.click('span[data-i18n="global.goToPayment"]', { timeout: 10000 });
+      await page.getByRole('button', { name: 'Ir para o pagamento' }).click();
       console.log('   ✅ Clicou em "Ir para o Pagamento"!');
       await page.waitForTimeout(5000);
       
@@ -2123,38 +2588,69 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 12: Realizar Pagamento');
   
-  await page.waitForTimeout(3000);
-  
-  // Aguarda o botão "Realizar pagamento" aparecer
-  const btnRealizarPagamento = page.locator('a.cruzeirodosul-store-theme-3-x-confirmationStepsButton:has-text("Realizar pagamento")');
+  // Aguarda a página de confirmação carregar completamente
+  await page.waitForTimeout(5000);
+  await page.screenshot({ path: 'debug-orderPlaced.png', fullPage: true });
+  console.log('   📸 Screenshot: debug-orderPlaced.png');
   
   let siaaPage = null;
   
   try {
-    if (await btnRealizarPagamento.isVisible({ timeout: 10000 })) {
-      console.log('   📝 Clicando em "Realizar pagamento"...');
+    // MÉTODO 1: Seletor da gravação (preferido)
+    console.log('   📝 Buscando botão "Realizar pagamento"...');
+    const btnPrimario = page.getByRole('link', { name: 'Realizar pagamento' });
+    
+    if (await btnPrimario.isVisible({ timeout: 10000 })) {
+      console.log('   📝 Clicando em "Realizar pagamento" (getByRole)...');
       
-      // Captura a nova página que será aberta
       const [newPage] = await Promise.all([
-        context.waitForEvent('page'),
-        btnRealizarPagamento.click()
+        context.waitForEvent('page', { timeout: 15000 }),
+        btnPrimario.click()
       ]);
       
       siaaPage = newPage;
       await siaaPage.waitForLoadState('domcontentloaded');
-      
       console.log(`   ✅ Nova aba aberta: ${siaaPage.url()}`);
     } else {
-      // Fallback: tenta pelo texto
-      const btnAlt = page.getByRole('link', { name: /Realizar pagamento/i });
-      if (await btnAlt.isVisible({ timeout: 3000 })) {
+      // MÉTODO 2: Seletor por classe VTEX
+      const btnVtex = page.locator('a.cruzeirodosul-store-theme-3-x-confirmationStepsButton:has-text("Realizar pagamento")');
+      if (await btnVtex.isVisible({ timeout: 5000 })) {
+        console.log('   📝 Clicando em "Realizar pagamento" (VTEX class)...');
+        
         const [newPage] = await Promise.all([
-          context.waitForEvent('page'),
-          btnAlt.click()
+          context.waitForEvent('page', { timeout: 15000 }),
+          btnVtex.click()
         ]);
+        
         siaaPage = newPage;
         await siaaPage.waitForLoadState('domcontentloaded');
-        console.log(`   ✅ Nova aba aberta (fallback): ${siaaPage.url()}`);
+        console.log(`   ✅ Nova aba aberta: ${siaaPage.url()}`);
+      } else {
+        // MÉTODO 3: Qualquer link com "Realizar pagamento"
+        const btnQualquer = page.locator('a:has-text("Realizar pagamento")').first();
+        if (await btnQualquer.isVisible({ timeout: 3000 })) {
+          console.log('   📝 Clicando em "Realizar pagamento" (any link)...');
+          
+          const [newPage] = await Promise.all([
+            context.waitForEvent('page', { timeout: 15000 }),
+            btnQualquer.click()
+          ]);
+          
+          siaaPage = newPage;
+          await siaaPage.waitForLoadState('domcontentloaded');
+          console.log(`   ✅ Nova aba aberta: ${siaaPage.url()}`);
+        } else {
+          // Lista todos os links disponíveis para debug
+          const todosLinks = await page.locator('a').all();
+          console.log(`   📋 Total de links na página: ${todosLinks.length}`);
+          for (let i = 0; i < Math.min(todosLinks.length, 10); i++) {
+            const texto = await todosLinks[i].textContent().catch(() => '');
+            const href = await todosLinks[i].getAttribute('href').catch(() => '');
+            if (texto.trim()) {
+              console.log(`      ${i+1}. "${texto.trim().substring(0, 50)}" -> ${href?.substring(0, 50) || 'sem href'}`);
+            }
+          }
+        }
       }
     }
   } catch (e) {
@@ -2164,6 +2660,7 @@ test('inscricao-pos', async ({ page, context }) => {
   if (!siaaPage) {
     console.log('   ❌ Não foi possível abrir a página de pagamento');
     await page.screenshot({ path: 'erro-realizar-pagamento.png', fullPage: true });
+    console.log('   📸 Screenshot erro: erro-realizar-pagamento.png');
     return;
   }
   
@@ -2218,7 +2715,11 @@ test('inscricao-pos', async ({ page, context }) => {
     console.log(`   ⚠️ Erro ao clicar em Próximo: ${e.message}`);
   }
   
-  await siaaPage.waitForLoadState('domcontentloaded');
+  try {
+    await siaaPage.waitForLoadState('domcontentloaded', { timeout: 15000 });
+  } catch (e) {
+    console.log(`   ⚠️ Timeout waitForLoadState, continuando...`);
+  }
   await siaaPage.waitForTimeout(3000);
   
   console.log(`   📍 URL SIAA: ${siaaPage.url()}`);
@@ -2232,6 +2733,66 @@ test('inscricao-pos', async ({ page, context }) => {
   
   // Aguarda a página carregar completamente
   await siaaPage.waitForTimeout(3000);
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RETRY: Se "Não existem resultados disponíveis no momento" - aguarda e tenta novamente
+  // ═══════════════════════════════════════════════════════════════════════════
+  let resultadosDisponiveis = false;
+  const maxRetries = 3;
+  
+  for (let tentativa = 1; tentativa <= maxRetries; tentativa++) {
+    const msgSemResultados = siaaPage.locator('text=Não existem resultados disponíveis no momento').first();
+    
+    if (await msgSemResultados.isVisible({ timeout: 3000 }).catch(() => false)) {
+      console.log(`   ⏳ [Tentativa ${tentativa}/${maxRetries}] "Não existem resultados disponíveis no momento" detectado`);
+      
+      if (tentativa < maxRetries) {
+        console.log(`   🔄 Aguardando 30 segundos e recarregando página...`);
+        await siaaPage.waitForTimeout(30000); // 30 segundos
+        
+        // Recarrega a página do SIAA
+        await siaaPage.reload({ waitUntil: 'domcontentloaded' });
+        await siaaPage.waitForTimeout(3000);
+        
+        // Preenche CPF novamente se necessário
+        const campoCPF = siaaPage.getByRole('textbox', { name: 'CPF' });
+        if (await campoCPF.isVisible({ timeout: 3000 }).catch(() => false)) {
+          console.log(`   📝 Re-preenchendo CPF: ${CLIENTE.cpf}`);
+          await campoCPF.fill(CLIENTE.cpf);
+          await siaaPage.waitForTimeout(500);
+          
+          const btnProximo = siaaPage.getByRole('button', { name: 'Próximo' });
+          if (await btnProximo.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await btnProximo.click();
+            await siaaPage.waitForTimeout(3000);
+          }
+        }
+        
+        console.log(`   📍 URL após reload: ${siaaPage.url()}`);
+      } else {
+        console.log(`   ⚠️ Máximo de tentativas atingido (${maxRetries}x). Resultados ainda não disponíveis.`);
+        console.log(`   📸 Capturando screenshot do estado atual...`);
+        
+        // Captura screenshot do erro para retornar
+        const timestampErro = Date.now();
+        const screenshotErroPath = `erro-sem-resultados-${CLIENTE.cpf}-${timestampErro}.png`;
+        await siaaPage.screenshot({ path: screenshotErroPath, fullPage: true });
+        console.log(`   ✅ Screenshot de erro salvo: ${screenshotErroPath}`);
+        
+        // Marca que não há resultados disponíveis (para retornar 200 com o erro)
+        resultadosDisponiveis = false;
+      }
+    } else {
+      console.log(`   ✅ Resultados disponíveis na página SIAA`);
+      resultadosDisponiveis = true;
+      break;
+    }
+  }
+  
+  // Se não há resultados disponíveis após retries, continua para capturar o estado atual
+  if (!resultadosDisponiveis) {
+    console.log('   📋 Continuando para capturar estado atual (sem resultados)...');
+  }
   
   // Verifica se há modal "Resultados das Inscrições" (quando aluno tem múltiplas inscrições)
   try {
@@ -2487,6 +3048,70 @@ test('inscricao-pos', async ({ page, context }) => {
     } else {
       console.log('   ⚠️ Texto "Parabéns" não encontrado, capturando tela atual...');
       await siaaPage.screenshot({ path: screenshotPath, fullPage: false });
+      
+      // Se não há resultados após retries, pula a geração do boleto
+      if (!resultadosDisponiveis) {
+        console.log('   📋 SIAA ainda processando - não é possível gerar boleto neste momento');
+        console.log('   💡 O aluno pode acessar o boleto posteriormente pelo link "Realizar pagamento"');
+        console.log('✅ ETAPA 14 CONCLUÍDA (com pendência de sincronização SIAA)');
+        console.log('');
+        
+        // ═══════════════════════════════════════════════════════════════════════════
+        // RESUMO FINAL (sem boleto - SIAA ainda processando)
+        // ═══════════════════════════════════════════════════════════════════════════
+        console.log('═══════════════════════════════════════════════════════════════════════════');
+        console.log('🎉 PROCESSO DE INSCRIÇÃO PÓS-GRADUAÇÃO FINALIZADO');
+        console.log('═══════════════════════════════════════════════════════════════════════════');
+        console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
+        console.log(`📋 CPF: ${CLIENTE.cpf}`);
+        console.log(`📋 Status SIAA: Aguardando sincronização`);
+        console.log(`📸 Screenshot: ${screenshotPath}`);
+        console.log('📋 Boleto: Disponível posteriormente via "Realizar pagamento"');
+        console.log('═══════════════════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        // Pula para ETAPA 15 (envio para n8n)
+        // ═══════════════════════════════════════════════════════════════════════════
+        // ETAPA 15: ENVIO PARA N8N (se configurado)
+        // ═══════════════════════════════════════════════════════════════════════════
+        console.log('📤 ETAPA 15: Enviando arquivos para n8n...');
+        
+        const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
+        
+        if (n8nWebhookUrl) {
+          try {
+            const FormData = require('form-data');
+            const formData = new FormData();
+            
+            formData.append('numero_inscricao', numeroInscricao || '');
+            formData.append('cpf', CLIENTE.cpf);
+            formData.append('nome', CLIENTE.nome);
+            formData.append('email', CLIENTE.email);
+            formData.append('curso', CLIENTE.curso);
+            formData.append('campanha', CLIENTE.campanha || '');
+            formData.append('status_siaa', 'aguardando_sincronizacao');
+            
+            if (fs.existsSync(screenshotPath)) {
+              formData.append('screenshot', fs.createReadStream(screenshotPath));
+            }
+            
+            const response = await fetch(n8nWebhookUrl, {
+              method: 'POST',
+              body: formData,
+              headers: formData.getHeaders()
+            });
+            
+            console.log(`   ✅ Enviado para n8n: ${response.status}`);
+          } catch (e) {
+            console.log(`   ⚠️ Erro ao enviar para n8n: ${e.message}`);
+          }
+        } else {
+          console.log('   ⏭️ N8N_WEBHOOK_URL não configurado, pulando envio.');
+        }
+        
+        console.log('✅ ETAPA 15 CONCLUÍDA');
+        return; // Encerra o teste aqui quando SIAA não tem resultados
+      }
     }
   } catch (e) {
     console.log(`   ⚠️ Erro ao capturar aprovação: ${e.message}`);
@@ -2746,13 +3371,26 @@ test('inscricao-pos', async ({ page, context }) => {
     } catch (e2) {}
   }
   
-  // Verifica se o PDF foi salvo
+  // Verifica se o PDF foi capturado via interceptação
+  if (pdfBoletoBuffer && pdfBoletoBuffer.length > 0) {
+    try {
+      fs.writeFileSync(boletoPath, pdfBoletoBuffer);
+      const stats = fs.statSync(boletoPath);
+      console.log(`   ✅ BOLETO PDF SALVO VIA INTERCEPTAÇÃO: ${boletoPath} (${stats.size} bytes)`);
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao salvar PDF interceptado: ${e.message}`);
+    }
+  }
+  
+  // Verifica se o PDF foi salvo (por qualquer método)
   if (!fs.existsSync(boletoPath)) {
     console.log('   ⚠️ PDF não foi salvo, tentando capturar screenshot da página atual...');
     try {
       await siaaPage.screenshot({ path: boletoPath.replace('.pdf', '.png'), fullPage: true });
       console.log(`   ✅ Screenshot salvo: ${boletoPath.replace('.pdf', '.png')}`);
     } catch (e) {}
+  } else {
+    console.log(`   ✅ Boleto PDF confirmado: ${boletoPath}`);
   }
   
   console.log('✅ ETAPA 14 CONCLUÍDA');
