@@ -20,6 +20,11 @@ function configuraSpawnUTF8(processo) {
   return processo;
 }
 
+// Helper: garante LANG UTF-8 no env do spawn
+function envComUTF8(env) {
+  return { ...env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', PYTHONIOENCODING: 'utf-8' };
+}
+
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `https://playwright-playwright.6tqx2r.easypanel.host`;
 
@@ -142,7 +147,7 @@ app.post('/kommo/upload-lead', async (req, res) => {
   };
 
   const processo = spawn('npx playwright test tests/kommo-upload.spec.js --config=playwright.config.server.js', {
-    env: envUpload,
+    env: envComUTF8(envUpload),
     cwd: __dirname,
     shell: true
   });
@@ -314,7 +319,7 @@ app.post('/inscricao', async (req, res) => {
 
   // Executa o Playwright em background
   const processo = spawn('npx playwright test --config=playwright.config.server.js', {
-    env,
+    env: envComUTF8(env),
     cwd: __dirname,
     shell: true
   });
@@ -477,7 +482,7 @@ app.post('/inscricao/sync', async (req, res) => {
   
   // IMPORTANTE: Usa apenas o script inscricao.spec.js (vestibular)
   const processo = spawn('npx playwright test tests/inscricao.spec.js --config=playwright.config.server.js', {
-    env,
+    env: envComUTF8(env),
     cwd: __dirname,
     shell: true
   });
@@ -712,7 +717,7 @@ app.post('/inscricao-enem/sync', async (req, res) => {
   console.log('');
   
   const processo = spawn('npx playwright test tests/inscricao-enem.spec.js --config=playwright.config.server.js', {
-    env,
+    env: envComUTF8(env),
     cwd: __dirname,
     shell: true
   });
@@ -869,7 +874,7 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
   console.log('');
   
   const processo = spawn('npx playwright test tests/inscricao-enem-sem-nota.spec.js --config=playwright.config.server.js', {
-    env,
+    env: envComUTF8(env),
     cwd: __dirname,
     shell: true
   });
@@ -1080,7 +1085,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
   console.log('');
   
   const processo = spawn('npx playwright test tests/inscricao-pos.spec.js --config=playwright.config.server.js', {
-    env,
+    env: envComUTF8(env),
     cwd: __dirname,
     shell: true
   });
@@ -1246,7 +1251,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
 
             kommoUploadResult = await new Promise((resolve) => {
               const uploadProc = spawn('npx playwright test tests/kommo-upload.spec.js --config=playwright.config.server.js', {
-                env: envUpload,
+                env: envComUTF8(envUpload),
                 cwd: __dirname,
                 shell: true
               });
@@ -1389,7 +1394,7 @@ app.post('/inscricao-transferencia/sync', async (req, res) => {
 
   console.log('🚀 Iniciando Playwright (transferência)...');
   const processo = spawn('npx playwright test tests/inscricao-transferencia.spec.js --config=playwright.config.server.js', {
-    env, cwd: __dirname, shell: true
+    env: envComUTF8(env), cwd: __dirname, shell: true
   });
   configuraSpawnUTF8(processo);
 
