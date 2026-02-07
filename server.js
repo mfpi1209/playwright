@@ -140,13 +140,13 @@ app.post('/kommo/upload-lead', async (req, res) => {
   let stderr = '';
 
   processo.stdout.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stdout += texto;
     process.stdout.write(texto);
   });
 
   processo.stderr.on('data', (data) => {
-    stderr += data.toString();
+    stderr += data.toString('utf-8');
   });
 
   processo.on('close', (code) => {
@@ -311,14 +311,14 @@ app.post('/inscricao', async (req, res) => {
   let stderr = '';
 
   processo.stdout.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stdout += texto;
     process.stdout.write(texto);
     if (logId) db.appendOutput(logId, texto).catch(() => {});
   });
 
   processo.stderr.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stderr += texto;
     process.stderr.write(texto);
   });
@@ -474,13 +474,13 @@ app.post('/inscricao/sync', async (req, res) => {
 
   // Mostra logs em tempo real
   processo.stdout.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stdout += texto;
     process.stdout.write(texto);
   });
 
   processo.stderr.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stderr += texto;
     process.stderr.write(texto);
   });
@@ -707,13 +707,13 @@ app.post('/inscricao-enem/sync', async (req, res) => {
   let stderr = '';
 
   processo.stdout.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stdout += texto;
     process.stdout.write(texto);
   });
 
   processo.stderr.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stderr += texto;
     process.stderr.write(texto);
   });
@@ -863,13 +863,13 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
   let stderr = '';
 
   processo.stdout.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stdout += texto;
     process.stdout.write(texto);
   });
 
   processo.stderr.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stderr += texto;
     process.stderr.write(texto);
   });
@@ -1073,13 +1073,13 @@ app.post('/inscricao-pos/sync', async (req, res) => {
   let stderr = '';
 
   processo.stdout.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stdout += texto;
     process.stdout.write(texto);
   });
 
   processo.stderr.on('data', (data) => {
-    const texto = data.toString();
+    const texto = data.toString('utf-8');
     stderr += texto;
     process.stderr.write(texto);
   });
@@ -1377,8 +1377,8 @@ app.post('/inscricao-transferencia/sync', async (req, res) => {
   let stdout = '';
   let stderr = '';
 
-  processo.stdout.on('data', (data) => { const t = data.toString(); stdout += t; process.stdout.write(t); });
-  processo.stderr.on('data', (data) => { const t = data.toString(); stderr += t; process.stderr.write(t); });
+  processo.stdout.on('data', (data) => { const t = data.toString('utf-8'); stdout += t; process.stdout.write(t); });
+  processo.stderr.on('data', (data) => { const t = data.toString('utf-8'); stderr += t; process.stderr.write(t); });
 
   processo.on('close', async (code) => {
     console.log('');
