@@ -1328,112 +1328,16 @@ test('test', async ({ page }) => {
   const erroVisivel = await erroInscricao.isVisible({ timeout: 3000 }).catch(() => false);
   
   if (erroVisivel) {
-    // Se ainda não tentou vestibular alternativo, tenta agora
-    if (!tentouVestibularAlternativo) {
-      console.log('');
-      console.log('⚠️ ════════════════════════════════════════════════════════════════════════════');
-      console.log('⚠️  CPF JÁ POSSUI INSCRIÇÃO COM ESTE TIPO DE VESTIBULAR!');
-      console.log(`⚠️  Tipo atual: "${vestibularUsado}"`);
-      console.log('⚠️  Alterando para vestibular alternativo...');
-      console.log('⚠️ ════════════════════════════════════════════════════════════════════════════');
-      console.log('');
-      
-      tentouVestibularAlternativo = true;
-      
-      // Determina o vestibular alternativo
-      const vestibularAtualLower = vestibularUsado.toLowerCase();
-      let vestibularAlternativo = '';
-      let textoBuscaAlternativo = '';
-      
-      if (vestibularAtualLower.includes('mult') || vestibularAtualLower.includes('múltipla')) {
-        vestibularAlternativo = 'Vestibular Redação';
-        textoBuscaAlternativo = 'redac';
-      } else if (vestibularAtualLower.includes('redac') || vestibularAtualLower.includes('redação')) {
-        vestibularAlternativo = 'Vestibular Múltipla Escolha';
-        textoBuscaAlternativo = 'mult';
-      } else {
-        vestibularAlternativo = 'Vestibular Redação';
-        textoBuscaAlternativo = 'redac';
-      }
-      
-      console.log(`🔄 Alterando para: "${vestibularAlternativo}"...`);
-      
-      // Rola para cima para ver o dropdown de forma de ingresso
-      await page.evaluate(() => window.scrollTo(0, 0));
-      await page.waitForTimeout(500);
-      
-      // Procura o dropdown que contém "Múltipla" ou "Redação" (já selecionado)
-      const selectVestibular = page.locator('.react-select__control').filter({ hasText: /Múltipla|Redação|Vestibular/i }).first();
-      await selectVestibular.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(300);
-      await selectVestibular.click();
-      await page.waitForTimeout(500);
-      
-      // Digita para buscar o vestibular alternativo
-      await page.keyboard.type(textoBuscaAlternativo, { delay: 30 });
-      await page.waitForTimeout(800);
-      
-      // Seleciona a primeira opção
-      const opcoesDisponiveis = await page.locator('.react-select__option').count();
-      console.log(`   📋 Opções encontradas: ${opcoesDisponiveis}`);
-      
-      if (opcoesDisponiveis > 0) {
-        await page.keyboard.press('Enter');
-        vestibularUsado = vestibularAlternativo;
-        console.log(`✅ Vestibular alterado para: "${vestibularAlternativo}"`);
-      } else {
-        console.log('❌ Não foi possível encontrar vestibular alternativo');
-        await page.keyboard.press('Escape');
-      }
-      
-      await page.waitForTimeout(1000);
-      
-      // Rola para baixo e clica em Continuar Inscrição
-      console.log('📍 Clicando em Continuar Inscrição novamente...');
-      const btnContinuarRetry = page.getByRole('button', { name: 'Continuar Inscrição' });
-      await btnContinuarRetry.scrollIntoViewIfNeeded();
-      await page.waitForTimeout(300);
-      await btnContinuarRetry.click();
-      await page.waitForTimeout(2000);
-      
-      // Verifica novamente se há erro de CPF
-      const erroVisivel2 = await erroInscricao.isVisible({ timeout: 3000 }).catch(() => false);
-      
-      if (erroVisivel2) {
-        console.log('');
-        console.log('❌ ════════════════════════════════════════════════════════════════════════════');
-        console.log('❌  CPF JÁ POSSUI INSCRIÇÃO EM AMBOS OS TIPOS DE VESTIBULAR!');
-        console.log(`❌  Tipo original: "${CLIENTE.tipoVestibular}"`);
-        console.log(`❌  Tipo alternativo: "${vestibularAlternativo}"`);
-        console.log('❌  Não é possível realizar a inscrição com este CPF.');
-        console.log('❌ ════════════════════════════════════════════════════════════════════════════');
-        console.log('');
-        await page.screenshot({ path: 'cpf-ja-inscrito-ambos.png', fullPage: true });
-        console.log('📸 Screenshot salvo em: cpf-ja-inscrito-ambos.png');
-        console.log('🛑 Processo interrompido.');
-        return;
-      }
-      
-      console.log('');
-      console.log('═══════════════════════════════════════════════════════════════════════════');
-      console.log(`✅ VESTIBULAR ALTERNATIVO UTILIZADO: "${vestibularAlternativo}"`);
-      console.log(`   (Vestibular original solicitado: "${CLIENTE.tipoVestibular}")`);
-      console.log('═══════════════════════════════════════════════════════════════════════════');
-      console.log('');
-      
-    } else {
-      // Já tentou alternativo e ainda assim deu erro
-      console.log('');
-      console.log('❌ ════════════════════════════════════════════════════════════════════════════');
-      console.log('❌  CPF JÁ POSSUI INSCRIÇÃO EM AMBOS OS TIPOS!');
-      console.log('❌  Este CPF já possui inscrição em ambos os tipos de vestibular.');
-      console.log('❌ ════════════════════════════════════════════════════════════════════════════');
-      console.log('');
-      await page.screenshot({ path: 'cpf-ja-inscrito.png', fullPage: true });
-      console.log('📸 Screenshot salvo em: cpf-ja-inscrito.png');
-      console.log('🛑 Processo interrompido.');
-      return;
-    }
+    console.log('');
+    console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+    console.log('❌  CPF JÁ POSSUI INSCRIÇÃO COM ESTE TIPO DE INGRESSO!');
+    console.log(`❌  Tipo: "${CLIENTE.tipoIngresso}"`);
+    console.log('❌  Não é possível realizar a inscrição com este CPF.');
+    console.log('❌ ════════════════════════════════════════════════════════════════════════════');
+    console.log('');
+    console.log('CPF já possui uma inscrição');
+    console.log('🛑 Processo interrompido.');
+    return;
   }
   
   console.log('✅ CPF liberado para inscrição');
