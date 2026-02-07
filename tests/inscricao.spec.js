@@ -82,22 +82,22 @@ function capitalizarNome(nome) {
 
 const CLIENTE = {
   // Dados pessoais
-  nome: capitalizarNome(process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro'),
-  cpf: process.env.CLIENTE_CPF || '96724754038',
-  email: (process.env.CLIENTE_EMAIL || 'ceduardoribeiro@hotmail.com').toLowerCase(),
-  telefone: formatarTelefone(process.env.CLIENTE_TELEFONE || '11974562318'),
-  nascimento: process.env.CLIENTE_NASCIMENTO || '14/02/1985',
+  nome: capitalizarNome(process.env.CLIENTE_NOME || 'Analine Maria Da Silva'),
+  cpf: process.env.CLIENTE_CPF || '42079642820',
+  email: (process.env.CLIENTE_EMAIL || 'analine.silva.92@gmail.com').toLowerCase(),
+  telefone: formatarTelefone(process.env.CLIENTE_TELEFONE || '11989451783'),
+  nascimento: process.env.CLIENTE_NASCIMENTO || '27/03/1992',
   // Endereço
-  cep: process.env.CLIENTE_CEP || '05315030',
+  cep: process.env.CLIENTE_CEP || '03252000',
   numero: process.env.CLIENTE_NUMERO || String(numeroAleatorio),
   complemento: process.env.CLIENTE_COMPLEMENTO || '',
   // Localização
   estado: corrigirAcentos(process.env.CLIENTE_ESTADO) || 'São Paulo',
   cidade: corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo',
   // Curso
-  curso: corrigirAcentos(process.env.CLIENTE_CURSO) || 'pedagogia',
-  polo: corrigirAcentos(process.env.CLIENTE_POLO) || 'vila mariana',
-  tipoVestibular: corrigirAcentos(process.env.CLIENTE_TIPO_VESTIBULAR) || 'Vestibular Múltipla Escolha',
+  curso: corrigirAcentos(process.env.CLIENTE_CURSO) || 'Logística',
+  polo: corrigirAcentos(process.env.CLIENTE_POLO) || 'sapopemba',
+  tipoVestibular: corrigirAcentos(process.env.CLIENTE_TIPO_VESTIBULAR) || 'Vestibular Redação',
 };
 
 test('test', async ({ page }) => {

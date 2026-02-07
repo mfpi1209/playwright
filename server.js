@@ -26,6 +26,90 @@ function envComUTF8(env) {
 }
 
 const PORT = process.env.PORT || 3000;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Helper: Executa Playwright com retry automático
+// ═══════════════════════════════════════════════════════════════════════════
+function executarPlaywrightComRetry(comando, env, maxTentativas = 2) {
+  return new Promise((resolve) => {
+    let tentativaAtual = 0;
+    
+    function executar() {
+      tentativaAtual++;
+      const tentativa = tentativaAtual;
+      
+      console.log(`\n🚀 Executando Playwright (tentativa ${tentativa}/${maxTentativas})...`);
+      
+      const processo = spawn(comando, {
+        env: envComUTF8(env),
+        cwd: __dirname,
+        shell: true
+      });
+      configuraSpawnUTF8(processo);
+      
+      let stdout = '';
+      let stderr = '';
+      
+      processo.stdout.on('data', (data) => {
+        const texto = data.toString('utf-8');
+        stdout += texto;
+        process.stdout.write(texto);
+      });
+      
+      processo.stderr.on('data', (data) => {
+        const texto = data.toString('utf-8');
+        stderr += texto;
+        process.stderr.write(texto);
+      });
+      
+      processo.on('close', (code) => {
+        // Verifica se teve sucesso real (independente do código de saída)
+        const temLinkProva = stdout.match(/🔗\s*(https?:\/\/[^\s]+)/);
+        const temSucessoTransferencia = stdout.includes('INSCRICAO_TRANSFERENCIA_SUCESSO');
+        const temNumeroInscricao = stdout.match(/NUMERO_INSCRICAO_EXTRAIDO:\s*(\d+)/);
+        const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição') || stdout.includes('CPF ja possui');
+        const erroCheckout = stdout.includes('NÃO CONSEGUIU IR PARA O CHECKOUT') || stdout.includes('NAO CONSEGUIU IR PARA O CHECKOUT');
+        const erroNaoFinalizada = stdout.includes('INSCRIÇÃO NÃO FINALIZADA') || stdout.includes('INSCRICAO NAO FINALIZADA');
+        const linkNaoCapturado = stdout.includes('FINALIZADO SEM LINK DA PROVA');
+        
+        const sucesso = temLinkProva || temSucessoTransferencia || temNumeroInscricao;
+        const erroRecuperavel = (erroCheckout || erroNaoFinalizada || linkNaoCapturado) && !cpfJaInscrito;
+        
+        console.log(`\n📊 Resultado tentativa ${tentativa}: código=${code}, sucesso=${sucesso}, cpfJaInscrito=${cpfJaInscrito}, erroRecuperavel=${erroRecuperavel}`);
+        
+        // Se deu sucesso ou CPF já inscrito, retorna imediatamente
+        if (sucesso || cpfJaInscrito) {
+          resolve({ code, stdout, stderr, tentativa });
+          return;
+        }
+        
+        // Se erro recuperável e ainda tem tentativas, tenta de novo
+        if (erroRecuperavel && tentativa < maxTentativas) {
+          console.log(`\n🔄 ════════════════════════════════════════════════════════════`);
+          console.log(`🔄 RETRY AUTOMÁTICO: Tentativa ${tentativa} falhou, tentando novamente...`);
+          console.log(`🔄 ════════════════════════════════════════════════════════════\n`);
+          executar();
+          return;
+        }
+        
+        // Sem mais tentativas, retorna o que tem
+        resolve({ code, stdout, stderr, tentativa });
+      });
+      
+      processo.on('error', (err) => {
+        console.log(`❌ Erro ao iniciar processo: ${err.message}`);
+        if (tentativa < maxTentativas) {
+          console.log(`🔄 Tentando novamente...`);
+          executar();
+        } else {
+          resolve({ code: 1, stdout, stderr: err.message, tentativa });
+        }
+      });
+    }
+    
+    executar();
+  });
+}
 const BASE_URL = process.env.BASE_URL || `https://playwright-playwright.6tqx2r.easypanel.host`;
 
 // ═══════════════════════════════════════════════════════════════════════════
