@@ -130,7 +130,7 @@ app.post('/kommo/upload-lead', async (req, res) => {
     BOLETO_PATH: arquivosParaUpload.boleto || ''
   };
 
-  const processo = spawn('npx', ['playwright', 'test', 'tests/kommo-upload.spec.js', '--config=playwright.config.server.js'], {
+  const processo = spawn('npx playwright test tests/kommo-upload.spec.js --config=playwright.config.server.js', {
     env: envUpload,
     cwd: __dirname,
     shell: true
@@ -301,7 +301,7 @@ app.post('/inscricao', async (req, res) => {
   env.LOG_ID = logId ? logId.toString() : '';
 
   // Executa o Playwright em background
-  const processo = spawn('npx', ['playwright', 'test', '--config=playwright.config.server.js'], {
+  const processo = spawn('npx playwright test --config=playwright.config.server.js', {
     env,
     cwd: __dirname,
     shell: true
@@ -463,7 +463,7 @@ app.post('/inscricao/sync', async (req, res) => {
   console.log('');
   
   // IMPORTANTE: Usa apenas o script inscricao.spec.js (vestibular)
-  const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao.spec.js', '--config=playwright.config.server.js'], {
+  const processo = spawn('npx playwright test tests/inscricao.spec.js --config=playwright.config.server.js', {
     env,
     cwd: __dirname,
     shell: true
@@ -688,7 +688,7 @@ app.post('/inscricao-enem/sync', async (req, res) => {
   console.log('🚀 Iniciando Playwright (ENEM)...');
   console.log('');
   
-  const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao-enem.spec.js', '--config=playwright.config.server.js'], {
+  const processo = spawn('npx playwright test tests/inscricao-enem.spec.js --config=playwright.config.server.js', {
     env,
     cwd: __dirname,
     shell: true
@@ -844,7 +844,7 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
   console.log('🚀 Iniciando Playwright (ENEM SEM NOTA)...');
   console.log('');
   
-  const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao-enem-sem-nota.spec.js', '--config=playwright.config.server.js'], {
+  const processo = spawn('npx playwright test tests/inscricao-enem-sem-nota.spec.js --config=playwright.config.server.js', {
     env,
     cwd: __dirname,
     shell: true
@@ -1051,7 +1051,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
   console.log('🚀 Iniciando Playwright (PÓS-GRADUAÇÃO)...');
   console.log('');
   
-  const processo = spawn('npx', ['playwright', 'test', 'tests/inscricao-pos.spec.js', '--config=playwright.config.server.js'], {
+  const processo = spawn('npx playwright test tests/inscricao-pos.spec.js --config=playwright.config.server.js', {
     env,
     cwd: __dirname,
     shell: true
@@ -1174,7 +1174,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
             };
 
             kommoUploadResult = await new Promise((resolve) => {
-              const uploadProc = spawn('npx', ['playwright', 'test', 'tests/kommo-upload.spec.js', '--config=playwright.config.server.js'], {
+              const uploadProc = spawn('npx playwright test tests/kommo-upload.spec.js --config=playwright.config.server.js', {
                 env: envUpload,
                 cwd: __dirname,
                 shell: true
