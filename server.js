@@ -6,8 +6,19 @@ const path = require('path');
 const fs = require('fs');
 const db = require('./database/db');
 
+// Força encoding UTF-8 no processo Node
+process.stdout.setEncoding('utf-8');
+process.stderr.setEncoding('utf-8');
+
 const app = express();
 app.use(express.json());
+
+// Helper: configura spawn com encoding UTF-8
+function configuraSpawnUTF8(processo) {
+  processo.stdout.setEncoding('utf-8');
+  processo.stderr.setEncoding('utf-8');
+  return processo;
+}
 
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `https://playwright-playwright.6tqx2r.easypanel.host`;
@@ -135,6 +146,7 @@ app.post('/kommo/upload-lead', async (req, res) => {
     cwd: __dirname,
     shell: true
   });
+  configuraSpawnUTF8(processo);
 
   let stdout = '';
   let stderr = '';
@@ -306,6 +318,7 @@ app.post('/inscricao', async (req, res) => {
     cwd: __dirname,
     shell: true
   });
+  configuraSpawnUTF8(processo);
 
   let stdout = '';
   let stderr = '';
@@ -468,6 +481,7 @@ app.post('/inscricao/sync', async (req, res) => {
     cwd: __dirname,
     shell: true
   });
+  configuraSpawnUTF8(processo);
 
   let stdout = '';
   let stderr = '';
@@ -702,6 +716,7 @@ app.post('/inscricao-enem/sync', async (req, res) => {
     cwd: __dirname,
     shell: true
   });
+  configuraSpawnUTF8(processo);
 
   let stdout = '';
   let stderr = '';
@@ -858,6 +873,7 @@ app.post('/inscricao-enem-sem-nota/sync', async (req, res) => {
     cwd: __dirname,
     shell: true
   });
+  configuraSpawnUTF8(processo);
 
   let stdout = '';
   let stderr = '';
@@ -1068,6 +1084,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     cwd: __dirname,
     shell: true
   });
+  configuraSpawnUTF8(processo);
 
   let stdout = '';
   let stderr = '';
@@ -1233,6 +1250,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
                 cwd: __dirname,
                 shell: true
               });
+              configuraSpawnUTF8(uploadProc);
 
               let uploadStdout = '';
               uploadProc.stdout.on('data', (data) => {
@@ -1373,6 +1391,7 @@ app.post('/inscricao-transferencia/sync', async (req, res) => {
   const processo = spawn('npx playwright test tests/inscricao-transferencia.spec.js --config=playwright.config.server.js', {
     env, cwd: __dirname, shell: true
   });
+  configuraSpawnUTF8(processo);
 
   let stdout = '';
   let stderr = '';
