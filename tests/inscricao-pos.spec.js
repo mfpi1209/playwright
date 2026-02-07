@@ -2571,25 +2571,141 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log(`   📍 URL: ${page.url()}`);
   
   await page.waitForTimeout(2000);
+
+  // ── Se estamos em #/profile, precisamos avançar para #/shipping ──
+  const urlE10 = page.url();
+  if (urlE10.includes('#/profile') || urlE10.includes('#/cart')) {
+    console.log('   📍 Checkout está na etapa Profile/Cart, tentando avançar para Shipping...');
+    
+    for (let tentProfile = 1; tentProfile <= 3; tentProfile++) {
+      console.log(`   🔄 Tentativa ${tentProfile}/3 de avançar para Shipping...`);
+      
+      // Tenta preencher dados de perfil se existirem campos vazios
+      try {
+        // Email
+        const campoEmail = page.locator('#client-email, input[data-i18n*="email"], input[id*="client-email"]').first();
+        if (await campoEmail.isVisible({ timeout: 2000 }).catch(() => false)) {
+          const valorEmail = await campoEmail.inputValue().catch(() => '');
+          if (!valorEmail) {
+            await campoEmail.fill(CLIENTE.email);
+            console.log(`   ✅ Email preenchido no checkout: ${CLIENTE.email}`);
+          }
+        }
+        
+        // Nome
+        const campoNome = page.locator('#client-first-name, input[data-i18n*="firstName"]').first();
+        if (await campoNome.isVisible({ timeout: 1000 }).catch(() => false)) {
+          const valorNome = await campoNome.inputValue().catch(() => '');
+          if (!valorNome) {
+            await campoNome.fill(CLIENTE.nome.split(' ')[0]);
+            console.log(`   ✅ Primeiro nome preenchido`);
+          }
+        }
+        
+        // Sobrenome
+        const campoSobrenome = page.locator('#client-last-name, input[data-i18n*="lastName"]').first();
+        if (await campoSobrenome.isVisible({ timeout: 1000 }).catch(() => false)) {
+          const valorSobrenome = await campoSobrenome.inputValue().catch(() => '');
+          if (!valorSobrenome) {
+            const partes = CLIENTE.nome.split(' ');
+            await campoSobrenome.fill(partes.slice(1).join(' '));
+            console.log(`   ✅ Sobrenome preenchido`);
+          }
+        }
+        
+        // Documento (CPF)
+        const campoDoc = page.locator('#client-document, input[data-i18n*="document"]').first();
+        if (await campoDoc.isVisible({ timeout: 1000 }).catch(() => false)) {
+          const valorDoc = await campoDoc.inputValue().catch(() => '');
+          if (!valorDoc) {
+            await campoDoc.fill(CLIENTE.cpf);
+            console.log(`   ✅ CPF preenchido no checkout`);
+          }
+        }
+        
+        // Telefone
+        const campoTel = page.locator('#client-phone, input[data-i18n*="phone"]').first();
+        if (await campoTel.isVisible({ timeout: 1000 }).catch(() => false)) {
+          const valorTel = await campoTel.inputValue().catch(() => '');
+          if (!valorTel) {
+            await campoTel.fill(CLIENTE.telefone);
+            console.log(`   ✅ Telefone preenchido no checkout`);
+          }
+        }
+      } catch (e) {
+        console.log(`   ⚠️ Erro preenchendo perfil: ${e.message.split('\n')[0]}`);
+      }
+      
+      await page.waitForTimeout(1000);
+      
+      // Tenta clicar no botão para avançar
+      const botoesAvancar = [
+        page.locator('#go-to-shipping'),
+        page.locator('#btn-go-to-shipping'),  
+        page.locator('#fake-button-go-to-shipping'),
+        page.getByRole('button', { name: /ir para a entrega/i }),
+        page.getByRole('button', { name: /ir para o endereço/i }),
+        page.locator('button.submit[data-i18n*="goToShipping"]'),
+        page.locator('a[href="#/shipping"]'),
+      ];
+      
+      let clicouAvancar = false;
+      for (const btn of botoesAvancar) {
+        try {
+          if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
+            await btn.scrollIntoViewIfNeeded().catch(() => {});
+            await btn.click({ force: true, timeout: 5000 });
+            console.log('   ✅ Clicou para avançar para Shipping');
+            clicouAvancar = true;
+            break;
+          }
+        } catch (e) { /* próximo */ }
+      }
+      
+      if (!clicouAvancar) {
+        // Fallback: navega via hash
+        console.log('   📍 Nenhum botão encontrado, navegando via hash...');
+        await page.evaluate(() => { window.location.hash = '#/shipping'; });
+      }
+      
+      await page.waitForTimeout(4000);
+      
+      // Verifica se avançou
+      const urlApos = page.url();
+      if (urlApos.includes('#/shipping') || urlApos.includes('#/payment')) {
+        console.log(`   ✅ Avançou para: ${urlApos.split('#')[1]}`);
+        break;
+      }
+      
+      // Verifica se o campo CEP já está visível (mesmo sem mudar a URL)
+      const cepVisivel = await page.locator('#ship-postalCode, input[name="postalCode"]').first()
+        .isVisible({ timeout: 2000 }).catch(() => false);
+      if (cepVisivel) {
+        console.log('   ✅ Campo CEP já visível, prosseguindo...');
+        break;
+      }
+      
+      console.log(`   ⚠️ URL continua em: ${urlApos.split('#')[1] || urlApos}`);
+    }
+  }
+  
+  await page.waitForTimeout(1000);
+  console.log(`   📍 URL atual: ${page.url()}`);
   
   // Screenshot para debug
   try {
     await page.screenshot({ path: 'debug-etapa10-endereco.png', fullPage: true });
-    // debug screenshot salvo silenciosamente
   } catch (e) {}
   
-  // Verifica se o endereço já está preenchido (seção de endereço mostra dados)
+  // Verifica se o endereço já está preenchido
   const enderecoJaPreenchido = await page.evaluate(() => {
-    // Verifica se há texto de endereço visível na seção de endereço
     const secaoEndereco = document.querySelector('#shipping-data, .shipping-data');
     if (secaoEndereco) {
       const texto = secaoEndereco.textContent || '';
-      // Se tiver CEP ou nome de cidade, o endereço já está preenchido
       if (texto.match(/\d{5}-?\d{3}/) || texto.includes('São Paulo') || texto.includes('Brasil')) {
         return true;
       }
     }
-    // Verifica se a seção de pagamento está visível (significa que endereço já foi preenchido)
     const secaoPagamento = document.querySelector('#payment-data');
     if (secaoPagamento && secaoPagamento.offsetParent !== null) {
       return true;
@@ -2597,7 +2713,7 @@ test('inscricao-pos', async ({ page, context }) => {
     return false;
   });
   
-  // Mesmo com endereço "preenchido", verifica se precisa validar o CEP (botão "Calcular")
+  // Verifica botão "Calcular"
   const btnCalcular = page.locator('#shipping-calculate-link, button:has-text("Calcular")').first();
   const calculaVisivel = await btnCalcular.isVisible({ timeout: 2000 }).catch(() => false);
 
@@ -2606,7 +2722,7 @@ test('inscricao-pos', async ({ page, context }) => {
   } else {
     console.log('   📝 Preenchendo CEP e Número...');
 
-    // Preenche CEP usando Playwright .fill() (funciona com React/VTEX)
+    // Preenche CEP
     const seletoresCep = [
       '#ship-postalCode',
       'input[name="postalCode"]',
@@ -2620,6 +2736,7 @@ test('inscricao-pos', async ({ page, context }) => {
       try {
         const campo = page.locator(sel).first();
         if (await campo.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await campo.scrollIntoViewIfNeeded().catch(() => {});
           await campo.click();
           await campo.fill('');
           await campo.type(CLIENTE.cep, { delay: 50 });
@@ -2639,7 +2756,36 @@ test('inscricao-pos', async ({ page, context }) => {
     const calcVisivel = await btnCalc.isVisible({ timeout: 3000 }).catch(() => false);
     if (calcVisivel) {
       console.log('   📝 Clicando em "Calcular" (validar endereço)...');
-      await btnCalc.click();
+      // Scroll forçado via JS + click com force para evitar "element is outside of the viewport"
+      try {
+        await btnCalc.scrollIntoViewIfNeeded().catch(() => {});
+        await page.waitForTimeout(300);
+      } catch (e) {}
+      try {
+        await page.evaluate((sel) => {
+          const el = document.querySelector(sel);
+          if (el) el.scrollIntoView({ block: 'center', behavior: 'instant' });
+        }, '#shipping-calculate-link');
+        await page.waitForTimeout(300);
+      } catch (e) {}
+      
+      // Tenta clicar normalmente primeiro, depois com force
+      try {
+        await btnCalc.click({ timeout: 5000 });
+      } catch (e) {
+        console.log('   📍 Click normal falhou, tentando force...');
+        try {
+          await btnCalc.click({ force: true, timeout: 5000 });
+        } catch (e2) {
+          // Último fallback: click via JavaScript
+          console.log('   📍 Force click falhou, tentando JS click...');
+          await page.evaluate(() => {
+            const btn = document.querySelector('#shipping-calculate-link') || 
+                        document.querySelector('button:contains("Calcular")');
+            if (btn) btn.click();
+          });
+        }
+      }
       await page.waitForTimeout(5000);
       console.log('   ✅ Endereço validado');
     }
@@ -2657,6 +2803,7 @@ test('inscricao-pos', async ({ page, context }) => {
       try {
         const campo = page.locator(sel).first();
         if (await campo.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await campo.scrollIntoViewIfNeeded().catch(() => {});
           await campo.click();
           await campo.fill('');
           await campo.type(CLIENTE.numero, { delay: 50 });
