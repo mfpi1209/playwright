@@ -1,0 +1,103 @@
+{
+  "name": "Kommo Upload - Bearer Token",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kommo-upload",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.fileUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download",
+      "name": "Download Arquivo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://admamoeduitcombr.kommo.com/api/v4/leads/{{ $('Webhook').item.json.leadId }}/notes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "=[\n  {\n    \"note_type\": \"common\",\n    \"params\": {\n      \"text\": \"📎 Arquivo anexado: {{ $('Webhook').item.json.fileName }}\\n\\nBaixe em: {{ $('Webhook').item.json.fileUrl }}\"\n    }\n  }\n]",
+        "options": {}
+      },
+      "id": "add-note",
+      "name": "Adicionar Nota no Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "kommo-bearer",
+          "name": "Kommo Bearer Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"sucesso\": true,\n  \"leadId\": {{ $('Webhook').item.json.leadId }},\n  \"nota\": \"Arquivo anexado com sucesso\",\n  \"arquivo\": \"{{ $('Webhook').item.json.fileName }}\",\n  \"url\": \"{{ $('Webhook').item.json.fileUrl }}\"\n}",
+        "options": {}
+      },
+      "id": "response",
+      "name": "Resposta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Download Arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Arquivo": {
+      "main": [
+        [
+          {
+            "node": "Adicionar Nota no Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adicionar Nota no Lead": {
+      "main": [
+        [
+          {
+            "node": "Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

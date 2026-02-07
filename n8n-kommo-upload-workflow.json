@@ -1,0 +1,292 @@
+{
+  "name": "Upload Arquivos Kommo após Inscrição Pós",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inscricao-pos-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook - Trigger Inscrição",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai dados do webhook\nconst leadId = $input.item.json.leadId || $input.item.json.lead_id;\nconst clienteData = $input.item.json;\n\nreturn {\n  json: {\n    leadId: leadId,\n    nome: clienteData.nome,\n    cpf: clienteData.cpf,\n    curso: clienteData.curso,\n    polo: clienteData.polo,\n    campanha: clienteData.campanha\n  }\n};"
+      },
+      "name": "Preparar Dados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://playwright-playwright.6tqx2r.easypanel.host/inscricao-pos/sync",
+        "authentication": "none",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome",
+              "value": "={{ $json.nome }}"
+            },
+            {
+              "name": "cpf",
+              "value": "={{ $json.cpf }}"
+            },
+            {
+              "name": "email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "telefone",
+              "value": "={{ $json.telefone }}"
+            },
+            {
+              "name": "curso",
+              "value": "={{ $json.curso }}"
+            },
+            {
+              "name": "polo",
+              "value": "={{ $json.polo }}"
+            },
+            {
+              "name": "campanha",
+              "value": "={{ $json.campanha }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "name": "Executar Inscrição Playwright",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.sucesso }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            },
+            {
+              "leftValue": "={{ $json.screenshotUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Verificar Sucesso",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai nomes dos arquivos das URLs\nconst screenshotUrl = $input.item.json.screenshotUrl;\nconst boletoUrl = $input.item.json.boletoUrl;\nconst leadId = $input.item.json.leadId || $('Preparar Dados').item.json.leadId;\n\nconst screenshotPath = screenshotUrl ? screenshotUrl.split('/files/')[1] : null;\nconst boletoPath = boletoUrl ? boletoUrl.split('/files/')[1] : null;\n\nreturn {\n  json: {\n    leadId: leadId,\n    screenshotPath: screenshotPath,\n    boletoPath: boletoPath,\n    numeroInscricaoSiaa: $input.item.json.numeroInscricaoSiaa,\n    numeroPedidoVtex: $input.item.json.numeroPedidoVtex\n  }\n};"
+      },
+      "name": "Extrair Paths dos Arquivos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://playwright-playwright.6tqx2r.easypanel.host/kommo/upload",
+        "authentication": "none",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\n  \"leadId\": {{ $json.leadId }},\n  \"screenshotPath\": \"{{ $json.screenshotPath }}\",\n  \"boletoPath\": \"{{ $json.boletoPath }}\",\n  \"fieldId\": 694015\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "name": "Upload Arquivos para Kommo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.sucesso }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Upload OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"sucesso\": true,\n  \"mensagem\": \"Inscrição e upload concluídos com sucesso\",\n  \"leadId\": {{ $('Extrair Paths dos Arquivos').item.json.leadId }},\n  \"numeroInscricaoSiaa\": \"{{ $('Extrair Paths dos Arquivos').item.json.numeroInscricaoSiaa }}\",\n  \"numeroPedidoVtex\": \"{{ $('Extrair Paths dos Arquivos').item.json.numeroPedidoVtex }}\",\n  \"arquivosAnexados\": {{ $json.arquivos }}\n}",
+        "options": {}
+      },
+      "name": "Responder Sucesso",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1650, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"sucesso\": false,\n  \"mensagem\": \"Falha no upload dos arquivos\",\n  \"erro\": {{ $json }}\n}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "name": "Responder Erro Upload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"sucesso\": false,\n  \"mensagem\": \"Falha na inscrição\",\n  \"erro\": {{ $json.erro || 'Erro desconhecido' }}\n}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "name": "Responder Erro Inscrição",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 400]
+    }
+  ],
+  "connections": {
+    "Webhook - Trigger Inscrição": {
+      "main": [
+        [
+          {
+            "node": "Preparar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Dados": {
+      "main": [
+        [
+          {
+            "node": "Executar Inscrição Playwright",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executar Inscrição Playwright": {
+      "main": [
+        [
+          {
+            "node": "Verificar Sucesso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar Sucesso": {
+      "main": [
+        [
+          {
+            "node": "Extrair Paths dos Arquivos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Erro Inscrição",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Paths dos Arquivos": {
+      "main": [
+        [
+          {
+            "node": "Upload Arquivos para Kommo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Arquivos para Kommo": {
+      "main": [
+        [
+          {
+            "node": "Upload OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload OK?": {
+      "main": [
+        [
+          {
+            "node": "Responder Sucesso",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder Erro Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

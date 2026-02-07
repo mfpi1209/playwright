@@ -1,0 +1,231 @@
+{
+  "name": "Kommo - Upload Arquivo Completo",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kommo-upload-test",
+        "options": {}
+      },
+      "id": "webhook1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "kommo-upload"
+    },
+    {
+      "parameters": {
+        "url": "https://admamoeduitcombr.kommo.com/ajax/v4/files/issue_token",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $json.cookies }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "options": {}
+      },
+      "id": "issue-token",
+      "name": "1. Issue Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1",
+          "name": "Kommo Session"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://drive-g.kommo.com/v1.0/sessions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-auth-token",
+              "value": "={{ $('1. Issue Token').item.json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\n  \"file_uuid\": \"\",\n  \"file_name\": \"{{ $('Webhook').item.json.fileName }}\",\n  \"file_size\": {{ $('Webhook').item.json.fileSize }}\n}",
+        "options": {}
+      },
+      "id": "create-session",
+      "name": "2. Create Upload Session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('2. Create Upload Session').item.json.upload_url }}",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "options": {}
+      },
+      "id": "upload-binary",
+      "name": "3. Upload Binary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://admamoeduitcombr.kommo.com/api/v4/leads/{{ $('Webhook').item.json.leadId }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "jsonBody": "={\n  \"custom_fields_values\": [\n    {\n      \"field_id\": 694015,\n      \"values\": [\n        {\n          \"value\": {\n            \"file_uuid\": \"{{ $('3. Upload Binary').item.json.uuid }}\",\n            \"file_name\": \"{{ $('Webhook').item.json.fileName }}\",\n            \"file_size\": {{ $('Webhook').item.json.fileSize }}\n          }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "attach-lead",
+      "name": "4. Attach to Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1",
+          "name": "Kommo Session"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"sucesso\": true,\n  \"leadId\": {{ $('Webhook').item.json.leadId }},\n  \"fileUuid\": \"{{ $('3. Upload Binary').item.json.uuid }}\",\n  \"fileName\": \"{{ $('Webhook').item.json.fileName }}\",\n  \"mensagem\": \"Arquivo anexado com sucesso!\"\n}",
+        "options": {}
+      },
+      "id": "response",
+      "name": "Responder Sucesso",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Webhook').item.json.fileUrl }}",
+        "authentication": "none",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-file",
+      "name": "Download Arquivo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "1. Issue Token",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Download Arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Issue Token": {
+      "main": [
+        [
+          {
+            "node": "2. Create Upload Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Create Upload Session": {
+      "main": [
+        [
+          {
+            "node": "3. Upload Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Upload Binary": {
+      "main": [
+        [
+          {
+            "node": "4. Attach to Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Attach to Lead": {
+      "main": [
+        [
+          {
+            "node": "Responder Sucesso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Arquivo": {
+      "main": [
+        [
+          {
+            "node": "2. Create Upload Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

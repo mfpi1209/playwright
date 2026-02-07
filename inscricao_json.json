@@ -1,0 +1,2858 @@
+{
+  "name": "inscricao",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ==============================================\n// PROCESSA DADOS RAW DA API DO KOMMO\n// Extrai campos customizados ANTES do Switch2\n// ==============================================\n\n// 1. Tenta encontrar os dados em diferentes locais\nlet rawData = $json;\nlet parsed = null;\n\n// Tenta $json._embedded diretamente\nif (rawData._embedded && rawData._embedded.leads) {\n  parsed = rawData;\n}\n// Tenta $json.data como string\nelse if (rawData.data && typeof rawData.data === 'string') {\n  try {\n    parsed = JSON.parse(rawData.data);\n  } catch (e) {\n    return [{ json: { hasLead: false, error: 'JSON parse error' } }];\n  }\n}\n// Tenta $json.data como objeto\nelse if (rawData.data && rawData.data._embedded) {\n  parsed = rawData.data;\n}\n\n// 2. Verifica se tem leads\nconst leads = parsed?._embedded?.leads;\nif (!Array.isArray(leads) || leads.length === 0) {\n  return [{ json: { hasLead: false } }];\n}\n\nconst lead = leads[0];\nconst fields = {};\nconst fieldNames = [];\n\n// 3. Extrai campos customizados\nfor (const field of lead.custom_fields_values || []) {\n  const name = field.field_name;\n  fieldNames.push(name);\n  const values = field.values || [];\n  \n  // Para arquivos - verifica se tem file_uuid ou file_name\n  if (values[0] && (values[0].file_uuid || values[0].file_name)) {\n    fields[name] = values[0];\n  }\n  // Multiselect\n  else if (field.field_type === 'multiselect' || Array.isArray(values) && values.length > 1) {\n    fields[name] = values.map(v => v.value);\n  }\n  // Valor simples\n  else {\n    fields[name] = values[0]?.value ?? null;\n  }\n}\n\n// ===============================\n// FUNÇÕES DE FORMATAÇÃO\n// ===============================\n\n// Formata CEP: 8 dígitos com zeros à esquerda\nfunction formatarCEP(valor) {\n  if (!valor) return null;\n  const apenasNumeros = String(valor).replace(/\\D/g, '');\n  if (apenasNumeros.length === 0) return null;\n  return apenasNumeros.padStart(8, '0');\n}\n\n// Formata CPF: 11 dígitos com zeros à esquerda\nfunction formatarCPF(valor) {\n  if (!valor) return null;\n  const apenasNumeros = String(valor).replace(/\\D/g, '');\n  if (apenasNumeros.length === 0) return null;\n  return apenasNumeros.padStart(11, '0');\n}\n\n// Remove DDI do telefone (ex: 5511984393285 -> 11984393285)\nfunction formatarTelefone(valor) {\n  if (!valor) return null;\n  const apenasNumeros = String(valor).replace(/\\D/g, '');\n  if (apenasNumeros.length === 0) return null;\n  // Se tem 13 dígitos e começa com 55, é celular com DDI\n  if (apenasNumeros.length === 13 && apenasNumeros.startsWith('55')) {\n    return apenasNumeros.substring(2);\n  }\n  // Se tem 12 dígitos e começa com 55, é fixo com DDI\n  if (apenasNumeros.length === 12 && apenasNumeros.startsWith('55')) {\n    return apenasNumeros.substring(2);\n  }\n  return apenasNumeros;\n}\n\n// Função para buscar campo por nome EXATO primeiro, depois parcial\nfunction findFieldExact(exactNames, partialName) {\n  // Primeiro tenta encontrar por nome exato (case insensitive)\n  for (const exactName of exactNames) {\n    const lower = exactName.toLowerCase();\n    for (const key of Object.keys(fields)) {\n      if (key.toLowerCase() === lower || key.toLowerCase().replace(/[_\\s]/g, '') === lower.replace(/[_\\s]/g, '')) {\n        return fields[key];\n      }\n    }\n  }\n  // Se não encontrou, busca por nome parcial\n  const lowerPartial = partialName.toLowerCase();\n  for (const key of Object.keys(fields)) {\n    if (key.toLowerCase().includes(lowerPartial)) {\n      return fields[key];\n    }\n  }\n  return null;\n}\n\nfunction findField(partialName) {\n  const lower = partialName.toLowerCase();\n  for (const key of Object.keys(fields)) {\n    if (key.toLowerCase().includes(lower)) {\n      return fields[key];\n    }\n  }\n  return null;\n}\n\n// Normaliza polo - 'polo mais próximo' vira 'indefinido'\nfunction normalizarPolo(valor) {\n  if (!valor || typeof valor !== 'string') return valor;\n  const normalizado = valor.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').trim();\n  if (normalizado === 'polo mais proximo' || normalizado.includes('mais proximo') || normalizado === 'indefinido') {\n    return 'indefinido';\n  }\n  return valor;\n}\n\n// Busca polo_inscricao especificamente (Polo_Inscicao tem prioridade sobre Polo)\nconst poloInscricaoRaw = findFieldExact(['Polo_Inscicao', 'Polo_Inscricao', 'polo_inscricao'], 'inscicao') || findFieldExact(['Polo'], 'polo');\nconst poloInscricaoFinal = normalizarPolo(poloInscricaoRaw);\n\n// Extrai e formata CEP e CPF\nconst cepRaw = findFieldExact(['CEP', 'cep', 'Cep'], 'cep') || fields['CEP'] || fields['cep'] || fields['Cep'];\nconst cpfRaw = findField('cpf');\nconst telefoneRaw = findFieldExact(['Telefone Inscricao', 'Telefone_Inscricao'], 'telefone');\n\nreturn [{\n  json: {\n    hasLead: true,\n    lead_id: lead.id,\n    tipo_inscricao: findFieldExact(['Tipo_Inscricao', 'Tipo_Inscrição'], 'tipo'),\n    resultado_enem: findField('resultado') || findField('enem'),\n    polo_inscricao: poloInscricaoFinal,\n    curso_inscricao: findFieldExact(['Curso Inscrição', 'Curso_Inscricao'], 'curso inscri') || findField('curso'),\n    nome: findField('nome'),\n    cpf: formatarCPF(cpfRaw),\n    rg: findField('rg'),\n    email: findField('mail') || findField('email'),\n    numero_residencia: findField('numero') || findField('residencia'),\n    cep: formatarCEP(cepRaw),\n    nome_da_mae: findField('mae') || findField('mãe'),\n    data_nascimento: findField('nascimento'),\n    curso: findField('curso'),\n    telefone_inscrição: formatarTelefone(telefoneRaw),\n    ano_enem: findFieldExact(['Ano ENEM', 'Ano_ENEM', 'ano_enem'], 'ano') || new Date().getFullYear().toString(),\n    _debug_field_names: fieldNames,\n    _debug_all_fields: fields,\n    _debug_polo_raw: poloInscricaoRaw,\n    _debug_cep_raw: cepRaw,\n    _debug_cpf_raw: cpfRaw,\n    _debug_telefone_raw: telefoneRaw\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11888,
+        -816
+      ],
+      "id": "ab60c96c-26e6-451a-98ca-bb08624d4c40",
+      "name": "Processa API Kommo"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://playwright-playwright.6tqx2r.easypanel.host/inscricao/sync",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome",
+              "value": "={{ $json.nome }}"
+            },
+            {
+              "name": "cpf",
+              "value": "={{ $json.cpf }}"
+            },
+            {
+              "name": "email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "telefone",
+              "value": "={{ $json['telefone_inscrição'] }}"
+            },
+            {
+              "name": "cep",
+              "value": "={{ $json.cep }}"
+            },
+            {
+              "name": "estado",
+              "value": "São Paulo"
+            },
+            {
+              "name": "cidade",
+              "value": "={{ $json.cidade }}"
+            },
+            {
+              "name": "curso",
+              "value": "={{ $json.curso_inscricao }}"
+            },
+            {
+              "name": "polo",
+              "value": "={{ $json.polo_inscricao }}"
+            },
+            {
+              "name": "tipoVestibular",
+              "value": "={{ $json.tipo_inscricao }}"
+            },
+            {
+              "name": "nascimento",
+              "value": "={{ $json.data_nascimento }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -7184,
+        -1424
+      ],
+      "id": "4c77fd18-8ef7-4dfa-a5b6-473877b3526c",
+      "name": "HTTP Request10",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "leads",
+        "operation": "updateLeads",
+        "collection": {
+          "lead": [
+            {
+              "id": "={{ $('Switch6').item.json.lead_id }}",
+              "pipeline_id": 5481944,
+              "status_id": 48566195,
+              "custom_fields_values": {
+                "custom_field": [
+                  {
+                    "data": "{\"id\":693845,\"type\":\"url\"}",
+                    "value": "={{ $json.linkProva }}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -6400,
+        -1488
+      ],
+      "id": "d89bf018-032d-4a03-9e8b-57a44eb8c572",
+      "name": "Update leads7",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -6176,
+        -1488
+      ],
+      "id": "05776d4b-8036-41dc-a220-1c9ec9866e9d",
+      "name": "Wait9",
+      "webhookId": "9919778a-6e53-462b-afd1-e283a42b8587"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "4e7271ed-85d3-4f71-a16a-3a1652a78a9a",
+                    "leftValue": "={{ $json.sucesso }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Inscrição Ok"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "2d91fcb1-5803-400a-bc52-ddab3b759c7c",
+                    "leftValue": "={{ $json.sucesso }}",
+                    "rightValue": false,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Inscrição Não Ok"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -6848,
+        -1296
+      ],
+      "id": "693077c9-24d4-4d3d-a548-be6af9264472",
+      "name": "Switch5"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.tipo_inscricao }}",
+                    "rightValue": "Vestibular Redação",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "e3576bf3-6ee7-4f6e-b8f1-218a8aa30693"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Redação"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c5f2183c-b1e7-481d-a443-d3da8c19a11b",
+                    "leftValue": "={{ $json.tipo_inscricao }}",
+                    "rightValue": "Vestibular Múltipla Escolha",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Múltipla Escolha"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "9b102da1-abca-42ee-a7c5-e62d13d53840",
+                    "leftValue": "={{ $json.tipo_inscricao }}",
+                    "rightValue": "ENEM",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ENEM"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -7744,
+        -848
+      ],
+      "id": "15fcb7f7-c83a-4010-b822-68b819fe132f",
+      "name": "Switch6"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "polo_loc"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -9472,
+        -768
+      ],
+      "id": "4ba68625-4efc-47e8-9635-a6c976694974",
+      "name": "Get many rows",
+      "credentials": {
+        "supabaseApi": {
+          "id": "a59N4utmvOWppCz4",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Etapa 2 – Extrai latitude/longitude do resultado do Geocoding\n * Entrada esperada: resposta JSON do HTTP Request do Google Maps\n * Saída: objeto com origemString (\"lat,lng\"), origem (objeto), departure e limite_polos\n */\n\nconst res = $json;\n\n// Verifica se veio resposta válida\nif (!res.results || !Array.isArray(res.results) || res.results.length === 0) {\n  return [\n    {\n      json: {\n        status: \"error\",\n        message: res.error_message || \"Endereço ou CEP não encontrado\",\n        raw: res\n      }\n    }\n  ];\n}\n\n// Pega o primeiro resultado do Google (mais relevante)\nconst first = res.results[0];\nconst loc = first.geometry?.location;\n\n// Valida se tem latitude/longitude\nif (!loc || typeof loc.lat !== \"number\" || typeof loc.lng !== \"number\") {\n  return [\n    {\n      json: {\n        status: \"error\",\n        message: \"Resposta do Geocoding não contém coordenadas válidas\",\n        raw: res\n      }\n    }\n  ];\n}\n\n// Monta o objeto de origem\nconst origem = {\n  lat: loc.lat,\n  lng: loc.lng,\n  endereco_formatado: first.formatted_address || null,\n  place_id: first.place_id || null\n};\n\n// Monta string \"lat,lng\" (usada pela Distance Matrix)\nconst origemString = `${loc.lat},${loc.lng}`;\n\n// Define horário de partida (agora)\nconst departure = \"now\";\n\n// Define limite máximo de polos a analisar (para otimizar requisições)\nconst limite_polos = 50;\n\n// Retorna em formato que o próximo nó entende\nreturn [\n  {\n    json: {\n      origem,\n      origemString,\n      departure,\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -9312,
+        -1056
+      ],
+      "id": "89f59309-ed8a-47e8-9a60-5d702f9c0859",
+      "name": "Code in JavaScript4"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -9088,
+        -960
+      ],
+      "id": "a798603d-b117-4b83-b141-11012d42a061",
+      "name": "Merge3"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Calcula os 2 polos mais próximos da origem (em linha reta)\n * Entrada: origem (objeto com lat/lng) + lista de polos com latitude/longitude\n * Saída: dois polos mais próximos e ordenados por distância\n */\n\n// Função para calcular distância (Haversine)\nfunction calcularDistanciaKm(lat1, lon1, lat2, lon2) {\n  const R = 6371; // Raio da Terra em km\n  const dLat = (lat2 - lat1) * Math.PI / 180;\n  const dLon = (lon2 - lon1) * Math.PI / 180;\n  const a =\n    Math.sin(dLat / 2) ** 2 +\n    Math.cos(lat1 * Math.PI / 180) *\n      Math.cos(lat2 * Math.PI / 180) *\n      Math.sin(dLon / 2) ** 2;\n  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));\n  return R * c;\n}\n\n// Separa origem e polos\nconst all = $input.all().map(i => i.json);\nconst origem = all.find(i => i.origem);\nconst polos = all.filter(i => i.latitude && i.longitude);\n\nif (!origem) {\n  return [{ json: { status: \"erro\", message: \"Origem não encontrada\" } }];\n}\n\n// Calcula distâncias\nconst resultados = polos.map(p => ({\n  id: p.id,\n  nome: p.nome,\n  endereco: p.endereco,\n  latitude: p.latitude,\n  longitude: p.longitude,\n  distancia_km: calcularDistanciaKm(origem.origem.lat, origem.origem.lng, p.latitude, p.longitude)\n}));\n\n// Ordena por menor distância\nresultados.sort((a, b) => a.distancia_km - b.distancia_km);\n\n// Retorna os 2 mais próximos\nconst proximos = resultados.slice(0, 2);\n\nreturn [{ json: { origem: origem.origem, polos_proximos: proximos } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8864,
+        -960
+      ],
+      "id": "40c54f0a-48d4-4549-bfc5-c1e8613963f7",
+      "name": "Code in JavaScript11"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Etapa final — Analisa o resultado do Google Distance Matrix\n * e retorna o polo mais rápido baseado no menor tempo de transporte público.\n *\n * Entrada esperada:\n *  - $json: resposta completa da API Distance Matrix\n *  - Node \"Get many rows1\": lista dos polos com nome/endereço/latitude/longitude\n */\n\n// === 1. Carrega os dados ===\nconst data = Array.isArray($json) ? $json[0] : $json;\nconst polos = $items(\"Get many rows\").map(i => i.json); // pega todos os polos do Supabase\n\n// Validação básica\nif (!data || !data.rows?.length || !data.rows[0]?.elements) {\n  return [{ json: { status: \"erro\", message: \"Formato inválido da resposta Distance Matrix\", data } }];\n}\n\nconst elements = data.rows[0].elements;\nconst destinations = data.destination_addresses || [];\nconst origin = data.origin_addresses?.[0] || \"Origem não identificada\";\n\n// === 2. Combina dados de distância e tempo com os polos ===\nconst resultados = [];\n\nfor (let i = 0; i < elements.length; i++) {\n  const e = elements[i];\n  if (e.status === \"OK\") {\n    const destino = destinations[i] || \"Endereço não encontrado\";\n\n    // tenta encontrar o polo correspondente pelo índice\n    const polo = polos[i] || {};\n\n    resultados.push({\n      indice: i,\n      nome_polo: polo.nome || `Polo ${i + 1}`,\n      endereco_polo: polo.endereco || destino,\n      destino_google: destino,\n      distancia_metros: e.distance.value,\n      distancia_texto: e.distance.text,\n      duracao_segundos: e.duration.value,\n      duracao_texto: e.duration.text,\n    });\n  }\n}\n\n// === 3. Ordena por tempo de viagem (menor primeiro) ===\nif (resultados.length === 0) {\n  return [{ json: { status: \"erro\", message: \"Nenhum destino com status OK\", data } }];\n}\n\nresultados.sort((a, b) => a.duracao_segundos - b.duracao_segundos);\n\n// === 4. Seleciona o polo mais rápido ===\nconst maisRapido = resultados[0];\n\n// === 5. Cria link direto no Google Maps ===\nconst origemParam = encodeURIComponent(origin);\nconst destinoParam = encodeURIComponent(maisRapido.destino_google);\nconst linkRota = `https://www.google.com/maps/dir/?api=1&origin=${origemParam}&destination=${destinoParam}&travelmode=transit`;\n\n// === 6. Retorna resultado completo ===\nreturn [\n  {\n    json: {\n      status: \"ok\",\n      origem: origin,\n      mais_rapido: {\n        nome_polo: maisRapido.nome_polo,\n        endereco_polo: maisRapido.endereco_polo,\n        tempo: maisRapido.duracao_texto,\n        distancia: maisRapido.distancia_texto,\n        link_rota: linkRota\n      },\n      comparacao: resultados.map(r => ({\n        nome_polo: r.nome_polo,\n        tempo: r.duracao_texto,\n        distancia: r.distancia_texto\n      }))\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8144,
+        -928
+      ],
+      "id": "a56133fa-ff58-4ff3-a7b6-c6731bd0b285",
+      "name": "Code in JavaScript14"
+    },
+    {
+      "parameters": {
+        "url": "https://maps.googleapis.com/maps/api/geocode/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "address",
+              "value": "={{ $json.cep }}"
+            },
+            {
+              "name": "region",
+              "value": "br"
+            },
+            {
+              "name": "language",
+              "value": "pt-BR"
+            },
+            {
+              "name": "key",
+              "value": "AIzaSyAQtXFkcU4A51AAzD_awNi3ycpHR5QYKjE"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -9536,
+        -1056
+      ],
+      "id": "26e8037a-6d64-4597-9172-2919d89011fe",
+      "name": "HTTP Request11",
+      "retryOnFail": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const json = items[0].json;\n\n// ===============================\n// FUNÇÕES DE FORMATAÇÃO\n// ===============================\n\n// Formata CEP: 8 dígitos com zeros à esquerda\nfunction formatarCEP(valor) {\n  if (!valor) return null;\n  const apenasNumeros = String(valor).replace(/\\D/g, '');\n  if (apenasNumeros.length === 0) return null;\n  return apenasNumeros.padStart(8, '0');\n}\n\n// Formata CPF: 11 dígitos com zeros à esquerda\nfunction formatarCPF(valor) {\n  if (!valor) return null;\n  const apenasNumeros = String(valor).replace(/\\D/g, '');\n  if (apenasNumeros.length === 0) return null;\n  return apenasNumeros.padStart(11, '0');\n}\n\n// Remove DDI do telefone (ex: 5511984393285 -> 11984393285)\nfunction formatarTelefone(valor) {\n  if (!valor) return null;\n  const apenasNumeros = String(valor).replace(/\\D/g, '');\n  if (apenasNumeros.length === 0) return null;\n  // Se tem 13 dígitos e começa com 55, é celular com DDI\n  if (apenasNumeros.length === 13 && apenasNumeros.startsWith('55')) {\n    return apenasNumeros.substring(2);\n  }\n  // Se tem 12 dígitos e começa com 55, é fixo com DDI\n  if (apenasNumeros.length === 12 && apenasNumeros.startsWith('55')) {\n    return apenasNumeros.substring(2);\n  }\n  return apenasNumeros;\n}\n\n// ===============================\n// PEGA DADOS DO LEAD DO NODE Code in JavaScript6\n// (CEP está separado do payload!)\n// ===============================\nlet dadosLead = {};\nlet cepOriginal = null;\ntry {\n  const leadItems = $items('Code in JavaScript6');\n  if (leadItems && leadItems.length > 0) {\n    dadosLead = leadItems[0].json?.payload || {};\n    cepOriginal = leadItems[0].json?.cep || null;\n  }\n} catch (e) {\n  try {\n    const leadItems2 = $items('Code in JavaScript17');\n    if (leadItems2 && leadItems2.length > 0) {\n      dadosLead = leadItems2[0].json || {};\n      cepOriginal = dadosLead.cep || null;\n    }\n  } catch (e2) {}\n}\n\n// Se não conseguiu buscar, tenta do Processa API Kommo\nif (Object.keys(dadosLead).length === 0) {\n  try {\n    const kommoItems = $items('Processa API Kommo');\n    if (kommoItems && kommoItems.length > 0) {\n      dadosLead = kommoItems[0].json || {};\n      cepOriginal = dadosLead.cep || cepOriginal;\n    }\n  } catch (e3) {}\n}\n\n// ===============================\n// NORMALIZA POLO DE ENTRADA\n// ===============================\nlet poloEntrada = json?.mais_rapido?.nome_polo;\n\nif (typeof poloEntrada === 'string') {\n  poloEntrada = poloEntrada.toLowerCase().replace(/^polo\\s+/i, '').trim();\n}\n\n// ===============================\n// TABELA OFICIAL\n// ===============================\nconst tabelaPolos = {\n  'morumbi': { cidade: 'São Paulo', polo: 'Morumbi' },\n  'sapopemba': { cidade: 'São Paulo', polo: 'sapopemba (vila ema)' },\n  'freguesia do ó': { cidade: 'São Paulo', polo: 'freguesia' },\n  'freguesia': { cidade: 'São Paulo', polo: 'freguesia' },\n  'vila prudente': { cidade: 'São Paulo', polo: 'vila prudente 2' },\n  'vila prudente 2': { cidade: 'São Paulo', polo: 'vila prudente 2' },\n  'santana': { cidade: 'São Paulo', polo: 'santana 2' },\n  'santana 2': { cidade: 'São Paulo', polo: 'santana 2' },\n  'barra funda': { cidade: 'São Paulo', polo: 'barra funda' },\n  'taboão mituzy': { cidade: 'Taboão', polo: 'mituzi' },\n  'taboão mituzi': { cidade: 'Taboão', polo: 'mituzi' },\n  'campinas': { cidade: 'Campinas', polo: 'ouro verde' },\n  'capivari': { cidade: 'Capivari', polo: 'Capivari' },\n  'taboão centro': { cidade: 'Taboão', polo: 'Centro' },\n  'ibirapuera': { cidade: 'São Paulo', polo: 'ibirapuera' },\n  'ibirapuera/moema': { cidade: 'São Paulo', polo: 'ibirapuera' },\n  'itapira': { cidade: 'Itapira', polo: 'Centro' },\n  'vila mariana': { cidade: 'São Paulo', polo: 'Vila Mariana' }\n};\n\nconst resultado = tabelaPolos[poloEntrada] ?? { cidade: 'São Paulo', polo: poloEntrada };\n\n// ===============================\n// FORMATA CEP, CPF E TELEFONE\n// ===============================\nconst cepFinal = formatarCEP(cepOriginal || dadosLead.cep);\nconst cpfFinal = formatarCPF(dadosLead.cpf);\nconst telefoneFinal = formatarTelefone(dadosLead['telefone_inscrição'] || dadosLead.telefone_inscricao);\n\n// ===============================\n// COMBINA DADOS DO LEAD + POLO/CIDADE CALCULADOS\n// (GARANTE CEP, CPF E TELEFONE FORMATADOS!)\n// ===============================\nreturn [{\n  json: {\n    ...dadosLead,\n    cep: cepFinal,\n    cpf: cpfFinal,\n    'telefone_inscrição': telefoneFinal,\n    cidade: resultado.cidade,\n    polo_inscricao: resultado.polo,\n    precisa_geocoding: false\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8192,
+        -960
+      ],
+      "id": "bc9ce4fc-ac5a-4523-8d7e-da57be22ebe0",
+      "name": "Code in JavaScript5"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json._links.download.href }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6IjNlNzBiODRmZGU0OGMxZWU0NmNjOGQ3NjJlNjdlMmU3MDRhNzExYzIxMjcwMWZkZGI4OGNjYTI2ZjUxMjJiMTNjNzNjNGNmZTg0MmViNzZmIn0.eyJhdWQiOiIzNWEyYzNmMC0zOWE1LTQ5ZGQtYTAxZS1mMWE2ZWRkNDE0NDIiLCJqdGkiOiIzZTcwYjg0ZmRlNDhjMWVlNDZjYzhkNzYyZTY3ZTJlNzA0YTcxMWMyMTI3MDFmZGRiODhjY2EyNmY1MTIyYjEzYzczYzRjZmU4NDJlYjc2ZiIsImlhdCI6MTc2NzgxNDA4MCwibmJmIjoxNzY3ODE0MDgwLCJleHAiOjE4MDEyNjcyMDAsInN1YiI6IjgyNjE4MzciLCJncmFudF90eXBlIjoiIiwiYWNjb3VudF9pZCI6MzAyMTQ1NjgsImJhc2VfZG9tYWluIjoia29tbW8uY29tIiwidmVyc2lvbiI6Miwic2NvcGVzIjpbImNybSIsImZpbGVzIiwiZmlsZXNfZGVsZXRlIiwibm90aWZpY2F0aW9ucyIsInB1c2hfbm90aWZpY2F0aW9ucyJdLCJoYXNoX3V1aWQiOiIwNzUxYjFlOC1jMmRlLTQ3YjUtOTE3Mi0wYjA4ZGUyYTAwYzMiLCJ1c2VyX2ZsYWdzIjowLCJhcGlfZG9tYWluIjoiYXBpLWcua29tbW8uY29tIn0.hDOe22aLN7WhaOEdSZL0lSjbui1JXde2QvI6uVjCceIT2G3MG5A-8qduNlEbYAwarKH6z5kFtw36W4Z3XWKGeejPH53xUFZixAKo1DSh3-QZwTRUMeD-CeMi81JbSHR8EvDyjRJA_fQDluaVYcqFaPoZtoLmXXY-xOrEczaViMfnjnXxQA9nbYcB0eAZwUfT6yW8JUUuK35eLWK94cAzB0TyMGzjWVm2b_haNQRB9x7XniuyFh-VkP_bwJLB_o4VDnhJNGAM0HH4F9oBjYeFEY_r4_7o3x2MA-g0qTrXshWSABxnFg6rhPCwIR56lmpnK5ua37KcEkmJiYsE6oq9nA"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {}
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "image.png"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -11328,
+        -912
+      ],
+      "id": "252977f9-d347-4abc-991e-62b2c09f198b",
+      "name": "HTTP Request13"
+    },
+    {
+      "parameters": {
+        "url": "=https://drive-g.kommo.com/v1.0/files/{{ $json.resultado_enem.file_uuid }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6IjNlNzBiODRmZGU0OGMxZWU0NmNjOGQ3NjJlNjdlMmU3MDRhNzExYzIxMjcwMWZkZGI4OGNjYTI2ZjUxMjJiMTNjNzNjNGNmZTg0MmViNzZmIn0.eyJhdWQiOiIzNWEyYzNmMC0zOWE1LTQ5ZGQtYTAxZS1mMWE2ZWRkNDE0NDIiLCJqdGkiOiIzZTcwYjg0ZmRlNDhjMWVlNDZjYzhkNzYyZTY3ZTJlNzA0YTcxMWMyMTI3MDFmZGRiODhjY2EyNmY1MTIyYjEzYzczYzRjZmU4NDJlYjc2ZiIsImlhdCI6MTc2NzgxNDA4MCwibmJmIjoxNzY3ODE0MDgwLCJleHAiOjE4MDEyNjcyMDAsInN1YiI6IjgyNjE4MzciLCJncmFudF90eXBlIjoiIiwiYWNjb3VudF9pZCI6MzAyMTQ1NjgsImJhc2VfZG9tYWluIjoia29tbW8uY29tIiwidmVyc2lvbiI6Miwic2NvcGVzIjpbImNybSIsImZpbGVzIiwiZmlsZXNfZGVsZXRlIiwibm90aWZpY2F0aW9ucyIsInB1c2hfbm90aWZpY2F0aW9ucyJdLCJoYXNoX3V1aWQiOiIwNzUxYjFlOC1jMmRlLTQ3YjUtOTE3Mi0wYjA4ZGUyYTAwYzMiLCJ1c2VyX2ZsYWdzIjowLCJhcGlfZG9tYWluIjoiYXBpLWcua29tbW8uY29tIn0.hDOe22aLN7WhaOEdSZL0lSjbui1JXde2QvI6uVjCceIT2G3MG5A-8qduNlEbYAwarKH6z5kFtw36W4Z3XWKGeejPH53xUFZixAKo1DSh3-QZwTRUMeD-CeMi81JbSHR8EvDyjRJA_fQDluaVYcqFaPoZtoLmXXY-xOrEczaViMfnjnXxQA9nbYcB0eAZwUfT6yW8JUUuK35eLWK94cAzB0TyMGzjWVm2b_haNQRB9x7XniuyFh-VkP_bwJLB_o4VDnhJNGAM0HH4F9oBjYeFEY_r4_7o3x2MA-g0qTrXshWSABxnFg6rhPCwIR56lmpnK5ua37KcEkmJiYsE6oq9nA"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -11552,
+        -912
+      ],
+      "id": "7cca1db3-3cc0-40a7-b915-1eb9982fd8ff",
+      "name": "HTTP Request14"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4O"
+        },
+        "text": "Você receberá uma imagem do resultado do ENEM.\n\nExtraia apenas:\n\n- ano do ENEM\n- nota de Ciências Humanas\n- nota de Ciências da Natureza\n- nota de Linguagens\n- nota de Matemática\n- nota de Redação\n\nRegras:\n- O ano do ENEM deve ser obtido do cabeçalho da imagem, ex.: \"ENEM 2024\"\n- Ignore qualquer outro texto\n- Se algum campo não estiver visível ou legível, retorne null\n- Retorne apenas JSON puro, sem explicações, sem marcações, sem \\n ou espaços extras\n\nFormato esperado:\n{\"ano_enem\": 2024, \"nota_ciencias_humanas\": 0, \"nota_ciencias_natureza\": 0, \"nota_linguagens\": 0, \"nota_matematica\": 0, \"nota_redacao\": 0}\n",
+        "inputType": "base64",
+        "binaryPropertyName": "image",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2,
+      "position": [
+        -10880,
+        -912
+      ],
+      "id": "527c65f3-a87a-4fc1-a7cb-10993f135d44",
+      "name": "Analyze image1",
+      "credentials": {
+        "openAiApi": {
+          "id": "Z9TNe1XXwqwIPGol",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nif (!items.length) {\n  throw new Error('Nenhum item recebido');\n}\n\nconst item = items[0];\n\nif (!item.binary || !item.binary['image.png']) {\n  throw new Error('Binário image.png não encontrado');\n}\n\nreturn [\n  {\n    json: {},\n    binary: {\n      image: item.binary['image.png']\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -11104,
+        -912
+      ],
+      "id": "c31653de-07c0-4484-9463-ba758fdecfbd",
+      "name": "Code in JavaScript15"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.resultado_enem.file_name }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "string",
+                      "operation": "exists",
+                      "singleValue": true
+                    },
+                    "id": "ccd0de74-7308-4332-ba00-51e88417ae54"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Tem Anexo"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -11776,
+        -816
+      ],
+      "id": "4bf6e84a-1b2d-4ea0-b2e7-5fcdb6b919e4",
+      "name": "Switch7"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "includeUnpaired": true
+        }
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -10432,
+        -816
+      ],
+      "id": "465b4d81-1680-4700-bfdc-e690a1221a99",
+      "name": "Merge4"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = { ...$json };\n\n// extrai o CEP\nconst cep = input.cep || null;\n\n// remove CEP do payload principal\ndelete input.cep;\n\nreturn [\n  {\n    json: {\n      cep,\n      payload: input\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -9760,
+        -1056
+      ],
+      "id": "fd1f540b-a373-46f5-a818-9d3f255048ba",
+      "name": "Code in JavaScript6"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://playwright-playwright.6tqx2r.easypanel.host/inscricao-enem/sync",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome",
+              "value": "={{ $json.nome }}"
+            },
+            {
+              "name": "cpf",
+              "value": "={{ $json.cpf }}"
+            },
+            {
+              "name": "email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "telefone",
+              "value": "={{ $json.telefone_inscrição }}"
+            },
+            {
+              "name": "cep",
+              "value": "={{ $json.cep }}"
+            },
+            {
+              "name": "numero",
+              "value": "={{ $json.numero_residencia }}"
+            },
+            {
+              "name": "estado",
+              "value": "São Paulo"
+            },
+            {
+              "name": "cidade",
+              "value": "={{ $json.cidade }}"
+            },
+            {
+              "name": "curso",
+              "value": "={{ $json.curso_inscricao }}"
+            },
+            {
+              "name": "polo",
+              "value": "={{ $json.polo_inscricao }}"
+            },
+            {
+              "name": "enemCienciasHumanas",
+              "value": "={{ $json.nota_ciencias_humanas }}"
+            },
+            {
+              "name": "enemCienciasNatureza",
+              "value": "={{ $json.nota_ciencias_natureza }}"
+            },
+            {
+              "name": "enemLinguagens",
+              "value": "={{ $json.nota_linguagens }}"
+            },
+            {
+              "name": "enemMatematica",
+              "value": "={{ $json.nota_matematica }}"
+            },
+            {
+              "name": "enemRedacao",
+              "value": "={{ $json.nota_redacao }}"
+            },
+            {
+              "name": "enemAno",
+              "value": "={{ $json.ano_enem }}"
+            },
+            {
+              "name": "nascimento",
+              "value": "={{ $json.data_nascimento }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -7232,
+        -1088
+      ],
+      "id": "8e9a2d66-af2f-4794-9882-cf80c65ba998",
+      "name": "HTTP Request15",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "leads",
+        "operation": "updateLeads",
+        "collection": {
+          "lead": [
+            {
+              "id": "={{ $('Switch6').item.json.lead_id }}",
+              "pipeline_id": 5481944,
+              "status_id": 48566201,
+              "custom_fields_values": {
+                "custom_field": [
+                  {
+                    "data": "{\"id\":690889,\"type\":\"text\"}",
+                    "value": "={{ $json.numeroInscricao }}"
+                  }
+                ]
+              },
+              "_embedded": {
+                "tags": [
+                  {
+                    "id": [
+                      206387
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -6320,
+        -1120
+      ],
+      "id": "72187585-585b-4c54-a332-88acc3819de0",
+      "name": "Update leads8",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "4e7271ed-85d3-4f71-a16a-3a1652a78a9a",
+                    "leftValue": "={{ $json.sucesso }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Inscrição Ok"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "2d91fcb1-5803-400a-bc52-ddab3b759c7c",
+                    "leftValue": "={{ $json.sucesso }}",
+                    "rightValue": false,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Inscrição Não Ok"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -6880,
+        -912
+      ],
+      "id": "0f95bc66-5df0-4ea1-84f2-ed3f3d3b3b90",
+      "name": "Switch8"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://playwright-playwright.6tqx2r.easypanel.host/inscricao-enem-sem-nota/sync",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "nome",
+              "value": "={{ $json.nome }}"
+            },
+            {
+              "name": "email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "nascimento",
+              "value": "={{ $json.data_nascimento }}"
+            },
+            {
+              "name": "cep",
+              "value": "={{ $json.cep }}"
+            },
+            {
+              "name": "estado",
+              "value": "São Paulo"
+            },
+            {
+              "name": "cidade",
+              "value": "={{ $json.cidade }}"
+            },
+            {
+              "name": "curso",
+              "value": "={{ $json.curso_inscricao }}"
+            },
+            {
+              "name": "polo",
+              "value": "={{ $json.polo_inscricao }}"
+            },
+            {
+              "name": "telefone",
+              "value": "={{ $json['telefone_inscrição'] }}"
+            },
+            {
+              "name": "cpf",
+              "value": "={{ $json.cpf }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -7232,
+        -672
+      ],
+      "id": "a1c07363-b302-49a2-a281-8a2e94177de0",
+      "name": "HTTP Request16",
+      "retryOnFail": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "leads",
+        "operation": "updateLeads",
+        "collection": {
+          "lead": [
+            {
+              "id": "={{ $('If7').item.json.lead_id }}",
+              "pipeline_id": 5481944,
+              "status_id": 48539249,
+              "custom_fields_values": {
+                "custom_field": [
+                  {
+                    "data": "{\"id\":694001,\"type\":\"select\"}",
+                    "value": "ERRO"
+                  }
+                ]
+              },
+              "_embedded": {
+                "tags": [
+                  {
+                    "id": [
+                      206389
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -6400,
+        -720
+      ],
+      "id": "13cf0759-aaa7-4e57-8836-efa38e330482",
+      "name": "Update leads9",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -6176,
+        -720
+      ],
+      "id": "91498b35-3f7e-4bfb-821c-d271fcfd8acb",
+      "name": "Wait10",
+      "webhookId": "9919778a-6e53-462b-afd1-e283a42b8587"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "4e7271ed-85d3-4f71-a16a-3a1652a78a9a",
+                    "leftValue": "={{ $json.sucesso }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Inscrição Ok"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "2d91fcb1-5803-400a-bc52-ddab3b759c7c",
+                    "leftValue": "={{ $json.sucesso }}",
+                    "rightValue": false,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Inscrição Não Ok"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -6960,
+        -448
+      ],
+      "id": "9a90cee9-53c9-43ba-b653-e2f89680c391",
+      "name": "Switch9"
+    },
+    {
+      "parameters": {
+        "url": "https://admamoeduitcombr.kommo.com/api/v4/leads?limit=1&filter[statuses][0][pipeline_id]=11685120&filter[statuses][0][status_id]=100869264",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "accept",
+              "value": "application/json"
+            },
+            {
+              "name": "authorization",
+              "value": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6IjNlNzBiODRmZGU0OGMxZWU0NmNjOGQ3NjJlNjdlMmU3MDRhNzExYzIxMjcwMWZkZGI4OGNjYTI2ZjUxMjJiMTNjNzNjNGNmZTg0MmViNzZmIn0.eyJhdWQiOiIzNWEyYzNmMC0zOWE1LTQ5ZGQtYTAxZS1mMWE2ZWRkNDE0NDIiLCJqdGkiOiIzZTcwYjg0ZmRlNDhjMWVlNDZjYzhkNzYyZTY3ZTJlNzA0YTcxMWMyMTI3MDFmZGRiODhjY2EyNmY1MTIyYjEzYzczYzRjZmU4NDJlYjc2ZiIsImlhdCI6MTc2NzgxNDA4MCwibmJmIjoxNzY3ODE0MDgwLCJleHAiOjE4MDEyNjcyMDAsInN1YiI6IjgyNjE4MzciLCJncmFudF90eXBlIjoiIiwiYWNjb3VudF9pZCI6MzAyMTQ1NjgsImJhc2VfZG9tYWluIjoia29tbW8uY29tIiwidmVyc2lvbiI6Miwic2NvcGVzIjpbImNybSIsImZpbGVzIiwiZmlsZXNfZGVsZXRlIiwibm90aWZpY2F0aW9ucyIsInB1c2hfbm90aWZpY2F0aW9ucyJdLCJoYXNoX3V1aWQiOiIwNzUxYjFlOC1jMmRlLTQ3YjUtOTE3Mi0wYjA4ZGUyYTAwYzMiLCJ1c2VyX2ZsYWdzIjowLCJhcGlfZG9tYWluIjoiYXBpLWcua29tbW8uY29tIn0.hDOe22aLN7WhaOEdSZL0lSjbui1JXde2QvI6uVjCceIT2G3MG5A-8qduNlEbYAwarKH6z5kFtw36W4Z3XWKGeejPH53xUFZixAKo1DSh3-QZwTRUMeD-CeMi81JbSHR8EvDyjRJA_fQDluaVYcqFaPoZtoLmXXY-xOrEczaViMfnjnXxQA9nbYcB0eAZwUfT6yW8JUUuK35eLWK94cAzB0TyMGzjWVm2b_haNQRB9x7XniuyFh-VkP_bwJLB_o4VDnhJNGAM0HH4F9oBjYeFEY_r4_7o3x2MA-g0qTrXshWSABxnFg6rhPCwIR56lmpnK5ua37KcEkmJiYsE6oq9nA"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b494f9d9-14e7-432e-a9b9-b06dc0b953c0",
+      "name": "Get Atendimento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -12784,
+        -816
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1abf6bcc-ff6b-47ea-a54e-5aef625da000",
+              "leftValue": "={{ $json.rodando }}",
+              "rightValue": "sim",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -13104,
+        -944
+      ],
+      "id": "f8928c43-fb79-4ebe-aa9a-6ca6a965bf2c",
+      "name": "If4"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -12272,
+        -1264
+      ],
+      "id": "386fc7ad-8e47-445e-ab39-14e94ec83cff",
+      "name": "No Operation, do nothing1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "23332d8a-d840-40ca-89e3-415b748d8ef6",
+              "leftValue": "={{ $json.polo_inscricao }}",
+              "rightValue": "indefinido",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -9984,
+        -944
+      ],
+      "id": "68e79958-c891-4361-9f83-238118385a59",
+      "name": "If5"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * AGREGA TODOS OS ITEMS EM UM OBJETO FINAL\n * - Junta dados do Kommo + OCR + arquivos\n * - IGNORA valores null/undefined\n * - Prioriza valores preenchidos\n * - EXTRAI dados de content[0].text para raiz\n * - BUSCA dados do Processa API Kommo se não vieram pelo Merge\n * - CALCULA cidade baseado no polo\n * - FORMATA CEP (8 dígitos) e CPF (11 dígitos)\n * - BLINDA ANO ENEM\n */\n\nconst resultado = {};\nlet anexos = [];\n\n// ===============================\n// FUNÇÃO DE VALIDAÇÃO\n// ===============================\nfunction isValid(value) {\n  if (value === null || value === undefined) return false;\n  if (value === '') return false;\n  if (Array.isArray(value) && value.length === 0) return false;\n  if (Array.isArray(value) && value.every(v => v === null)) return false;\n  return true;\n}\n\n// ===============================\n// FORMATAÇÕES\n// ===============================\nfunction formatarCEP(valor) {\n  if (!valor) return null;\n  const n = String(valor).replace(/\\D/g, '');\n  return n.length ? n.padStart(8, '0') : null;\n}\n\nfunction formatarCPF(valor) {\n  if (!valor) return null;\n  const n = String(valor).replace(/\\D/g, '');\n  return n.length ? n.padStart(11, '0') : null;\n}\n\nfunction formatarTelefone(valor) {\n  if (!valor) return null;\n  const n = String(valor).replace(/\\D/g, '');\n  if (n.startsWith('55') && (n.length === 12 || n.length === 13)) {\n    return n.substring(2);\n  }\n  return n || null;\n}\n\nfunction normalizarTexto(txt) {\n  if (!txt) return '';\n  return txt\n    .toString()\n    .toLowerCase()\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\n// ===============================\n// CIDADE POR POLO\n// ===============================\nfunction resolverCidadePorPolo(polo) {\n  if (!polo) return 'São Paulo';\n\n  const mapa = [\n    { match: 'morumbi', cidade: 'São Paulo' },\n    { match: 'sapopemba', cidade: 'São Paulo' },\n    { match: 'freguesia', cidade: 'São Paulo' },\n    { match: 'vila prudente', cidade: 'São Paulo' },\n    { match: 'santana', cidade: 'São Paulo' },\n    { match: 'barra funda', cidade: 'São Paulo' },\n    { match: 'mituzi', cidade: 'Taboão da Serra' },\n    { match: 'campinas', cidade: 'Campinas' },\n    { match: 'ouro verde', cidade: 'Campinas' },\n    { match: 'capivari', cidade: 'Capivari' },\n    { match: 'taboao', cidade: 'Taboão da Serra' },\n    { match: 'ibirapuera', cidade: 'São Paulo' },\n    { match: 'itapira', cidade: 'Itapira' },\n    { match: 'vila mariana', cidade: 'São Paulo' }\n  ];\n\n  const n = normalizarTexto(polo);\n  const achou = mapa.find(p => n.includes(p.match));\n  return achou ? achou.cidade : 'São Paulo';\n}\n\n// ===============================\n// BUSCA DADOS DO KOMMO (SEM ANO ENEM)\n// ===============================\ntry {\n  const kommoItems = $items('Processa API Kommo');\n  if (kommoItems?.length) {\n    const data = kommoItems[0].json || {};\n    for (const [key, value] of Object.entries(data)) {\n      if (key === 'ano_enem') continue;\n      if (key.startsWith('_debug')) continue;\n\n      if (isValid(value) && !isValid(resultado[key])) {\n        resultado[key] = value;\n      }\n    }\n  }\n} catch (e) {}\n\n// ===============================\n// AGREGA ITEMS + OCR\n// ===============================\nfor (const item of items) {\n  const json = item.json || {};\n\n  // OCR → prioridade máxima\n  const notasOCR =\n    json?.['0']?.content?.[0]?.text ||\n    json?.content?.[0]?.text ||\n    null;\n\n  if (notasOCR && typeof notasOCR === 'object') {\n    for (const [key, value] of Object.entries(notasOCR)) {\n      if (!isValid(value)) continue;\n\n      // OCR SEMPRE MANDA NO ANO ENEM\n      if (key === 'ano_enem') {\n        resultado.ano_enem = Number(value);\n        continue;\n      }\n\n      if (!isValid(resultado[key])) {\n        resultado[key] = value;\n      }\n    }\n  }\n\n  for (const [key, value] of Object.entries(json)) {\n    if (key.startsWith('_debug')) continue;\n    if (key === '0' || key === 'content') continue;\n\n    if (key === 'resultado_enem' && isValid(value)) {\n      if (typeof value === 'object' && value.file_uuid) {\n        anexos.push(value);\n      }\n      continue;\n    }\n\n    if (key === 'Imagem:' && isValid(value)) {\n      resultado.imagem_enem = value;\n      continue;\n    }\n\n    if (isValid(value) && !isValid(resultado[key])) {\n      resultado[key] = value;\n    }\n  }\n}\n\n// ===============================\n// NORMALIZA POLO\n// ===============================\nif (typeof resultado.polo_inscricao === 'string') {\n  const p = normalizarTexto(resultado.polo_inscricao);\n  if (p.includes('mais proximo') || p === 'indefinido') {\n    resultado.polo_inscricao = 'indefinido';\n  }\n}\n\n// ===============================\n// CIDADE\n// ===============================\nif (!isValid(resultado.cidade) && isValid(resultado.polo_inscricao)) {\n  resultado.cidade = resolverCidadePorPolo(resultado.polo_inscricao);\n}\n\n// ===============================\n// NUMERO RESIDENCIA\n// ===============================\nif (!isValid(resultado.numero_residencia)) {\n  resultado.numero_residencia = String(Math.floor(Math.random() * 9000) + 100);\n}\n\n// ===============================\n// CEP\n// ===============================\nif (!isValid(resultado.cep)) {\n  for (const item of items) {\n    if (isValid(item.json?.cep)) {\n      resultado.cep = item.json.cep;\n      break;\n    }\n  }\n}\n\nif (isValid(resultado.cep)) resultado.cep = formatarCEP(resultado.cep);\nif (isValid(resultado.cpf)) resultado.cpf = formatarCPF(resultado.cpf);\n\nif (isValid(resultado['telefone_inscrição']) || isValid(resultado.telefone_inscricao)) {\n  const tel = resultado['telefone_inscrição'] || resultado.telefone_inscricao;\n  resultado['telefone_inscrição'] = formatarTelefone(tel);\n  resultado.telefone_inscricao = formatarTelefone(tel);\n}\n\n// ===============================\n// BLINDAGEM FINAL ANO ENEM\n// ===============================\nconst anoAtual = new Date().getFullYear();\n\nif (isValid(resultado.ano_enem)) {\n  resultado.ano_enem = Number(resultado.ano_enem);\n  if (resultado.ano_enem > anoAtual) {\n    resultado.ano_enem = anoAtual - 1;\n  }\n} else {\n  resultado.ano_enem = 2025;\n}\n\n// ===============================\n// ANEXOS\n// ===============================\nif (anexos.length) {\n  resultado.anexos_enem = anexos;\n}\n\n// ===============================\n// RETORNO\n// ===============================\nreturn [{ json: resultado }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10208,
+        -816
+      ],
+      "id": "81a4bcf3-58bd-484f-a81f-0fdf5d80f7df",
+      "name": "Code in JavaScript17"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6e7c105f-c97c-4fb5-83d3-2a599d2ec198",
+              "name": "['0'].content[0].text",
+              "value": "={{ $json['0'].content[0].text }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -10656,
+        -912
+      ],
+      "id": "3abc61a0-d15b-4a6a-b026-0f374644af03",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "resource": "notes",
+        "operation": "createNotes",
+        "notes": {
+          "common": [
+            {
+              "entity_id": "={{ $json._embedded.leads[0].id }}",
+              "created_by": 8261837,
+              "text": "Assunto/Nota Interna: Inscrição ENEM do candidato. Ações a realizar:  Confirmar que a inscrição do candidato no ENEM foi realizada.   Cadastrar desconto, caso exista campanha Enviar confirmação e instruções para o candidato sobre os próximos passos."
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -5984,
+        -1072
+      ],
+      "id": "ee5e0da8-5f54-4dae-9dce-a708fee59640",
+      "name": "Create new notes6",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "leads",
+        "operation": "updateLeads",
+        "collection": {
+          "lead": [
+            {
+              "id": "={{ $('Switch6').item.json.lead_id }}",
+              "pipeline_id": 5481944,
+              "status_id": 48539249,
+              "custom_fields_values": {
+                "custom_field": [
+                  {
+                    "data": "{\"id\":694001,\"type\":\"select\"}",
+                    "value": "ERRO"
+                  }
+                ]
+              },
+              "_embedded": {
+                "tags": [
+                  {
+                    "id": [
+                      205905
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -6640,
+        -896
+      ],
+      "id": "9f86fc83-7e91-440c-9169-f592070117ab",
+      "name": "Update leads10",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "notes",
+        "operation": "createNotes",
+        "notes": {
+          "common": [
+            {
+              "entity_id": "={{ $json._embedded.leads[0].id }}",
+              "created_by": 8261837,
+              "text": "=ERRO AO REALIZAR INSCRIÇÃO: {{ $('HTTP Request15').item.json.erro }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -6224,
+        -912
+      ],
+      "id": "3ce067c0-bf75-4609-9287-a915df6a9db4",
+      "name": "Create new notes7",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "notes",
+        "operation": "createNotes",
+        "notes": {
+          "common": [
+            {
+              "entity_id": "={{ $('Update leads7').item.json._embedded.leads[0].id }}",
+              "created_by": 8261837,
+              "text": "Assunto/Nota Interna: Inscrição Realizada. Acompanhar processo seletivo."
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -5952,
+        -1488
+      ],
+      "id": "4f02b8de-fbf5-4f5c-b49c-877088d0c265",
+      "name": "Create new notes9",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "notes",
+        "operation": "createNotes",
+        "notes": {
+          "common": [
+            {
+              "entity_id": "={{ $('Update leads9').item.json._embedded.leads[0].id }}",
+              "created_by": 8261837,
+              "text": "Inscrição realizada. Cobrar o recebimento das notas."
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -5952,
+        -752
+      ],
+      "id": "ed9d68ba-32aa-4705-83ac-95a045348009",
+      "name": "Create new notes10",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "leads",
+        "operation": "updateLeads",
+        "collection": {
+          "lead": [
+            {
+              "id": "={{ $('Switch6').item.json.lead_id }}",
+              "pipeline_id": 5481944,
+              "status_id": 48539249,
+              "custom_fields_values": {
+                "custom_field": [
+                  {
+                    "data": "{\"id\":694001,\"type\":\"select\"}",
+                    "value": "ERRO"
+                  }
+                ]
+              },
+              "_embedded": {
+                "tags": [
+                  {
+                    "id": [
+                      205905
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -6800,
+        -432
+      ],
+      "id": "8d92a10f-8f4c-4a66-b7b6-56393675310c",
+      "name": "Update leads11",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -6544,
+        -448
+      ],
+      "id": "13faafd5-e3ec-4a13-96c8-cc931ac9a331",
+      "name": "Wait11",
+      "webhookId": "5ee7d916-551e-48c2-9ccb-232f939734e7"
+    },
+    {
+      "parameters": {
+        "resource": "notes",
+        "operation": "createNotes",
+        "notes": {
+          "common": [
+            {
+              "entity_id": "={{ $json._embedded.leads[0].id }}",
+              "created_by": 8261837,
+              "text": "=ERRO AO REALIZAR INSCRIÇÃO: {{ $('HTTP Request16').item.json.erro }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -6320,
+        -448
+      ],
+      "id": "9128f984-9744-4c95-95a5-f941870ce898",
+      "name": "Create new notes11",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "leads",
+        "operation": "updateLeads",
+        "collection": {
+          "lead": [
+            {
+              "id": "={{ $('Switch6').item.json.lead_id }}",
+              "pipeline_id": 5481944,
+              "status_id": 99045180,
+              "custom_fields_values": {
+                "custom_field": [
+                  {
+                    "data": "{\"id\":694001,\"type\":\"select\"}",
+                    "value": "ERRO"
+                  }
+                ]
+              },
+              "_embedded": {
+                "tags": [
+                  {
+                    "id": [
+                      205905
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -6624,
+        -1296
+      ],
+      "id": "b102a9c3-ea61-49db-a8c0-b86aab92b9d3",
+      "name": "Update leads12",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -6400,
+        -1296
+      ],
+      "id": "ae7ba006-edef-4734-8c30-069d4223a42f",
+      "name": "Wait13",
+      "webhookId": "9919778a-6e53-462b-afd1-e283a42b8587"
+    },
+    {
+      "parameters": {
+        "resource": "notes",
+        "operation": "createNotes",
+        "notes": {
+          "common": [
+            {
+              "entity_id": "={{ $('Update leads12').item.json._embedded.leads[0].id }}",
+              "created_by": 8261837,
+              "text": "=ERRO AO REALIZAR INSCRIÇÃO: {{ $('HTTP Request10').item.json.erro }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -6176,
+        -1296
+      ],
+      "id": "812d6120-b604-43fd-af43-36c1e13b4ec0",
+      "name": "Create new notes12",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f65eb328-43a5-4e57-8a25-f7f465f64fca",
+              "leftValue": "={{ !$json.hasLead }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -12464,
+        -816
+      ],
+      "id": "5f12b3cd-add3-4059-a330-671d922c9178",
+      "name": "If6"
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================\n// Code in JavaScript19 - PASSTHROUGH\n// Os dados já vêm processados do 'Processa API Kommo'\n// Este nó apenas repassa para o Merge\n// =====================================================\n\nconst dados = $json;\n\nif (!dados || !dados.hasLead) {\n  return [{ json: { hasLead: false } }];\n}\n\nreturn [{ json: dados }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -10656,
+        -720
+      ],
+      "id": "c9f13e93-a765-4439-9258-fd31e6fd7e9b",
+      "name": "Code in JavaScript19"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a6ee9b33-87cb-413b-bf55-d51779272073",
+              "leftValue": "={{ $json.nota_ciencias_humanas }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -7360,
+        -816
+      ],
+      "id": "aa6aea24-26c8-44fd-b2c7-f9bc3862ced9",
+      "name": "If7"
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -6448,
+        -912
+      ],
+      "id": "2039c40f-ed22-405e-b05d-d393985dc447",
+      "name": "Wait14",
+      "webhookId": "479882ad-73b6-42ee-9678-4801dce142a4"
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -6112,
+        -1120
+      ],
+      "id": "03c825b0-d57a-4a1d-85d3-c6cbf9e6974e",
+      "name": "Wait15",
+      "webhookId": "5db3663b-435b-4ea5-a68f-fc21d255b3a6"
+    },
+    {
+      "parameters": {
+        "url": "https://maps.googleapis.com/maps/api/distancematrix/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "origins",
+              "value": "={{ $json.origem.lat }},{{ $json.origem.lng }}"
+            },
+            {
+              "name": "destinations",
+              "value": "-23.586594,-46.717387|-23.595332,-46.524891|-23.49556,-46.697923|-23.585067,-46.583863|-23.50424,-46.623449|-23.522932,-46.663319|-23.639403,-46.8017|-22.967422,-47.128864|-22.995432,-47.505319|-23.606949,-46.756408|-23.608091,-46.664971|-22.438788,-46.82259|-23.59112,-46.63524"
+            },
+            {
+              "name": "mode",
+              "value": "transit"
+            },
+            {
+              "name": "region",
+              "value": "br"
+            },
+            {
+              "name": "language",
+              "value": "pt-BR"
+            },
+            {
+              "name": "key",
+              "value": "AIzaSyBokHHwmeVP8XZu55ZK8UJBY7L1qK4P4l8"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -8640,
+        -1184
+      ],
+      "id": "78d01369-94a0-4a2d-8a18-c65baeabae6b",
+      "name": "HTTP Request12"
+    },
+    {
+      "parameters": {
+        "resource": "leads",
+        "operation": "updateLeads",
+        "collection": {
+          "lead": [
+            {
+              "id": "={{ $('Code in JavaScript6').item.json.payload.lead_id }}",
+              "pipeline_id": 5481944,
+              "status_id": 48539249,
+              "_embedded": {
+                "tags": [
+                  {
+                    "id": [
+                      205905
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-kommo.kommo",
+      "typeVersion": 1,
+      "position": [
+        -9392,
+        -1440
+      ],
+      "id": "5c3bb8b8-d2a2-4dea-9e8d-9fccf7126ef3",
+      "name": "Update leads",
+      "credentials": {
+        "kommoOAuth2Api": {
+          "id": "jmyEZYwDtPwRTWHZ",
+          "name": "Kommo account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://admamoeduitcombr.kommo.com/api/v2/salesbot/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "accept",
+              "value": "application/json"
+            },
+            {
+              "name": "=authorization",
+              "value": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6IjA0NWI0OWI2MTA3NTgxMTk4ZmQyZGQyNDViMDU1MzE2MWIzNjFkZmU1ZWEwMDhhNGVhYTU3YTFlYjY3MWRlMjFlMTczMmQ2MjM3M2ZiZGVmIn0.eyJhdWQiOiJlMTg0MDljOS0yZmQxLTQyY2QtOWM5YS1lYTA4ODZjMzg1MTgiLCJqdGkiOiIwNDViNDliNjEwNzU4MTE5OGZkMmRkMjQ1YjA1NTMxNjFiMzYxZGZlNWVhMDA4YTRlYWE1N2ExZWI2NzFkZTIxZTE3MzJkNjIzNzNmYmRlZiIsImlhdCI6MTc2Njc2MzQ5NCwibmJmIjoxNzY2NzYzNDk0LCJleHAiOjE4MTgwMjg4MDAsInN1YiI6IjgyNjE4MzciLCJncmFudF90eXBlIjoiIiwiYWNjb3VudF9pZCI6MzAyMTQ1NjgsImJhc2VfZG9tYWluIjoia29tbW8uY29tIiwidmVyc2lvbiI6Miwic2NvcGVzIjpbImNybSIsImZpbGVzIiwiZmlsZXNfZGVsZXRlIiwibm90aWZpY2F0aW9ucyIsInB1c2hfbm90aWZpY2F0aW9ucyJdLCJoYXNoX3V1aWQiOiJmNDRhYjcxNi01NzY2LTQ2NjctYTljMC04NmZkNGE0NmEyZWUiLCJ1c2VyX2ZsYWdzIjowLCJhcGlfZG9tYWluIjoiYXBpLWcua29tbW8uY29tIn0.jDrGDQ_PHcLOCoRmcpdjOM14OyzecBFOA58iFX-HkL3C8ADgeEg9JRBwhFfhqbqwjsc4VjPnb9jyLEb59ik5vIRDKhkNbl6KiyBaAK7v0c6QtyvFpi6yYGygJqLGJTbW_jlzlnJy_V_3MAKAyrywMdNhPVJSN8lBnbmmJH8QUirWzfcSJIBuMdAn9T7jYpcZkwQWNvfr5E_YDSZd_bYyY8gIXI0s7vC-GuHhVPun4yQ4n81duNwU1BnU81Eq4V8v6qXAithTid0jm9b4jXP_7sxnIT3478Qh7WXznKopewAP1pafOQmyf-qQ71_jf5g7F7Crk0HkTMYI8z-OC1lNfw"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=[\n  {\n    \"entity_type\": \"2\",\n    \"entity_id\": \"{{ $json._embedded.notes[0].entity_id }}\",\n    \"bot_id\": 50901\n  }\n]\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -5664,
+        -1344
+      ],
+      "id": "46a3635e-fe97-46af-8511-c4d4e5e70e43",
+      "name": "HTTP Request4"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -13664,
+        -976
+      ],
+      "id": "eade89d2-38d2-4d34-bb2e-4bf84381703c",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "RcMCeRk2aFmJx7EI",
+          "mode": "list",
+          "cachedResultName": "inscricao",
+          "cachedResultUrl": "/projects/7mRIJWKzE1eXw6z5/datatables/RcMCeRk2aFmJx7EI"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "1"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -13408,
+        -976
+      ],
+      "id": "556dc5f8-68c3-42f7-b599-6b5901f0b9eb",
+      "name": "Get row(s)"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "RcMCeRk2aFmJx7EI",
+          "mode": "list",
+          "cachedResultName": "inscricao",
+          "cachedResultUrl": "/projects/7mRIJWKzE1eXw6z5/datatables/RcMCeRk2aFmJx7EI"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "1"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "rodando": "sim",
+            "inicio_execucao": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "fim_execucao": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "updated_at": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "chave": "play_inscricao",
+            "server_id": "server-b"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "rodando",
+              "displayName": "rodando",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "inicio_execucao",
+              "displayName": "inicio_execucao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "fim_execucao",
+              "displayName": "fim_execucao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "chave",
+              "displayName": "chave",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "server_id",
+              "displayName": "server_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -12176,
+        -672
+      ],
+      "id": "a7526eab-097a-4f70-9241-b07af7be4762",
+      "name": "Update row(s)"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "RcMCeRk2aFmJx7EI",
+          "mode": "list",
+          "cachedResultName": "inscricao",
+          "cachedResultUrl": "/projects/7mRIJWKzE1eXw6z5/datatables/RcMCeRk2aFmJx7EI"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "1"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "rodando": "nao",
+            "inicio_execucao": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "fim_execucao": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "updated_at": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "chave": "play_inscricao",
+            "server_id": "server-b"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "rodando",
+              "displayName": "rodando",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "inicio_execucao",
+              "displayName": "inicio_execucao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "fim_execucao",
+              "displayName": "fim_execucao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "chave",
+              "displayName": "chave",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "server_id",
+              "displayName": "server_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -12032,
+        -1184
+      ],
+      "id": "ffbb6768-cb2a-496a-8109-f3badd76f610",
+      "name": "Update row(s)1"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "RcMCeRk2aFmJx7EI",
+          "mode": "list",
+          "cachedResultName": "inscricao",
+          "cachedResultUrl": "/projects/7mRIJWKzE1eXw6z5/datatables/RcMCeRk2aFmJx7EI"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "1"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "rodando": "nao",
+            "inicio_execucao": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "fim_execucao": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "updated_at": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "chave": "play_inscricao",
+            "server_id": "server-b"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "rodando",
+              "displayName": "rodando",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "inicio_execucao",
+              "displayName": "inicio_execucao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "fim_execucao",
+              "displayName": "fim_execucao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "chave",
+              "displayName": "chave",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "server_id",
+              "displayName": "server_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -9088,
+        -1184
+      ],
+      "id": "2dec2891-8d77-4ca7-9bd0-5cf5fbc95d59",
+      "name": "Update row(s)2"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "value": "RcMCeRk2aFmJx7EI",
+          "mode": "list",
+          "cachedResultName": "inscricao",
+          "cachedResultUrl": "/projects/7mRIJWKzE1eXw6z5/datatables/RcMCeRk2aFmJx7EI"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "1"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "rodando": "nao",
+            "inicio_execucao": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "fim_execucao": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "updated_at": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd HH:mm:ss') }}\n",
+            "chave": "play_inscricao",
+            "server_id": "server-b"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "rodando",
+              "displayName": "rodando",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "inicio_execucao",
+              "displayName": "inicio_execucao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "fim_execucao",
+              "displayName": "fim_execucao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "chave",
+              "displayName": "chave",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "server_id",
+              "displayName": "server_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -4800,
+        -880
+      ],
+      "id": "e1e82953-9ed6-4ff7-8ede-ff13fd9875a6",
+      "name": "Update row(s)4"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Processa API Kommo": {
+      "main": [
+        [
+          {
+            "node": "Switch7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request10": {
+      "main": [
+        [
+          {
+            "node": "Switch5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update leads12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update leads7": {
+      "main": [
+        [
+          {
+            "node": "Wait9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait9": {
+      "main": [
+        [
+          {
+            "node": "Create new notes9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch5": {
+      "main": [
+        [
+          {
+            "node": "Update leads7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update leads12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch6": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request10",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request10",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many rows": {
+      "main": [
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript4": {
+      "main": [
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript11": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript14": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request11": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript5": {
+      "main": [
+        [
+          {
+            "node": "Switch6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request13": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript15",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request14": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request13",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze image1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript15": {
+      "main": [
+        [
+          {
+            "node": "Analyze image1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch7": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request14",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript19",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge4": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript17",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript6": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request15": {
+      "main": [
+        [
+          {
+            "node": "Switch8",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update leads10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update leads8": {
+      "main": [
+        [
+          {
+            "node": "Wait15",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch8": {
+      "main": [
+        [
+          {
+            "node": "Update leads8",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update leads10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request16": {
+      "main": [
+        [
+          {
+            "node": "Switch9",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update leads11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update leads9": {
+      "main": [
+        [
+          {
+            "node": "Wait10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait10": {
+      "main": [
+        [
+          {
+            "node": "Create new notes10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch9": {
+      "main": [
+        [
+          {
+            "node": "Update leads9",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update leads11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Atendimento": {
+      "main": [
+        [
+          {
+            "node": "If6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If4": {
+      "main": [
+        [
+          {
+            "node": "No Operation, do nothing1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Atendimento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If5": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript6",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript17": {
+      "main": [
+        [
+          {
+            "node": "If5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Merge4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create new notes6": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update leads10": {
+      "main": [
+        [
+          {
+            "node": "Wait14",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create new notes7": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create new notes9": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create new notes10": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update leads11": {
+      "main": [
+        [
+          {
+            "node": "Wait11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait11": {
+      "main": [
+        [
+          {
+            "node": "Create new notes11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create new notes11": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update leads12": {
+      "main": [
+        [
+          {
+            "node": "Wait13",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait13": {
+      "main": [
+        [
+          {
+            "node": "Create new notes12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create new notes12": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If6": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Processa API Kommo",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update row(s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript19": {
+      "main": [
+        [
+          {
+            "node": "Merge4",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "If7": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request15",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request16",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait14": {
+      "main": [
+        [
+          {
+            "node": "Create new notes7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait15": {
+      "main": [
+        [
+          {
+            "node": "Create new notes6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request12": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript14",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update leads": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request4": {
+      "main": [
+        [
+          {
+            "node": "Update row(s)4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get row(s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s)": {
+      "main": [
+        [
+          {
+            "node": "If4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row(s)": {
+      "main": [
+        [
+          {
+            "node": "Processa API Kommo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "8dad6d92-532d-4f9a-9365-b9c46ca97a1b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "227cdb0212675df6577d5376009d037e6e20901652186996baaf8300dececd0a"
+  },
+  "id": "hmtFkIODwi1yq-7P4Q3M0",
+  "tags": []
+}

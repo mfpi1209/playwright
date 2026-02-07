@@ -1,0 +1,5 @@
+Este é um arquivo de teste para simular o boleto PDF.
+Lead: 20412541
+Valor: R$ 99,00
+Vencimento: 15/02/2026
+Código de Barras: 00000.00000 00000.000000 00000.000000 0 00000000000000

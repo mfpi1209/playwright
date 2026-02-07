@@ -1,0 +1,5 @@
+Este é um arquivo de teste para simular o screenshot de aprovação.
+Lead: 20412541
+Tipo: Pós-Graduação
+Status: Aprovado
+Data: 06/02/2026
