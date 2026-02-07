@@ -1419,7 +1419,7 @@ app.post('/inscricao-transferencia/sync', async (req, res) => {
       });
       return res.status(200).json({
         sucesso: true,
-        mensagem: 'Inscrição realizada com sucesso',
+        mensagem: 'Inscrição realizada com sucesso, necessário anexar documentação do processo',
         numeroInscricao,
         tipoIngresso,
         logId,
