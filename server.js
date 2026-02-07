@@ -501,6 +501,15 @@ app.post('/inscricao/sync', async (req, res) => {
     }
     const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
     
+    // Verifica se houve alerta/popup de inconsistências no cadastro
+    const alertaInscricaoMatch = stdout.match(/ALERTA_INSCRICAO:\s*(.+)/);
+    if (alertaInscricaoMatch) {
+      const mensagemAlerta = alertaInscricaoMatch[1].trim();
+      console.log(`⚠️ ALERTA DE INSCRIÇÃO DETECTADO: ${mensagemAlerta}`);
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: mensagemAlerta, etapa_erro: 'alerta_cadastro', output_final: stdout.slice(-3000) });
+      return res.json({ sucesso: false, erro: mensagemAlerta, tipo_erro: 'alerta_cadastro', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
+    }
+    
     // Verifica se CPF já tinha inscrição
     const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição');
     
@@ -1085,6 +1094,23 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     const linkCartaoMatch = stdout.match(/LINK_CARTAO_CREDITO:\s*(\S+)/);
     const linkCartaoCredito = linkCartaoMatch ? linkCartaoMatch[1] : null;
     
+    // Verifica se houve alerta/popup de inconsistências no cadastro
+    const alertaInscricaoMatch = stdout.match(/ALERTA_INSCRICAO:\s*(.+)/);
+    if (alertaInscricaoMatch) {
+      const mensagemAlerta = alertaInscricaoMatch[1].trim();
+      console.log(`⚠️ ALERTA DE INSCRIÇÃO DETECTADO: ${mensagemAlerta}`);
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: mensagemAlerta, etapa_erro: 'alerta_cadastro', output_final: stdout.slice(-3000) });
+      return res.status(200).json({ 
+        sucesso: false, 
+        erro: mensagemAlerta,
+        tipo_erro: 'alerta_cadastro',
+        linkCartaoCredito, 
+        logId, 
+        cliente: { nome, cpf, email },
+        logs: stdout.slice(-2000)
+      });
+    }
+    
     const cpfJaInscrito = stdout.includes('CPF já possui uma inscrição') || stdout.includes('cpf já cadastrado');
     if (cpfJaInscrito) {
       if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CPF já possui inscrição', etapa_erro: 'validacao_cpf', output_final: stdout.slice(-3000) });
@@ -1097,15 +1123,38 @@ app.post('/inscricao-pos/sync', async (req, res) => {
       return res.status(200).json({ sucesso: false, erro: 'CEP não encontrado.', linkCartaoCredito, logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
     }
     
+    // Extrai informações do output (antes das verificações de sucesso/erro)
+    const numeroInscricaoMatch = stdout.match(/Número de Inscrição:\s*(\d+)/);
+    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
+    
+    // ══════════════════════════════════════════════════════════════
+    // SIAA NÃO VINCULADA: inscrição feita no VTEX mas sem vínculo SIAA
+    // Retorna sucesso: false com mensagem clara
+    // ══════════════════════════════════════════════════════════════
+    const siaaNaoVinculada = stdout.includes('INSCRICAO_SIAA_NAO_VINCULADA');
+    if (siaaNaoVinculada) {
+      console.log('⚠️ Inscrição realizada mas NÃO vinculada ao SIAA');
+      if (logId) await db.finalizarLogErro(logId, { 
+        erro_mensagem: 'Inscrição realizada mas não vinculada ao SIAA', 
+        etapa_erro: 'siaa_nao_vinculada', 
+        output_final: stdout.slice(-3000) 
+      });
+      return res.status(200).json({ 
+        sucesso: false, 
+        erro: 'Inscrição realizada com sucesso, porém não foi vinculada ao SIAA. Resultados não disponíveis no momento.',
+        tipo_erro: 'siaa_nao_vinculada',
+        numeroPedidoVtex: numeroInscricao,
+        linkCartaoCredito,
+        logId, 
+        cliente: { nome, cpf, email },
+        curso: { nome: curso, duracao, matricula, mensalidade }
+      });
+    }
+    
     // Verifica se o processo foi concluído com sucesso
     // Aceita múltiplas strings de sucesso (o fluxo pode terminar em diferentes pontos)
     const processoCompleto = stdout.includes('PROCESSO COMPLETO DE INSCRIÇÃO PÓS-GRADUAÇÃO') ||
-                             stdout.includes('PROCESSO DE INSCRIÇÃO PÓS-GRADUAÇÃO FINALIZADO') ||
                              (stdout.includes('INSCRIÇÃO PÓS-GRADUAÇÃO FINALIZADA COM SUCESSO') && code === 0);
-    
-    // Extrai informações do output
-    const numeroInscricaoMatch = stdout.match(/Número de Inscrição:\s*(\d+)/);
-    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
     
     // Número de inscrição do SIAA (diferente do pedido VTEX)
     const numeroSiaaMatch = stdout.match(/NUMERO_INSCRICAO_SIAA:\s*(\d+)/);
@@ -1165,8 +1214,10 @@ app.post('/inscricao-pos/sync', async (req, res) => {
           const screenshotAbsoluto = screenshotPath ? path.join(__dirname, screenshotPath) : null;
           const boletoAbsoluto = boletoPath ? path.join(__dirname, boletoPath) : null;
 
-          const screenshotOk = screenshotAbsoluto && fs.existsSync(screenshotAbsoluto) && screenshotPath.includes(cpfLimpo);
-          const boletoOk = boletoAbsoluto && fs.existsSync(boletoAbsoluto) && boletoPath.includes(cpfLimpo);
+          // Valida: arquivo existe E (contém CPF completo OU contém 3 primeiros dígitos do CPF - novo formato amigável)
+          const cpf3 = cpfLimpo.substring(0, 3);
+          const screenshotOk = screenshotAbsoluto && fs.existsSync(screenshotAbsoluto) && (screenshotPath.includes(cpfLimpo) || screenshotPath.includes(cpf3));
+          const boletoOk = boletoAbsoluto && fs.existsSync(boletoAbsoluto) && (boletoPath.includes(cpfLimpo) || boletoPath.includes(cpf3));
 
           if (screenshotOk || boletoOk) {
             const envUpload = {

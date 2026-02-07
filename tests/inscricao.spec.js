@@ -1894,6 +1894,7 @@ test('test', async ({ page }) => {
   }
   
   let linkProva = null;
+  let linkProvaFromResponse = null;
   let numeroInscricaoCapturado = null;
   
   if (novaAba) {
@@ -1925,6 +1926,47 @@ test('test', async ({ page }) => {
          }
        } catch (e) {
          console.log(`   ⚠️ Erro ao parsear URL: ${e.message}`);
+       }
+     }
+   });
+   
+   // ═══════════════════════════════════════════════════════════════════════════
+   // INTERCEPTADOR DE RESPOSTA - Captura o link real da prova do getProvaUrl
+   // ═══════════════════════════════════════════════════════════════════════════
+   novaAba.on('response', async response => {
+     const url = response.url();
+     if (url.includes('getProvaUrl')) {
+       try {
+         const body = await response.json().catch(() => null);
+         console.log('');
+         console.log('🔍 INTERCEPTADO: Resposta getProvaUrl recebida!');
+         if (body) {
+           console.log(`   📋 Resposta: ${JSON.stringify(body).substring(0, 500)}`);
+           // Tenta extrair o link da prova da resposta (pode ser body.url, body.link, body.data, etc.)
+           const possiveisLinks = [
+             body.url, body.link, body.provaUrl, body.data?.url, body.data?.link,
+             body.redirectUrl, body.redirect, body.examUrl,
+             typeof body === 'string' && body.startsWith('http') ? body : null,
+           ];
+           for (const l of possiveisLinks) {
+             if (l && typeof l === 'string' && l.startsWith('http')) {
+               linkProvaFromResponse = l;
+               console.log(`   ✅ LINK DA PROVA CAPTURADO DA RESPOSTA: ${l}`);
+               break;
+             }
+           }
+           if (!linkProvaFromResponse) {
+             // Se a resposta inteira for uma string com URL
+             const bodyStr = JSON.stringify(body);
+             const urlMatch = bodyStr.match(/(https?:\/\/[^\s"',]+prova[^\s"',]*)/i);
+             if (urlMatch) {
+               linkProvaFromResponse = urlMatch[1];
+               console.log(`   ✅ LINK DA PROVA EXTRAÍDO (regex): ${linkProvaFromResponse}`);
+             }
+           }
+         }
+       } catch (e) {
+         console.log(`   ⚠️ Erro ao processar resposta getProvaUrl: ${e.message}`);
        }
      }
    });
@@ -2029,40 +2071,122 @@ test('test', async ({ page }) => {
    }
     
    // ═══════════════════════════════════════════════════════════════════════════
-   // PASSO 3: Capturar o link da prova (extrair href do <a>)
+   // PASSO 3: Capturar o link da prova (múltiplos métodos)
    // ═══════════════════════════════════════════════════════════════════════════
    if (acessarProvaLink) {
      console.log('');
      console.log('🔍 PASSO 3: Extraindo link da prova...');
      
+     // Aguarda 2s para API getProvaUrl retornar e href ser populado
+     await novaAba.waitForTimeout(2000);
+     
      try {
-       // Pega o href diretamente do elemento <a>
+       // MÉTODO 1: Pega o href diretamente do elemento
        const href = await acessarProvaLink.getAttribute('href').catch(() => null);
+       console.log(`   📋 href direto: ${href || '(vazio)'}`);
+       
        if (href && href.startsWith('http')) {
          linkProva = href;
-         console.log('   ✅ Link extraído com sucesso!');
-       } else {
-         // Se não conseguiu o href, tenta clicar e capturar a URL
-         console.log('   📍 href não encontrado, clicando para capturar URL...');
-         const [provaPage] = await Promise.all([
-           novaAba.context().waitForEvent('page', { timeout: 15000 }).catch(() => null),
-           acessarProvaLink.click()
-         ]);
+         console.log('   ✅ Link extraído do href direto!');
+       }
+       
+       // MÉTODO 2: Se não achou, tenta achar o <a> pai do botão via JS
+       if (!linkProva) {
+         console.log('   📍 Tentando encontrar <a> pai do botão...');
+         const hrefFromParent = await acessarProvaLink.evaluate(el => {
+           // Se o próprio elemento é um <a>
+           if (el.tagName === 'A' && el.href) return el.href;
+           // Procura <a> pai
+           const parentA = el.closest('a');
+           if (parentA && parentA.href) return parentA.href;
+           // Procura <a> filho (caso o seletor pegou um wrapper)
+           const childA = el.querySelector('a');
+           if (childA && childA.href) return childA.href;
+           return null;
+         }).catch(() => null);
          
-         await novaAba.waitForTimeout(1500);
-         
-         if (provaPage) {
-           await provaPage.waitForLoadState('domcontentloaded').catch(() => {});
-           linkProva = provaPage.url();
-           console.log('   ✅ Link capturado da nova aba!');
-           await provaPage.close().catch(() => {});
-         } else {
-           linkProva = novaAba.url();
-           console.log('   ✅ Link capturado da URL atual!');
+         console.log(`   📋 href do parent/child <a>: ${hrefFromParent || '(vazio)'}`);
+         if (hrefFromParent && hrefFromParent.startsWith('http')) {
+           linkProva = hrefFromParent;
+           console.log('   ✅ Link extraído do <a> pai/filho!');
          }
        }
+       
+       // MÉTODO 3: Busca qualquer <a> na modal que contenha "prova" no href
+       if (!linkProva) {
+         console.log('   📍 Buscando links com "prova" na modal...');
+         const allLinks = await novaAba.evaluate(() => {
+           const links = Array.from(document.querySelectorAll('a[href]'));
+           return links
+             .map(a => ({ href: a.href, text: a.textContent?.trim()?.substring(0, 50) }))
+             .filter(l => l.href.includes('prova') || l.text?.toLowerCase().includes('prova'));
+         }).catch(() => []);
+         
+         console.log(`   📋 Links com "prova": ${allLinks.length}`);
+         for (const l of allLinks) {
+           console.log(`      - ${l.text}: ${l.href}`);
+         }
+         
+         if (allLinks.length > 0 && allLinks[0].href.startsWith('http')) {
+           linkProva = allLinks[0].href;
+           console.log('   ✅ Link extraído buscando na modal!');
+         }
+       }
+       
+       // MÉTODO 4: Se o interceptador de resposta capturou, usar esse
+       if (!linkProva && linkProvaFromResponse) {
+         linkProva = linkProvaFromResponse;
+         console.log('   ✅ Link extraído do interceptador de resposta da API!');
+       }
+       
+       // MÉTODO 5: Clicar no botão e capturar a URL da nova aba/navegação
+       if (!linkProva) {
+         console.log('   📍 Nenhum href encontrado, clicando para capturar URL...');
+         const [provaPage] = await Promise.all([
+           novaAba.context().waitForEvent('page', { timeout: 15000 }).catch(() => null),
+           acessarProvaLink.click({ force: true })
+         ]);
+         
+         await novaAba.waitForTimeout(3000);
+         
+         if (provaPage) {
+           await provaPage.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
+           linkProva = provaPage.url();
+           console.log(`   ✅ Link capturado da nova aba: ${linkProva}`);
+           await provaPage.close().catch(() => {});
+         } else {
+           // Pode ter navegado na mesma aba
+           const urlAtual = novaAba.url();
+           if (urlAtual.includes('prova') || urlAtual.includes('token')) {
+             linkProva = urlAtual;
+             console.log(`   ✅ Link capturado da URL atual: ${linkProva}`);
+           } else {
+             console.log(`   ⚠️ URL atual não contém prova: ${urlAtual}`);
+           }
+         }
+       }
+       
+       // MÉTODO 6: Último fallback - verificar novamente resposta do interceptador
+       if (!linkProva && linkProvaFromResponse) {
+         linkProva = linkProvaFromResponse;
+         console.log('   ✅ Link extraído do interceptador (fallback final)!');
+       }
+       
      } catch (e) {
        console.log(`   ❌ Erro ao capturar link: ${e.message}`);
+       // Ainda tenta usar resposta do interceptador
+       if (!linkProva && linkProvaFromResponse) {
+         linkProva = linkProvaFromResponse;
+         console.log('   ✅ Link recuperado do interceptador após erro!');
+       }
+     }
+     
+     if (linkProva) {
+       console.log(`   🔗 Link final da prova: ${linkProva}`);
+     } else {
+       console.log('   ❌ NENHUM método conseguiu capturar o link da prova');
+       // Screenshot para debug
+       await novaAba.screenshot({ path: `debug-prova-sem-link-${Date.now()}.png`, fullPage: true }).catch(() => {});
      }
    } else {
       console.log('');
@@ -2071,6 +2195,12 @@ test('test', async ({ page }) => {
       console.log('   Botões visíveis:', botoesVisiveis.slice(0, 10).join(' | '));
       const linksVisiveis = await novaAba.locator('a:visible').allTextContents().catch(() => []);
       console.log('   Links visíveis:', linksVisiveis.slice(0, 10).join(' | '));
+      
+      // Mesmo sem o botão, verifica se o interceptador de resposta capturou algo
+      if (linkProvaFromResponse) {
+        linkProva = linkProvaFromResponse;
+        console.log(`   ✅ Link recuperado do interceptador de resposta: ${linkProva}`);
+      }
     }
   }
   

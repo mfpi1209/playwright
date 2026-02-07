@@ -392,44 +392,38 @@ test('inscricao-pos', async ({ page, context }) => {
       const status = response.status();
       const contentType = (response.headers()['content-type'] || '').toLowerCase();
       
+      // Ignora fontes, imagens e outros recursos estáticos
+      if (/\.(woff2?|ttf|eot|svg|png|jpg|gif|ico|css|js)(\?|$)/i.test(url)) return;
+      if (contentType.includes('font') || contentType.includes('image') || contentType.includes('javascript') || contentType.includes('css')) return;
+      
       // Só processa URLs com "boleto", ".pdf", ou content-type de PDF
       const urlMatch = /boleto|\.pdf(\?|$)|gerar.*boleto|emissao.*boleto/i.test(url);
-      const isPdfContentType = contentType.includes('pdf') || contentType.includes('octet-stream');
+      const isPdfContentType = contentType.includes('pdf') || (contentType.includes('octet-stream') && urlMatch);
       
       if (!urlMatch && !isPdfContentType) return;
       if (status < 200 || status >= 400) return;
       
-      console.log(`   🎯 [LISTENER] Resposta boleto detectada: ${url.substring(0, 120)}`);
-      console.log(`      Status: ${status}, Content-Type: ${contentType}`);
-      
-      // Salva URL para download direto (MÉTODO 2)
+      // Salva URL para download direto
       if (!pdfBoletoUrl || url.includes('getBoletoDiversos') || url.includes('.pdf')) {
         pdfBoletoUrl = url;
       }
       
-      // Tenta capturar o body da resposta
       const body = await response.body().catch(() => null);
       
       if (body && body.length > 500) {
         const isPdf = body.slice(0, 5).toString().includes('%PDF');
         const isBigBinary = !isPdf && isPdfContentType && body.length > 5000;
         
-        console.log(`      Body: ${body.length} bytes, PDF: ${isPdf}, Binary: ${isBigBinary}`);
-        
         if ((isPdf || isBigBinary) && (!pdfBoletoBuffer || body.length > pdfBoletoBuffer.length)) {
           pdfBoletoBuffer = body;
           pdfBoletoUrl = url;
-          console.log(`   ✅ [LISTENER] PDF capturado: ${body.length} bytes`);
-        } else if (!pdfBoletoBuffer && body.length > 1000) {
+          console.log(`   ✅ [LISTENER] PDF boleto capturado: ${body.length} bytes`);
+        } else if (!pdfBoletoBuffer && body.length > 1000 && isPdf) {
           pdfBoletoBuffer = body;
-          console.log(`   ⚠️ [LISTENER] Conteúdo capturado (verificar): ${body.length} bytes`);
         }
-      } else {
-        console.log(`      Body não disponível ou muito pequeno (${body ? body.length : 0} bytes)`);
       }
     } catch (e) {
-      // Listener passivo - erro não afeta a navegação
-      console.log(`   ⚠️ [LISTENER] Erro ao processar resposta: ${e.message}`);
+      // Listener passivo - erro silencioso
     }
   });
 
@@ -438,7 +432,6 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 1: Login Admin');
   
-  // Lê admins do .env (formato: email:senha|email:senha) ou usa hardcoded como fallback
   const ADMINS = (() => {
     const envAdmins = process.env.VTEX_ADMINS || '';
     if (envAdmins.includes('|') || envAdmins.includes(':')) {
@@ -447,7 +440,6 @@ test('inscricao-pos', async ({ page, context }) => {
         return { email: email.trim(), senha: senhaParts.join(':').trim() };
       });
     }
-    // Fallback: variáveis individuais ou hardcoded
     if (process.env.VTEX_ADMIN_EMAIL && process.env.VTEX_ADMIN_PASSWORD) {
       return [{ email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD }];
     }
@@ -457,7 +449,6 @@ test('inscricao-pos', async ({ page, context }) => {
     ];
   })();
   const adminEscolhido = ADMINS[Math.floor(Math.random() * ADMINS.length)];
-  console.log(`   🔑 Admin: ${adminEscolhido.email}`);
   
   await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
   await page.waitForTimeout(1000);
@@ -471,15 +462,13 @@ test('inscricao-pos', async ({ page, context }) => {
   await page.getByRole('button', { name: 'Continuar' }).click();
   await page.waitForTimeout(2000);
   
-  console.log('✅ ETAPA 1 CONCLUÍDA - Login admin');
-  console.log('');
+  console.log(`✅ ETAPA 1 CONCLUÍDA - Admin: ${adminEscolhido.email}`);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 2: NAVEGAÇÃO E COOKIES
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 2: Navegação para Pós-Graduação');
   
-  // Tenta navegar para pós-graduação com retry
   let navegacaoOk = false;
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
     try {
@@ -490,79 +479,61 @@ test('inscricao-pos', async ({ page, context }) => {
       navegacaoOk = true;
       break;
     } catch (e) {
-      console.log(`   ⚠️ Tentativa ${tentativa} de navegação falhou, retentando...`);
-      await page.waitForTimeout(2000);
+      if (tentativa < 3) await page.waitForTimeout(2000);
     }
   }
   
   if (!navegacaoOk) {
-    // Tenta navegar pelo menu
-    console.log('   🔄 Tentando navegação alternativa via menu...');
     try {
       await page.getByText('Cursos').first().click();
       await page.waitForTimeout(1000);
       await page.getByText('Pós-Graduação', { exact: false }).first().click();
-    } catch (e) {
-      console.log('   ⚠️ Navegação alternativa também falhou');
-    }
+    } catch (e) {}
   }
   
   await page.waitForTimeout(2000);
   
-  // Aceitar cookies
   try {
     const aceitarCookies = page.getByText('Aceitar todos');
     if (await aceitarCookies.isVisible({ timeout: 3000 })) {
       await aceitarCookies.click();
-      console.log('   ✅ Cookies aceitos');
       await page.waitForTimeout(1000);
     }
   } catch (e) {}
   
   console.log('✅ ETAPA 2 CONCLUÍDA');
-  console.log('');
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 3: LOGIN CLIENTE
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 3: Login como Cliente');
   
-  
-  // Fecha modais bloqueantes
   await fecharModais(page);
   
-  // Primeiro aceita cookies se estiverem bloqueando
   try {
     const cookieBanner = page.locator('text=Aceitar todos, text=Aceitar cookies, button:has-text("Aceitar")').first();
     if (await cookieBanner.isVisible({ timeout: 3000 })) {
       await cookieBanner.click();
-      console.log('   ✅ Cookies aceitos');
       await page.waitForTimeout(1000);
     }
   } catch (e) {}
   
-  // Verifica se já está logado (procura "Olá" no header)
   let jaLogado = false;
   try {
     const headerOla = page.locator('text=/Olá,/i').first();
     if (await headerOla.isVisible({ timeout: 2000 })) {
-      console.log('   ✅ Cliente já está logado');
       jaLogado = true;
     }
   } catch (e) {}
   
   if (!jaLogado) {
-    // PASSO 0: Aceitar cookies se o banner estiver visível
     try {
       const btnAceitarCookies = page.getByRole('button', { name: /aceitar todos/i });
       if (await btnAceitarCookies.isVisible({ timeout: 3000 })) {
-        console.log('   🍪 Banner de cookies detectado, aceitando...');
         await btnAceitarCookies.click();
         await page.waitForTimeout(1000);
-        console.log('   ✅ Cookies aceitos');
       }
     } catch (e) {
-      // Tenta fechar de outra forma
       try {
         const cookieBanner = page.locator('#privacytools-banner-consent, .cc-banner, [class*="cookie"]').first();
         if (await cookieBanner.isVisible({ timeout: 1000 })) {
@@ -572,72 +543,47 @@ test('inscricao-pos', async ({ page, context }) => {
       } catch (e2) {}
     }
     
-    // PASSO 1: Clica em "Entrar como cliente" (seletor da gravação)
-    console.log('   📝 Clicando em "Entrar como cliente"...');
     try {
       await page.getByText('Entrar como cliente').first().click();
-      console.log('   ✅ Clicou em "Entrar como cliente"');
     } catch (e) {
       const btnEntrarCliente = page.locator('div.cruzeirodosul-telemarketing-2-x-loginAsText');
       if (await btnEntrarCliente.isVisible({ timeout: 3000 })) {
         await btnEntrarCliente.click();
-        console.log('   ✅ Clicou em "Entrar como cliente" (fallback)');
       }
     }
     
     await page.waitForTimeout(2000);
     
-    // Verifica se o formulário de login apareceu, senão tenta novamente
     const campoEmailVisivel = await page.getByPlaceholder('Ex: example@mail.com').isVisible({ timeout: 3000 }).catch(() => false);
     if (!campoEmailVisivel) {
-      console.log('   ⚠️ Formulário de login não apareceu, tentando novamente...');
-      // Tenta clicar novamente no "Entrar como cliente"
       try {
         await page.getByText('Entrar como cliente').first().click({ force: true });
         await page.waitForTimeout(2000);
       } catch (e) {}
     }
     
-    // PASSO 2: Preenche o email
-    console.log('   📝 Preenchendo email...');
     const campoEmail = page.getByPlaceholder('Ex: example@mail.com');
     await campoEmail.click();
     await campoEmail.fill(CLIENTE.email);
-    console.log(`   ✅ Email preenchido: ${CLIENTE.email}`);
     
     await page.waitForTimeout(500);
     
-    // PASSO 3: Clica em "Entrar" - pode precisar clicar 1 ou 2 vezes
-    console.log('   📝 Clicando em Entrar (1ª vez)...');
     const btnEntrar = page.getByRole('button', { name: 'Entrar' });
     await btnEntrar.click();
-    console.log('   ✅ 1º clique em Entrar');
     
     await page.waitForTimeout(2000);
     
-    // Verifica se botão ainda está visível para 2º clique (timeout curto)
     try {
       const btnEntrar2 = page.getByRole('button', { name: 'Entrar' });
       const visivel = await btnEntrar2.isVisible();
       if (visivel) {
-        console.log('   📝 Clicando em Entrar (2ª vez)...');
         await btnEntrar2.click({ timeout: 3000 });
-        console.log('   ✅ 2º clique em Entrar');
-      } else {
-        console.log('   ℹ️ Botão não visível - login já efetuado');
       }
-    } catch (e) {
-      console.log('   ℹ️ 2º clique não necessário - login já efetuado');
-    }
-    
-    console.log('   ✅ Login submetido');
+    } catch (e) {}
     
     await page.waitForTimeout(3000);
-    
-    // Fecha modal de saída se aparecer
     await fecharModalSair(page);
     
-    // Aceita cookies de novo se aparecer após login
     try {
       const cookieBanner2 = page.getByText('Aceitar todos');
       if (await cookieBanner2.isVisible({ timeout: 2000 })) {
@@ -646,22 +592,20 @@ test('inscricao-pos', async ({ page, context }) => {
       }
     } catch (e) {}
     
-    // Verifica se login funcionou
+    let loginOk = false;
     try {
       const headerOla = page.locator('text=/Olá,/i').first();
-      if (await headerOla.isVisible({ timeout: 5000 })) {
-        console.log('   ✅ Login do cliente confirmado');
-      } else {
-        console.log('   ⚠️ Login pode não ter funcionado');
-      }
+      loginOk = await headerOla.isVisible({ timeout: 5000 });
     } catch (e) {}
+    
+    if (!loginOk) {
+      console.log('   ⚠️ Login pode não ter funcionado');
+    }
   }
   
-  // Fecha modais que possam ter aparecido
   await fecharModais(page);
   
-  console.log('✅ ETAPA 3 CONCLUÍDA');
-  console.log('');
+  console.log(`✅ ETAPA 3 CONCLUÍDA - ${jaLogado ? 'Já logado' : CLIENTE.email}`);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 4: BUSCA DO CURSO
@@ -674,36 +618,27 @@ test('inscricao-pos', async ({ page, context }) => {
   // PASSO 1: Pesquisar o curso (SEM a duração no termo de busca)
   // Ex: "MBA em Empreendedorismo e Inovação 9 Meses" → busca "MBA em Empreendedorismo e Inovação"
   const cursoSemDuracao = CLIENTE.curso.replace(/\s*\d+\s*meses?\s*$/i, '').trim();
-  console.log(`   🔍 Pesquisando curso: "${cursoSemDuracao}" (duração ${CLIENTE.duracao}m lida do card)`);
+  console.log(`   🔍 Pesquisando: "${cursoSemDuracao}" (${CLIENTE.duracao}m)`);
   
   const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
   await searchInput.click({ force: true });
   await searchInput.fill(cursoSemDuracao);
   await searchInput.press('Enter');
   
-  // PASSO 2: Aguardar os resultados carregarem
-  console.log('   ⏳ Aguardando resultados carregarem...');
   await aguardar(page, 3000);
   
-  // Aguarda aparecer os cards de resultado
   try {
     await page.waitForSelector('a[href*="/pos-"][href$="/p"]', { timeout: 20000 });
-    console.log('   ✅ Resultados carregados');
   } catch (e) {
     console.log('   ⚠️ Timeout aguardando resultados');
   }
   await aguardar(page, 2000);
   
-  // PASSO 3: Selecionar o card do curso com a duração específica
   const duracaoDesejada = `${CLIENTE.duracao} meses`;
-  console.log(`   🎯 Buscando curso com duração: "${duracaoDesejada}"`);
   
-  // Normaliza o nome do curso para busca
   const cursoNormalizado = CLIENTE.curso.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  // Remove palavras genéricas que matcham qualquer curso (meses, curso, pos, ead, etc.)
   const palavrasGenericasCurso = ['meses', 'curso', 'cursos', 'graduacao', 'pos-graduacao', 'livre', 'livres', 'virtual', 'digital', 'presencial', 'semestre', 'semestres'];
   const palavrasChaveCurso = cursoNormalizado.split(' ').filter(p => p.length > 3 && !palavrasGenericasCurso.includes(p) && !/^\d+$/.test(p));
-  console.log(`   🔑 Palavras-chave do curso: [${palavrasChaveCurso.join(', ')}]`);
   
   let cursoClicado = false;
   
@@ -1428,12 +1363,7 @@ test('inscricao-pos', async ({ page, context }) => {
     
     // Verifica ESPECIFICAMENTE se existem os react-select de localização
     let qtdReactSelects = await page.locator('.react-select__input-container').count();
-    console.log(`   📍 Quantidade de react-select encontrados: ${qtdReactSelects}`);
-    
-    // Também verifica se há campo de CPF (indicador de formulário de dados)
     let campoCPFvisivel = await page.locator('input[name="userDocument"]').isVisible({ timeout: 2000 }).catch(() => false);
-    console.log(`   📍 Campo CPF visível: ${campoCPFvisivel}`);
-    console.log(`   📍 URL atual: ${page.url()}`);
     
     // Se não encontrou react-selects, tenta seletores alternativos
     if (qtdReactSelects < 3) {
@@ -1966,17 +1896,25 @@ test('inscricao-pos', async ({ page, context }) => {
     
     console.log(`   📋 ${listaCampanhas.length} campanhas disponíveis`);
     
-    // Array para armazenar resultados de cada campanha
-    const resultadosCampanhas = [];
+    // Alvos para comparação
+    const matriculaAlvo = parseFloat(CLIENTE.matricula);
+    const mensalidadeAlvo = parseFloat(CLIENTE.mensalidade);
+    const TOLERANCIA = 1.00; // R$ 1 de tolerância para match imediato
     
-    // Testa cada campanha
+    console.log(`   🎯 Alvo: Matrícula R$ ${matriculaAlvo} | Mensalidade R$ ${mensalidadeAlvo} (tolerância R$ ${TOLERANCIA})`);
+    
+    // Testa cada campanha e PARA ao encontrar match dentro da tolerância
+    let melhorCampanha = null;
+    let menorDiferenca = Infinity;
+    let campanhaExata = false;
+    
     for (let i = 0; i < listaCampanhas.length; i++) {
       const textoOpcao = listaCampanhas[i];
       
       // Extrai o código da campanha (ex: "2542" de "2542 - Balcão 10%CT - Pós EAD")
       const codigoCampanha = textoOpcao.split(' - ')[0].trim();
       
-      console.log(`   📝 Testando campanha ${i + 1}/${listaCampanhas.length}: ${textoOpcao.substring(0, 50)}...`);
+      console.log(`   📝 Testando campanha ${i + 1}/${listaCampanhas.length}: ${textoOpcao.substring(0, 60)}...`);
       
       // Abre o dropdown e digita o código da campanha
       await selectCampanha.click();
@@ -2001,54 +1939,57 @@ test('inscricao-pos', async ({ page, context }) => {
       
       console.log(`      💰 Matrícula: R$ ${valores.matricula || 'N/A'} | Mensalidade: R$ ${valores.mensalidade || 'N/A'} (${valores.parcelas || '?'}x)`);
       
-      resultadosCampanhas.push({
-        codigo: codigoCampanha,
-        nome: textoOpcao,
-        matricula: valores.matricula,
-        mensalidade: valores.mensalidade,
-        parcelas: valores.parcelas
-      });
-    }
-    
-    // Encontra a melhor campanha baseada nos critérios
-    const matriculaAlvo = parseFloat(CLIENTE.matricula);
-    const mensalidadeAlvo = parseFloat(CLIENTE.mensalidade);
-    
-    console.log('');
-    console.log('   🔍 Analisando campanhas...');
-    
-    // Filtra campanhas com matrícula correta e encontra a mais próxima da mensalidade alvo
-    let melhorCampanha = null;
-    let menorDiferenca = Infinity;
-    
-    for (const camp of resultadosCampanhas) {
-      if (camp.matricula === null || camp.mensalidade === null) continue;
-      
-      // Verifica se a matrícula está dentro do esperado (tolerância de R$ 5)
-      const diferencaMatricula = Math.abs(camp.matricula - matriculaAlvo);
-      const diferencaMensalidade = Math.abs(camp.mensalidade - mensalidadeAlvo);
-      
-      if (diferencaMatricula <= 5) { // Matrícula OK (tolerância R$ 5)
-        if (diferencaMensalidade < menorDiferenca) {
-          menorDiferenca = diferencaMensalidade;
-          melhorCampanha = camp;
+      if (valores.matricula !== null && valores.mensalidade !== null) {
+        const diffMatricula = Math.abs(valores.matricula - matriculaAlvo);
+        const diffMensalidade = Math.abs(valores.mensalidade - mensalidadeAlvo);
+        
+        // Verifica se matrícula está OK (tolerância R$ 5)
+        if (diffMatricula <= 5) {
+          // Atualiza melhor campanha se essa tem mensalidade mais próxima
+          if (diffMensalidade < menorDiferenca) {
+            menorDiferenca = diffMensalidade;
+            melhorCampanha = {
+              codigo: codigoCampanha,
+              nome: textoOpcao,
+              matricula: valores.matricula,
+              mensalidade: valores.mensalidade,
+              parcelas: valores.parcelas
+            };
+          }
+          
+          // MATCH EXATO (dentro da tolerância): para imediatamente!
+          if (diffMatricula <= TOLERANCIA && diffMensalidade <= TOLERANCIA) {
+            console.log(`      ✅ MATCH EXATO! Matrícula diff: R$ ${diffMatricula.toFixed(2)} | Mensalidade diff: R$ ${diffMensalidade.toFixed(2)}`);
+            campanhaExata = true;
+            break; // Para de buscar - encontrou a campanha ideal
+          }
         }
       }
     }
     
+    console.log('');
+    
     if (melhorCampanha) {
       campanhaEscolhida = melhorCampanha.codigo;
-      console.log(`   ✅ MELHOR CAMPANHA: ${melhorCampanha.codigo} - ${melhorCampanha.nome.substring(0, 40)}...`);
+      
+      if (campanhaExata) {
+        console.log(`   ✅ CAMPANHA ENCONTRADA (match exato): ${melhorCampanha.codigo} - ${melhorCampanha.nome.substring(0, 50)}...`);
+      } else {
+        console.log(`   ✅ MELHOR CAMPANHA: ${melhorCampanha.codigo} - ${melhorCampanha.nome.substring(0, 50)}...`);
+      }
       console.log(`      💰 Matrícula: R$ ${melhorCampanha.matricula} | Mensalidade: R$ ${melhorCampanha.mensalidade}`);
       console.log(`      📊 Diferença da mensalidade alvo: R$ ${menorDiferenca.toFixed(2)}`);
       
-      // Seleciona a melhor campanha
-      await selectCampanha.click();
-      await page.waitForTimeout(500);
-      await page.keyboard.type(melhorCampanha.codigo, { delay: 50 });
-      await page.waitForTimeout(1000);
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(2000);
+      // Se não foi a última campanha testada, precisa re-selecionar
+      if (!campanhaExata) {
+        await selectCampanha.click();
+        await page.waitForTimeout(500);
+        await page.keyboard.type(melhorCampanha.codigo, { delay: 50 });
+        await page.waitForTimeout(1000);
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(2000);
+      }
+      // Se foi match exato, já está selecionada (foi a última ação no loop)
     } else {
       console.log('   ⚠️ Nenhuma campanha encontrada com matrícula próxima ao alvo');
       console.log('   📝 Usando primeira campanha disponível');
@@ -2093,16 +2034,119 @@ test('inscricao-pos', async ({ page, context }) => {
   
   await page.waitForTimeout(2000);
   
-  // Fecha modal "Atenção" se aparecer (tem um X no canto)
+  // ══════════════════════════════════════════════════════════════════════
+  // Detecta popup "Aviso Importante" / inconsistência no cadastro
+  // Se detectado, PARA o fluxo e retorna erro (não continua a inscrição)
+  // ══════════════════════════════════════════════════════════════════════
   try {
-    const modalAtencao = page.locator('text=Atenção').first();
-    if (await modalAtencao.isVisible({ timeout: 2000 })) {
-      console.log('   📍 Modal Atenção detectado, fechando...');
-      // O X é um elemento svg ou span próximo ao texto "Atenção"
+    // Verifica especificamente "Aviso Importante" e "inconsistência"
+    const avisoImportante = page.locator('text=Aviso Importante').first();
+    const inconsistencia = page.locator('text=/inconsist/i').first();
+    const atencao = page.locator('text=Atenção').first();
+    
+    let popupBloqueante = false;
+    let mensagemPopup = '';
+    
+    // Checa os textos-chave do popup
+    const temAviso = await avisoImportante.isVisible({ timeout: 3000 }).catch(() => false);
+    const temInconsistencia = await inconsistencia.isVisible({ timeout: 1000 }).catch(() => false);
+    const temAtencao = await atencao.isVisible({ timeout: 1000 }).catch(() => false);
+    
+    if (temAviso || temInconsistencia || temAtencao) {
+      console.log('   📍 Popup detectado!');
+      
+      // Captura TODO o texto visível da página (o popup está por cima)
+      mensagemPopup = await page.evaluate(() => {
+        // Estratégia 1: Buscar todos os elementos visíveis que contenham texto relevante
+        const todosElementos = document.querySelectorAll('*');
+        const textos = [];
+        
+        for (const el of todosElementos) {
+          if (el.offsetParent === null) continue;
+          if (['SCRIPT', 'STYLE', 'META', 'LINK'].includes(el.tagName)) continue;
+          
+          // Pega texto direto (sem filhos) para evitar duplicação
+          const textoDirecto = Array.from(el.childNodes)
+            .filter(n => n.nodeType === 3) // TEXT_NODE
+            .map(n => n.textContent.trim())
+            .filter(t => t.length > 0)
+            .join(' ');
+          
+          if (textoDirecto && (
+            textoDirecto.toLowerCase().includes('aviso') ||
+            textoDirecto.toLowerCase().includes('inconsist') ||
+            textoDirecto.toLowerCase().includes('cadastro') ||
+            textoDirecto.toLowerCase().includes('contato') ||
+            textoDirecto.toLowerCase().includes('verificamos')
+          )) {
+            textos.push(textoDirecto);
+          }
+        }
+        
+        if (textos.length > 0) return textos.join(' ').substring(0, 500);
+        
+        // Estratégia 2: Pega texto do overlay/modal mais próximo
+        const overlays = document.querySelectorAll(
+          '[class*="modal"], [class*="overlay"], [class*="popup"], [class*="dialog"], ' +
+          '[class*="alert"], [class*="aviso"], [role="dialog"], [role="alertdialog"]'
+        );
+        for (const ov of overlays) {
+          if (ov.offsetParent !== null) {
+            const t = ov.textContent?.trim().replace(/\s+/g, ' ').substring(0, 500);
+            if (t && t.length > 10) return t;
+          }
+        }
+        
+        return '';
+      }).catch(() => '');
+      
+      // Se não capturou texto via JS, tenta via Playwright
+      if (!mensagemPopup) {
+        if (temAviso) {
+          const parent = avisoImportante.locator('xpath=ancestor::*[3]');
+          mensagemPopup = await parent.textContent().catch(() => '');
+          mensagemPopup = mensagemPopup?.trim().replace(/\s+/g, ' ').substring(0, 500) || '';
+        }
+      }
+      
+      // Fallback hardcoded se nada funcionou mas sabemos que o popup existe
+      if (!mensagemPopup && (temAviso || temInconsistencia)) {
+        mensagemPopup = 'Aviso Importante: Verificamos que há alguma inconsistência em seu cadastro.';
+      }
+      
+      console.log(`   📋 Mensagem: ${mensagemPopup}`);
+      
+      // Screenshot do popup
+      await page.screenshot({ path: `debug-aviso-importante-${Date.now()}.png`, fullPage: true }).catch(() => {});
+      
+      // Verifica se é um popup bloqueante (inconsistência)
+      const msgLower = mensagemPopup.toLowerCase();
+      if (msgLower.includes('inconsist') || msgLower.includes('aviso importante') || msgLower.includes('cadastro')) {
+        popupBloqueante = true;
+        console.log(`ALERTA_INSCRICAO: ${mensagemPopup}`);
+        console.log('   ❌ Popup de inconsistência detectado - inscrição não pode prosseguir');
+        
+        // Clica em OK para fechar
+        const btnOk = page.locator('button:has-text("Ok"), button:has-text("OK")').first();
+        if (await btnOk.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await btnOk.click({ force: true });
+          console.log('   ✅ Clicou em OK');
+        } else {
+          await page.keyboard.press('Escape');
+        }
+        await page.waitForTimeout(1000);
+        
+        // ENCERRA O TESTE - não continua a inscrição
+        return;
+      }
+      
+      // Se não é bloqueante, apenas fecha
       await page.keyboard.press('Escape');
       await page.waitForTimeout(500);
     }
-  } catch (e) {}
+  } catch (e) {
+    console.log(`   ⚠️ Erro ao verificar popup: ${e.message.split('\n')[0]}`);
+  }
   
   // Clica em "Seguir para o carrinho" ou "Continuar Inscrição"
   console.log('   📝 Clicando para ir ao checkout...');
@@ -2340,22 +2384,7 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   }
   
-  // Lista todos os botões visíveis para debug
-  try {
-    const botoes = await page.evaluate(() => {
-      const btns = document.querySelectorAll('button');
-      return Array.from(btns).map(b => ({
-        text: b.textContent?.trim().substring(0, 50),
-        id: b.id,
-        class: b.className.substring(0, 50),
-        visible: b.offsetParent !== null
-      })).filter(b => b.visible);
-    });
-    console.log(`   📋 Botões visíveis no checkout: ${botoes.length}`);
-    botoes.slice(0, 5).forEach(b => {
-      console.log(`      - "${b.text}" (id: ${b.id || 'N/A'})`);
-    });
-  } catch (e) {}
+  // (debug silencioso - botões do checkout)
   
   await page.waitForTimeout(2000);
   
@@ -2445,8 +2474,7 @@ test('inscricao-pos', async ({ page, context }) => {
     };
   });
   
-  console.log(`   📊 Status checkout: Profile=${statusCheckout.profileActive}, Shipping=${statusCheckout.shippingActive}, Payment=${statusCheckout.paymentActive}`);
-  console.log(`   📊 Campo CEP existe: ${statusCheckout.hasCampoCep}, visível: ${statusCheckout.campoCepVisible}`);
+  // Status checkout para decisão interna (log só se necessário debug)
   
   // Verifica se o botão "Ir para o Pagamento" ou "fake-button-go-to-shipping" está visível
   const btnFakeShipping = page.locator('#fake-button-go-to-shipping').first();
@@ -2455,10 +2483,8 @@ test('inscricao-pos', async ({ page, context }) => {
   const fakeVisivel = await btnFakeShipping.isVisible({ timeout: 2000 }).catch(() => false);
   const pagamentoVisivel = await btnPagamento.isVisible({ timeout: 2000 }).catch(() => false);
   
-  console.log(`   📍 Botão fake-button visível: ${fakeVisivel}, Botão Pagamento visível: ${pagamentoVisivel}`);
-  
   if (fakeVisivel || pagamentoVisivel) {
-    console.log('   ✅ Dados já preenchidos! Tentando navegar para Pagamento...');
+    console.log('   ✅ Dados já preenchidos, navegando para Pagamento...');
     
     // Tenta via JavaScript diretamente (mais confiável)
     await page.evaluate(() => {
@@ -2591,95 +2617,178 @@ test('inscricao-pos', async ({ page, context }) => {
   if (urlE10.includes('#/profile') || urlE10.includes('#/cart')) {
     console.log('   📍 Checkout está na etapa Profile/Cart, tentando avançar para Shipping...');
     
-    for (let tentProfile = 1; tentProfile <= 3; tentProfile++) {
-      console.log(`   🔄 Tentativa ${tentProfile}/3 de avançar para Shipping...`);
+    for (let tentProfile = 1; tentProfile <= 5; tentProfile++) {
+      console.log(`   🔄 Tentativa ${tentProfile}/5 de avançar para Shipping...`);
       
-      // Tenta preencher dados de perfil se existirem campos vazios
-      try {
-        // Email
-        const campoEmail = page.locator('#client-email, input[data-i18n*="email"], input[id*="client-email"]').first();
-        if (await campoEmail.isVisible({ timeout: 2000 }).catch(() => false)) {
-          const valorEmail = await campoEmail.inputValue().catch(() => '');
-          if (!valorEmail) {
-            await campoEmail.fill(CLIENTE.email);
-            console.log(`   ✅ Email preenchido no checkout: ${CLIENTE.email}`);
+      // Diagnóstico: verificar campos e erros de validação
+      const diagnostico = await page.evaluate(() => {
+        const campos = {};
+        const erros = [];
+        
+        // Verifica cada campo do perfil
+        const email = document.querySelector('#client-email');
+        const firstName = document.querySelector('#client-first-name');
+        const lastName = document.querySelector('#client-last-name');
+        const document_ = document.querySelector('#client-document');
+        const phone = document.querySelector('#client-phone');
+        
+        campos.email = email ? { valor: email.value, visivel: email.offsetParent !== null, disabled: email.disabled } : null;
+        campos.firstName = firstName ? { valor: firstName.value, visivel: firstName.offsetParent !== null, disabled: firstName.disabled } : null;
+        campos.lastName = lastName ? { valor: lastName.value, visivel: lastName.offsetParent !== null, disabled: lastName.disabled } : null;
+        campos.document = document_ ? { valor: document_.value, visivel: document_.offsetParent !== null, disabled: document_.disabled } : null;
+        campos.phone = phone ? { valor: phone.value, visivel: phone.offsetParent !== null, disabled: phone.disabled } : null;
+        
+        // Verifica erros de validação
+        const errorElements = document.querySelectorAll('.error, .field-error, [class*="error"]:not(script):not(style), .help.error');
+        for (const el of errorElements) {
+          if (el.offsetParent !== null && el.textContent?.trim()) {
+            erros.push(el.textContent.trim().substring(0, 80));
           }
         }
         
-        // Nome
-        const campoNome = page.locator('#client-first-name, input[data-i18n*="firstName"]').first();
+        // Verifica se há campos obrigatórios com classe de erro
+        const camposComErro = document.querySelectorAll('input.error, input.invalid, .form-group.has-error input');
+        const camposErroIds = Array.from(camposComErro).map(el => el.id || el.name).filter(Boolean);
+        
+        return { campos, erros: [...new Set(erros)].slice(0, 5), camposErroIds };
+      }).catch(() => ({ campos: {}, erros: [], camposErroIds: [] }));
+      
+      // Loga apenas erros de validação (campos detalhados só em debug)
+      if (diagnostico.erros.length > 0) {
+        console.log(`   ❌ Erros validação: ${diagnostico.erros.join(' | ')}`);
+      }
+      if (diagnostico.camposErroIds.length > 0) {
+        console.log(`   ❌ Campos com erro: ${diagnostico.camposErroIds.join(', ')}`);
+      }
+      
+      // FORÇAR preenchimento de TODOS os campos (não apenas os vazios)
+      try {
+        // Email - SEMPRE preencher se visível e habilitado
+        const campoEmail = page.locator('#client-email').first();
+        if (await campoEmail.isVisible({ timeout: 2000 }).catch(() => false)) {
+          const disabled = await campoEmail.getAttribute('disabled').catch(() => null);
+          if (!disabled) {
+            await campoEmail.click().catch(() => {});
+            await campoEmail.fill('');
+            await campoEmail.fill(CLIENTE.email);
+            await campoEmail.press('Tab');
+            console.log(`   ✅ Email: ${CLIENTE.email}`);
+            await page.waitForTimeout(1500); // Aguardar validação de email do VTEX
+          } else {
+            console.log(`   ℹ️ Email desabilitado (já preenchido)`);
+          }
+        }
+        
+        // Primeiro Nome
+        const campoNome = page.locator('#client-first-name').first();
         if (await campoNome.isVisible({ timeout: 1000 }).catch(() => false)) {
-          const valorNome = await campoNome.inputValue().catch(() => '');
-          if (!valorNome) {
+          const disabled = await campoNome.getAttribute('disabled').catch(() => null);
+          if (!disabled) {
+            await campoNome.click().catch(() => {});
+            await campoNome.fill('');
             await campoNome.fill(CLIENTE.nome.split(' ')[0]);
-            console.log(`   ✅ Primeiro nome preenchido`);
+            await campoNome.press('Tab');
+            console.log(`   ✅ Nome: ${CLIENTE.nome.split(' ')[0]}`);
           }
         }
         
         // Sobrenome
-        const campoSobrenome = page.locator('#client-last-name, input[data-i18n*="lastName"]').first();
+        const campoSobrenome = page.locator('#client-last-name').first();
         if (await campoSobrenome.isVisible({ timeout: 1000 }).catch(() => false)) {
-          const valorSobrenome = await campoSobrenome.inputValue().catch(() => '');
-          if (!valorSobrenome) {
+          const disabled = await campoSobrenome.getAttribute('disabled').catch(() => null);
+          if (!disabled) {
             const partes = CLIENTE.nome.split(' ');
-            await campoSobrenome.fill(partes.slice(1).join(' '));
-            console.log(`   ✅ Sobrenome preenchido`);
+            const sobrenome = partes.length > 1 ? partes.slice(1).join(' ') : CLIENTE.nome;
+            await campoSobrenome.click().catch(() => {});
+            await campoSobrenome.fill('');
+            await campoSobrenome.fill(sobrenome);
+            await campoSobrenome.press('Tab');
+            console.log(`   ✅ Sobrenome: ${sobrenome}`);
           }
         }
         
         // Documento (CPF)
-        const campoDoc = page.locator('#client-document, input[data-i18n*="document"]').first();
+        const campoDoc = page.locator('#client-document').first();
         if (await campoDoc.isVisible({ timeout: 1000 }).catch(() => false)) {
-          const valorDoc = await campoDoc.inputValue().catch(() => '');
-          if (!valorDoc) {
+          const disabled = await campoDoc.getAttribute('disabled').catch(() => null);
+          if (!disabled) {
+            await campoDoc.click().catch(() => {});
+            await campoDoc.fill('');
             await campoDoc.fill(CLIENTE.cpf);
-            console.log(`   ✅ CPF preenchido no checkout`);
+            await campoDoc.press('Tab');
+            console.log(`   ✅ CPF: ${CLIENTE.cpf}`);
           }
         }
         
         // Telefone
-        const campoTel = page.locator('#client-phone, input[data-i18n*="phone"]').first();
+        const campoTel = page.locator('#client-phone').first();
         if (await campoTel.isVisible({ timeout: 1000 }).catch(() => false)) {
-          const valorTel = await campoTel.inputValue().catch(() => '');
-          if (!valorTel) {
+          const disabled = await campoTel.getAttribute('disabled').catch(() => null);
+          if (!disabled) {
+            await campoTel.click().catch(() => {});
+            await campoTel.fill('');
             await campoTel.fill(CLIENTE.telefone);
-            console.log(`   ✅ Telefone preenchido no checkout`);
+            await campoTel.press('Tab');
+            console.log(`   ✅ Telefone: ${CLIENTE.telefone}`);
           }
         }
       } catch (e) {
         console.log(`   ⚠️ Erro preenchendo perfil: ${e.message.split('\n')[0]}`);
       }
       
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(2000);
       
-      // Tenta clicar no botão para avançar
+      // Tenta clicar no botão para avançar (com fallbacks)
       const botoesAvancar = [
-        page.locator('#go-to-shipping'),
-        page.locator('#btn-go-to-shipping'),  
-        page.locator('#fake-button-go-to-shipping'),
-        page.getByRole('button', { name: /ir para a entrega/i }),
-        page.getByRole('button', { name: /ir para o endereço/i }),
-        page.locator('button.submit[data-i18n*="goToShipping"]'),
-        page.locator('a[href="#/shipping"]'),
+        '#go-to-shipping',
+        '#btn-go-to-shipping',
+        '#fake-button-go-to-shipping',
+        'button.submit[data-i18n*="goToShipping"]',
+        'a[href="#/shipping"]',
       ];
       
       let clicouAvancar = false;
-      for (const btn of botoesAvancar) {
-        try {
-          if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
-            await btn.scrollIntoViewIfNeeded().catch(() => {});
-            await btn.click({ force: true, timeout: 5000 });
-            console.log('   ✅ Clicou para avançar para Shipping');
-            clicouAvancar = true;
-            break;
-          }
-        } catch (e) { /* próximo */ }
-      }
       
-      if (!clicouAvancar) {
-        // Fallback: navega via hash
-        console.log('   📍 Nenhum botão encontrado, navegando via hash...');
-        await page.evaluate(() => { window.location.hash = '#/shipping'; });
+      // Primeiro: tenta via JavaScript direto (mais confiável no VTEX)
+      clicouAvancar = await page.evaluate((seletores) => {
+        for (const sel of seletores) {
+          const el = document.querySelector(sel);
+          if (el && el.offsetParent !== null) {
+            el.click();
+            return true;
+          }
+        }
+        // Tenta por texto
+        const buttons = document.querySelectorAll('button, a');
+        for (const btn of buttons) {
+          const txt = btn.textContent?.toLowerCase() || '';
+          if ((txt.includes('ir para') && (txt.includes('entrega') || txt.includes('endereço'))) ||
+              txt.includes('go to shipping')) {
+            if (btn.offsetParent !== null) {
+              btn.click();
+              return true;
+            }
+          }
+        }
+        return false;
+      }, botoesAvancar).catch(() => false);
+      
+      if (clicouAvancar) {
+        console.log('   ✅ Clicou para avançar (via JS)');
+      } else {
+        // Fallback: tenta via Playwright
+        for (const sel of botoesAvancar) {
+          try {
+            const btn = page.locator(sel).first();
+            if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
+              await btn.scrollIntoViewIfNeeded().catch(() => {});
+              await btn.click({ force: true, timeout: 5000 });
+              console.log(`   ✅ Clicou para avançar (Playwright: ${sel})`);
+              clicouAvancar = true;
+              break;
+            }
+          } catch (e) { /* próximo */ }
+        }
       }
       
       await page.waitForTimeout(4000);
@@ -2700,11 +2809,108 @@ test('inscricao-pos', async ({ page, context }) => {
       }
       
       console.log(`   ⚠️ URL continua em: ${urlApos.split('#')[1] || urlApos}`);
+      
+      // Na tentativa 3+, tenta abordagens mais agressivas
+      if (tentProfile >= 3) {
+        console.log('   🔧 Tentando abordagem agressiva...');
+        
+        // Tenta usar a API VTEX para enviar os dados do profile diretamente
+        const resultado = await page.evaluate((dados) => {
+          try {
+            // Tenta acessar a orderForm do VTEX
+            if (window.vtexjs && window.vtexjs.checkout) {
+              const orderForm = window.vtexjs.checkout.orderForm;
+              if (orderForm && orderForm.orderFormId) {
+                // Envia dados do profile via API
+                return fetch(`/api/checkout/pub/orderForm/${orderForm.orderFormId}/attachments/clientProfileData`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    email: dados.email,
+                    firstName: dados.nome,
+                    lastName: dados.sobrenome,
+                    document: dados.cpf,
+                    documentType: 'cpf',
+                    phone: dados.telefone,
+                  })
+                }).then(r => r.ok ? 'api-ok' : `api-erro-${r.status}`);
+              }
+            }
+            return 'sem-vtexjs';
+          } catch (e) {
+            return `erro: ${e.message}`;
+          }
+        }, {
+          email: CLIENTE.email,
+          nome: CLIENTE.nome.split(' ')[0],
+          sobrenome: CLIENTE.nome.split(' ').slice(1).join(' ') || CLIENTE.nome,
+          cpf: CLIENTE.cpf.replace(/\D/g, ''),
+          telefone: CLIENTE.telefone,
+        }).catch(() => 'evaluate-erro');
+        
+        console.log(`   📋 Resultado API VTEX: ${resultado}`);
+        await page.waitForTimeout(2000);
+        
+        // Força navegação via hash
+        await page.evaluate(() => { window.location.hash = '#/shipping'; });
+        console.log('   📍 Forçou navegação para #/shipping via hash');
+        await page.waitForTimeout(3000);
+        
+        // Verifica se funcionou
+        if (page.url().includes('#/shipping') || page.url().includes('#/payment')) {
+          console.log(`   ✅ Avançou para: ${page.url().split('#')[1]}`);
+          break;
+        }
+        
+        // Se estamos na tentativa 4, tenta reload completo
+        if (tentProfile === 4) {
+          console.log('   🔄 Reload completo do checkout...');
+          await page.screenshot({ path: `debug-profile-stuck-t${tentProfile}.png`, fullPage: true }).catch(() => {});
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+          await page.waitForTimeout(5000);
+        }
+      }
     }
   }
   
   await page.waitForTimeout(1000);
   console.log(`   📍 URL atual: ${page.url()}`);
+  
+  // Se AINDA está em #/profile após todas tentativas, faz último esforço
+  if (page.url().includes('#/profile')) {
+    console.log('   ⚠️ Ainda em #/profile! Tentando último esforço via API VTEX + hash...');
+    
+    // Tenta enviar profile via API do VTEX e navegar diretamente
+    await page.evaluate(async (dados) => {
+      try {
+        if (window.vtexjs && window.vtexjs.checkout && window.vtexjs.checkout.orderForm) {
+          const ofId = window.vtexjs.checkout.orderForm.orderFormId;
+          await fetch(`/api/checkout/pub/orderForm/${ofId}/attachments/clientProfileData`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: dados.email,
+              firstName: dados.nome,
+              lastName: dados.sobrenome,
+              document: dados.cpf,
+              documentType: 'cpf',
+              phone: dados.telefone,
+            })
+          });
+        }
+      } catch (e) {}
+      window.location.hash = '#/shipping';
+    }, {
+      email: CLIENTE.email,
+      nome: CLIENTE.nome.split(' ')[0],
+      sobrenome: CLIENTE.nome.split(' ').slice(1).join(' ') || CLIENTE.nome,
+      cpf: CLIENTE.cpf.replace(/\D/g, ''),
+      telefone: CLIENTE.telefone,
+    }).catch(() => {});
+    
+    await page.waitForTimeout(5000);
+    console.log(`   📍 URL após último esforço: ${page.url()}`);
+  }
   
   // Screenshot para debug
   try {
@@ -2982,34 +3188,8 @@ test('inscricao-pos', async ({ page, context }) => {
     console.log('   ⚠️ Opção de pagamento não encontrada, continuando...');
   }
   
-  // DEBUG: Lista todos os botões visíveis na página
-  console.log('   📋 Listando botões disponíveis na página...');
-  try {
-    const botoesDisponiveis = await page.evaluate(() => {
-      const btns = document.querySelectorAll('button, a.btn, input[type="submit"]');
-      return Array.from(btns).map(b => ({
-        tag: b.tagName,
-        text: b.textContent?.trim().substring(0, 60) || '',
-        id: b.id || '',
-        className: b.className?.substring(0, 60) || '',
-        visible: b.offsetParent !== null,
-        disabled: b.disabled || false
-      })).filter(b => b.visible && b.text.length > 0);
-    });
-    
-    console.log(`   📋 ${botoesDisponiveis.length} botões/links encontrados:`);
-    botoesDisponiveis.forEach((b, i) => {
-      console.log(`      ${i + 1}. [${b.tag}] "${b.text}" (id: ${b.id || 'N/A'}, disabled: ${b.disabled})`);
-    });
-  } catch (e) {
-    console.log(`   ⚠️ Erro ao listar botões: ${e.message}`);
-  }
-  
-  // Screenshot para debug
-  try {
-    await page.screenshot({ path: 'debug-etapa11-pagamento.png', fullPage: true });
-    // debug screenshot salvo silenciosamente
-  } catch (e) {}
+  // Screenshot para debug (silencioso)
+  await page.screenshot({ path: 'debug-etapa11-pagamento.png', fullPage: true }).catch(() => {});
   
   // Clica no botão de finalização (pode ser "Continuar Inscrição", "Finalizar compra", etc)
   console.log('   📝 Procurando botão de finalização...');
@@ -3347,7 +3527,9 @@ test('inscricao-pos', async ({ page, context }) => {
         
         // Captura screenshot do erro para retornar
         const timestampErro = Date.now();
-        const screenshotErroPath = `erro-sem-resultados-${CLIENTE.cpf}-${timestampErro}.png`;
+        const nomeErro = CLIENTE.nome.split(' ')[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const cpf3Erro = CLIENTE.cpf.replace(/\D/g, '').substring(0, 3);
+        const screenshotErroPath = `erro-${nomeErro}-${cpf3Erro}-${timestampErro}.png`;
         await siaaPage.screenshot({ path: screenshotErroPath, fullPage: true });
         console.log(`   ✅ Screenshot de erro salvo: ${screenshotErroPath}`);
         
@@ -3501,10 +3683,13 @@ test('inscricao-pos', async ({ page, context }) => {
   // Verifica se está na página de aprovação
   const textoAprovado = siaaPage.locator('text=Parabéns').first();
   
-  // Define os caminhos dos arquivos de saída
-  const timestamp = Date.now();
-  const screenshotPath = `aprovacao-${CLIENTE.cpf}-${timestamp}.png`;
-  const boletoPath = `boleto-${CLIENTE.cpf}-${timestamp}.pdf`;
+  // Define os caminhos dos arquivos de saída (nome amigável: primeiroNome-3cpf-data)
+  const primeiroNome = CLIENTE.nome.split(' ')[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const cpf3 = CLIENTE.cpf.replace(/\D/g, '').substring(0, 3);
+  const dataHoje = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
+  const prefixoArquivo = `${primeiroNome}-${cpf3}-${dataHoje}`;
+  const screenshotPath = `aprovacao-${prefixoArquivo}.png`;
+  const boletoPath = `boleto-${prefixoArquivo}.pdf`;
   
   // Captura screenshot ESPECÍFICO: apenas "Parabéns" + dados + tabela até 6ª mensalidade
   try {
@@ -3648,16 +3833,16 @@ test('inscricao-pos', async ({ page, context }) => {
         console.log('');
         
         // ═══════════════════════════════════════════════════════════════════════════
-        // RESUMO FINAL (sem boleto - SIAA ainda processando)
+        // RESUMO FINAL - SIAA NÃO VINCULADO (NÃO é sucesso)
         // ═══════════════════════════════════════════════════════════════════════════
         console.log('═══════════════════════════════════════════════════════════════════════════');
-        console.log('🎉 PROCESSO DE INSCRIÇÃO PÓS-GRADUAÇÃO FINALIZADO');
+        console.log('⚠️ INSCRICAO_SIAA_NAO_VINCULADA');
         console.log('═══════════════════════════════════════════════════════════════════════════');
         console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
         console.log(`📋 CPF: ${CLIENTE.cpf}`);
-        console.log(`📋 Status SIAA: Aguardando sincronização`);
-        console.log(`📸 Screenshot: ${screenshotPath}`);
-        console.log('📋 Boleto: Disponível posteriormente via "Realizar pagamento"');
+        console.log(`📋 Status SIAA: Não vinculada`);
+        console.log(`📸 Screenshot aprovação: ${screenshotPath}`);
+        console.log('📋 Boleto: Não disponível');
         console.log('═══════════════════════════════════════════════════════════════════════════');
         console.log('');
         
