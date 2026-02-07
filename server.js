@@ -1408,19 +1408,19 @@ app.post('/inscricao-transferencia/sync', async (req, res) => {
       return res.status(200).json({ sucesso: false, erro: 'CPF já possui inscrição', logId, cliente: { nome, cpf, email } });
     }
 
-    // Sucesso - tem número de inscrição (transferência não precisa de link de prova)
-    if (numeroInscricao) {
-      console.log(`✅ SUCESSO - Inscrição Transferência concluída! Nº ${numeroInscricao}`);
+    // Sucesso - marcador INSCRICAO_TRANSFERENCIA_SUCESSO ou tem número de inscrição
+    const transferenciaSucesso = stdout.includes('INSCRICAO_TRANSFERENCIA_SUCESSO');
+    if (transferenciaSucesso || numeroInscricao) {
+      console.log(`✅ SUCESSO - Inscrição Transferência concluída! Nº ${numeroInscricao || '(sem número)'}`);
       if (logId) await db.finalizarLogSucesso(logId, {
         duracao_formatada: calcularDuracaoFormatada(inicioMs),
         numero_inscricao: numeroInscricao,
-        output_final: `Inscrição transferência finalizada. Nº ${numeroInscricao}`
+        output_final: `Inscrição transferência finalizada. Nº ${numeroInscricao || 'N/A'}`
       });
       return res.status(200).json({
         sucesso: true,
         mensagem: 'Inscrição realizada com sucesso',
         numeroInscricao,
-        linkProva: linkProva || null,
         tipoIngresso,
         logId,
         cliente: { nome, cpf, email }
