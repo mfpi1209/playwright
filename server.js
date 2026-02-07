@@ -931,11 +931,14 @@ app.post('/inscricao-pos/sync', async (req, res) => {
   
   const { 
     nome, cpf, email, telefone, 
-    cep, numero, complemento, estado, cidade, 
+    cep, complemento, estado, cidade, 
     curso, polo, campanha,
     leadId, webhookUrl
   } = req.body;
   
+  // Aceita "numero", "numero_residencia" ou gera aleatório de 1 a 200
+  const numero = req.body.numero || req.body.numero_residencia || String(Math.floor(Math.random() * 200) + 1);
+
   // Aceita tanto "nascimento" quanto "data de nascimento"
   const nascimento = req.body.nascimento || req.body['data de nascimento'] || req.body.dataNascimento;
   
