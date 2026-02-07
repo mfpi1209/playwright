@@ -1559,95 +1559,107 @@ test('inscricao-pos', async ({ page, context }) => {
     // BASEADO NA GRAVAÇÃO DO PLAYWRIGHT CODEGEN
     // ═══════════════════════════════════════════════════════════════════════════
     
+    // ── Helper para selecionar opção em react-select ──
+    async function selecionarReactSelect(page, indice, textoDigitar, nomeOpcao, label) {
+      // Localiza todos os react-select controls
+      const controls = page.locator('.react-select__control');
+      const control = controls.nth(indice);
+      
+      // Tenta abrir o dropdown clicando no control
+      let abriu = false;
+      for (let tentativa = 1; tentativa <= 3; tentativa++) {
+        try {
+          // Verifica se já foi selecionado (tem single-value)
+          const jaTemValor = await control.locator('.react-select__single-value').isVisible({ timeout: 500 }).catch(() => false);
+          if (jaTemValor) {
+            const valorAtual = await control.locator('.react-select__single-value').textContent().catch(() => '');
+            if (valorAtual && valorAtual.toLowerCase().includes(nomeOpcao.toLowerCase().slice(0, 5))) {
+              console.log(`   ✅ ${label}: ${valorAtual} (já selecionado)`);
+              return true;
+            }
+          }
+          
+          await control.click({ timeout: 5000 });
+          await page.waitForTimeout(400);
+          
+          // Verifica se o menu abriu
+          const menuAberto = await page.locator('.react-select__menu').isVisible({ timeout: 2000 }).catch(() => false);
+          if (menuAberto) {
+            abriu = true;
+            break;
+          }
+          
+          // Tenta clicar no input-container diretamente
+          const inputContainer = control.locator('.react-select__input-container');
+          if (await inputContainer.isVisible({ timeout: 1000 }).catch(() => false)) {
+            await inputContainer.click();
+            await page.waitForTimeout(400);
+            const menuAberto2 = await page.locator('.react-select__menu').isVisible({ timeout: 2000 }).catch(() => false);
+            if (menuAberto2) {
+              abriu = true;
+              break;
+            }
+          }
+          
+          console.log(`   ⚠️ Tentativa ${tentativa}/3: menu não abriu para ${label}`);
+        } catch (e) {
+          console.log(`   ⚠️ Tentativa ${tentativa}/3 erro: ${e.message.split('\n')[0]}`);
+        }
+      }
+      
+      if (!abriu) {
+        console.log(`   ❌ Não conseguiu abrir dropdown ${label}`);
+        return false;
+      }
+      
+      // Digita para filtrar
+      await page.keyboard.type(textoDigitar, { delay: 30 });
+      await page.waitForTimeout(1000);
+      
+      // Tenta clicar na opção pelo texto
+      const opcao = page.locator('.react-select__option').filter({ hasText: new RegExp(nomeOpcao, 'i') }).first();
+      const opcaoVisivel = await opcao.isVisible({ timeout: 3000 }).catch(() => false);
+      
+      if (opcaoVisivel) {
+        await opcao.click();
+        console.log(`   ✅ ${label}: ${nomeOpcao}`);
+        return true;
+      }
+      
+      // Fallback: pressiona Enter para selecionar primeiro item filtrado
+      console.log(`   📍 Opção "${nomeOpcao}" não clicável, tentando Enter...`);
+      await page.keyboard.press('Enter');
+      
+      // Verifica se selecionou
+      await page.waitForTimeout(500);
+      const valorSelecionado = await control.locator('.react-select__single-value').textContent().catch(() => '');
+      if (valorSelecionado) {
+        console.log(`   ✅ ${label}: ${valorSelecionado} (via Enter)`);
+        return true;
+      }
+      
+      console.log(`   ⚠️ ${label}: Não confirmado se selecionou`);
+      return false;
+    }
+    
     // 1. PAÍS - Brasil
     console.log('   📝 Selecionando País: Brasil...');
-    try {
-      // Usa force: true para ignorar interceptação de cliques
-      await page.locator('.react-select__input-container').first().click({ force: true });
-      await page.waitForTimeout(500);
-      await page.getByRole('option', { name: 'Brasil' }).click();
-      console.log('   ✅ País: Brasil');
-    } catch (e) {
-      console.log(`   ⚠️ Erro ao selecionar país: ${e.message}`);
-    }
+    await selecionarReactSelect(page, 0, 'brasil', 'Brasil', 'País');
     await page.waitForTimeout(1000);
     
-    // 2. ESTADO - Clica no select de estado e digita
+    // 2. ESTADO
     console.log(`   📝 Selecionando Estado: ${CLIENTE.estado}...`);
-    try {
-      // Clica no segundo "Selecione" (Estado)
-      await page.locator('div').filter({ hasText: /^Selecione$/ }).nth(1).click();
-      await page.waitForTimeout(500);
-      
-      // Encontra o input do react-select ativo e digita
-      const inputEstado = page.locator('#react-select-3-input, #react-select-4-input').first();
-      if (await inputEstado.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await inputEstado.fill('são pau');
-      } else {
-        await page.keyboard.type('são pau', { delay: 50 });
-      }
-      await page.waitForTimeout(1000);
-      
-      // Clica na opção São Paulo
-      await page.getByRole('option', { name: 'São Paulo' }).click();
-      console.log('   ✅ Estado: São Paulo');
-    } catch (e) {
-      console.log(`   ⚠️ Erro ao selecionar estado: ${e.message}`);
-    }
+    await selecionarReactSelect(page, 1, 'são pau', 'São Paulo', 'Estado');
     await page.waitForTimeout(1500);
     
-    // 3. CIDADE - Clica no select de cidade e digita
+    // 3. CIDADE
     console.log(`   📝 Selecionando Cidade: ${CLIENTE.cidade}...`);
-    try {
-      // Clica no próximo "Selecione" (Cidade)
-      await page.locator('div').filter({ hasText: /^Selecione$/ }).nth(1).click();
-      await page.waitForTimeout(500);
-      
-      // Encontra o input do react-select ativo e digita
-      const inputCidade = page.locator('#react-select-4-input, #react-select-5-input').first();
-      if (await inputCidade.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await inputCidade.fill('são pa');
-      } else {
-        await page.keyboard.type('são pa', { delay: 50 });
-      }
-      await page.waitForTimeout(1000);
-      
-      // Clica na opção São Paulo
-      await page.getByRole('option', { name: 'São Paulo' }).click();
-      console.log('   ✅ Cidade: São Paulo');
-    } catch (e) {
-      console.log(`   ⚠️ Erro ao selecionar cidade: ${e.message}`);
-    }
+    await selecionarReactSelect(page, 2, 'são pa', CLIENTE.cidade, 'Cidade');
     await page.waitForTimeout(1500);
     
-    // 4. POLO - Clica no select de polo e digita
+    // 4. POLO
     console.log(`   📝 Selecionando Polo: ${CLIENTE.polo}...`);
-    try {
-      // Tenta clicar no select de polo (geralmente o 5º react-select ou tem texto "Selecione")
-      const selectPolo = page.locator('div:nth-child(5) > .react-select-container > .react-select__control > .react-select__value-container > .react-select__input-container');
-      if (await selectPolo.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await selectPolo.click();
-      } else {
-        // Fallback: clica no próximo "Selecione"
-        await page.locator('div').filter({ hasText: /^Selecione$/ }).first().click();
-      }
-      await page.waitForTimeout(500);
-      
-      // Digita o polo
-      const inputPolo = page.locator('#react-select-5-input, #react-select-6-input').first();
-      if (await inputPolo.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await inputPolo.fill(CLIENTE.polo);
-      } else {
-        await page.keyboard.type(CLIENTE.polo, { delay: 50 });
-      }
-      await page.waitForTimeout(1000);
-      
-      // Pressiona Enter para selecionar
-      await page.keyboard.press('Enter');
-      console.log(`   ✅ Polo: ${CLIENTE.polo}`);
-    } catch (e) {
-      console.log(`   ⚠️ Erro ao selecionar polo: ${e.message}`);
-    }
+    await selecionarReactSelect(page, 3, CLIENTE.polo, CLIENTE.polo, 'Polo');
     await page.waitForTimeout(1000);
     
     // 5. CPF
