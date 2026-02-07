@@ -4,8 +4,8 @@ FROM mcr.microsoft.com/playwright:v1.57.0-jammy
 # Configura encoding UTF-8 para caracteres especiais e emojis
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
-ENV NODE_OPTIONS="--experimental-vm-modules"
 ENV PYTHONIOENCODING=utf-8
+# Force rebuild v2
 
 # Define diretório de trabalho
 WORKDIR /app
