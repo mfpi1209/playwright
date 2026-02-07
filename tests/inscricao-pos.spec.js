@@ -2525,63 +2525,37 @@ test('inscricao-pos', async ({ page, context }) => {
   if (enderecoJaPreenchido && !calculaVisivel) {
     console.log('   ✅ Endereço já preenchido e validado');
   } else {
-    console.log('   📝 Tentando preencher campos de endereço...');
-    // Usa JavaScript para preencher os campos de endereço diretamente
-    const resultadoEndereco = await page.evaluate((dados) => {
-      const result = { cep: false, numero: false, logs: [] };
-      
-      // Procura campo CEP
-      const campoCep = document.querySelector('#ship-postalCode') ||
-                       document.querySelector('input[name="postalCode"]') ||
-                       document.querySelector('input[id*="postalCode"]') ||
-                       document.querySelector('input[placeholder*="CEP" i]');
-      
-      if (campoCep && campoCep.offsetParent !== null) {
-        campoCep.focus();
-        campoCep.value = dados.cep;
-        campoCep.dispatchEvent(new Event('input', { bubbles: true }));
-        campoCep.dispatchEvent(new Event('change', { bubbles: true }));
-        campoCep.dispatchEvent(new Event('blur', { bubbles: true }));
-        result.cep = true;
-        result.logs.push(`CEP preenchido: ${dados.cep}`);
-      } else {
-        result.logs.push('Campo CEP não encontrado ou não visível');
-      }
-      
-      // Procura campo Número
-      const campoNumero = document.querySelector('#ship-number') ||
-                          document.querySelector('input[name="number"]') ||
-                          document.querySelector('input[id*="number"]') ||
-                          document.querySelector('input[placeholder*="Número" i]');
-      
-      if (campoNumero && campoNumero.offsetParent !== null) {
-        campoNumero.focus();
-        campoNumero.value = dados.numero;
-        campoNumero.dispatchEvent(new Event('input', { bubbles: true }));
-        campoNumero.dispatchEvent(new Event('change', { bubbles: true }));
-        campoNumero.dispatchEvent(new Event('blur', { bubbles: true }));
-        result.numero = true;
-        result.logs.push(`Número preenchido: ${dados.numero}`);
-      } else {
-        result.logs.push('Campo Número não encontrado ou não visível');
-      }
-      
-      return result;
-    }, { cep: CLIENTE.cep, numero: CLIENTE.numero });
-    
-    resultadoEndereco.logs.forEach(log => console.log(`   📝 ${log}`));
-    
-    if (resultadoEndereco.cep) {
-      console.log(`   ✅ CEP: ${CLIENTE.cep}`);
-    }
-    if (resultadoEndereco.numero) {
-      console.log(`   ✅ Número: ${CLIENTE.numero}`);
-    }
-    
-    // Aguarda o CEP ser processado (autocomplete de endereço)
-    await page.waitForTimeout(3000);
+    console.log('   📝 Preenchendo CEP e Número...');
 
-    // Clica em "Calcular" se o botão estiver visível (valida o endereço)
+    // Preenche CEP usando Playwright .fill() (funciona com React/VTEX)
+    const seletoresCep = [
+      '#ship-postalCode',
+      'input[name="postalCode"]',
+      'input[id*="postalCode"]',
+      'input[placeholder*="CEP" i]',
+      'input[label*="CEP" i]'
+    ];
+
+    let cepPreenchido = false;
+    for (const sel of seletoresCep) {
+      try {
+        const campo = page.locator(sel).first();
+        if (await campo.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await campo.click();
+          await campo.fill('');
+          await campo.type(CLIENTE.cep, { delay: 50 });
+          console.log(`   ✅ CEP preenchido: ${CLIENTE.cep} (via ${sel})`);
+          cepPreenchido = true;
+          break;
+        }
+      } catch (e) {}
+    }
+    if (!cepPreenchido) {
+      console.log('   ⚠️ Campo CEP não encontrado');
+    }
+
+    // Clica em "Calcular" para validar o endereço
+    await page.waitForTimeout(1000);
     const btnCalc = page.locator('#shipping-calculate-link, button:has-text("Calcular")').first();
     const calcVisivel = await btnCalc.isVisible({ timeout: 3000 }).catch(() => false);
     if (calcVisivel) {
@@ -2590,6 +2564,34 @@ test('inscricao-pos', async ({ page, context }) => {
       await page.waitForTimeout(5000);
       console.log('   ✅ Endereço validado');
     }
+
+    // Preenche Número (aparece após CEP ser validado)
+    const seletoresNum = [
+      '#ship-number',
+      'input[name="number"]',
+      'input[id*="number"]',
+      'input[placeholder*="Número" i]'
+    ];
+
+    let numPreenchido = false;
+    for (const sel of seletoresNum) {
+      try {
+        const campo = page.locator(sel).first();
+        if (await campo.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await campo.click();
+          await campo.fill('');
+          await campo.type(CLIENTE.numero, { delay: 50 });
+          console.log(`   ✅ Número preenchido: ${CLIENTE.numero} (via ${sel})`);
+          numPreenchido = true;
+          break;
+        }
+      } catch (e) {}
+    }
+    if (!numPreenchido) {
+      console.log('   ⚠️ Campo Número não encontrado');
+    }
+
+    await page.waitForTimeout(3000);
   }
   
   await page.waitForTimeout(1000);
