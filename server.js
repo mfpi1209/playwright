@@ -1319,6 +1319,137 @@ app.post('/inscricao-pos/sync', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ROTA: Inscrição TRANSFERÊNCIA / SEGUNDA GRADUAÇÃO Síncrona
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/inscricao-transferencia/sync', async (req, res) => {
+  console.log('');
+  console.log('📦 BODY RECEBIDO (TRANSFERÊNCIA):', JSON.stringify(req.body, null, 2));
+  
+  const { nome, cpf, email, telefone, cep, numero, complemento, estado, cidade, curso, polo, leadId } = req.body;
+  const nascimento = req.body.nascimento || req.body['data de nascimento'] || req.body.dataNascimento;
+  const tipoIngresso = req.body.tipoIngresso || req.body.tipo_ingresso || 'Segunda Graduação';
+
+  if (!nome || !cpf || !email || !telefone || !nascimento) {
+    return res.status(400).json({ sucesso: false, erro: 'Campos obrigatórios: nome, cpf, email, telefone, nascimento' });
+  }
+
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('📥 NOVA INSCRIÇÃO TRANSFERÊNCIA / SEGUNDA GRADUAÇÃO');
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log(`   Nome: ${nome} | CPF: ${cpf} | Tipo: ${tipoIngresso}`);
+  console.log(`   Curso: ${curso || '-'} | Polo: ${polo || '-'}`);
+  console.log('');
+
+  const inicioMs = Date.now();
+  const logDB = await db.iniciarLog({
+    tipo_inscricao: 'transferencia',
+    nome, cpf, email, telefone, nascimento,
+    curso: curso || '', polo: polo || '',
+    ip_origem: req.ip, user_agent: req.get('User-Agent')
+  });
+  const logId = logDB ? logDB.id : null;
+  if (logId) await db.atualizarStatusEmAndamento(logId, 'Transferência - iniciando Playwright');
+
+  const env = {
+    ...process.env,
+    CLIENTE_NOME: nome,
+    CLIENTE_CPF: cpf,
+    CLIENTE_EMAIL: email,
+    CLIENTE_TELEFONE: telefone,
+    CLIENTE_NASCIMENTO: nascimento,
+    CLIENTE_CEP: cep || '',
+    CLIENTE_NUMERO: numero || '',
+    CLIENTE_COMPLEMENTO: complemento || '',
+    CLIENTE_ESTADO: estado || '',
+    CLIENTE_CIDADE: cidade || '',
+    CLIENTE_CURSO: curso || '',
+    CLIENTE_POLO: polo || '',
+    CLIENTE_TIPO_INGRESSO: tipoIngresso,
+    LOG_ID: logId ? logId.toString() : ''
+  };
+
+  console.log('🚀 Iniciando Playwright (transferência)...');
+  const processo = spawn('npx playwright test tests/inscricao-transferencia.spec.js --config=playwright.config.server.js', {
+    env, cwd: __dirname, shell: true
+  });
+
+  let stdout = '';
+  let stderr = '';
+
+  processo.stdout.on('data', (data) => { const t = data.toString(); stdout += t; process.stdout.write(t); });
+  processo.stderr.on('data', (data) => { const t = data.toString(); stderr += t; process.stderr.write(t); });
+
+  processo.on('close', async (code) => {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log(`📤 PROCESSO TRANSFERÊNCIA FINALIZADO (código: ${code})`);
+    console.log('═══════════════════════════════════════════════════════════════');
+
+    // Extrai dados do output
+    const linkMatch = stdout.match(/🔗\s*(https?:\/\/[^\s]+)/);
+    const linkProva = linkMatch ? linkMatch[1] : null;
+
+    let numeroInscricaoMatch = stdout.match(/NUMERO_INSCRICAO_EXTRAIDO:\s*(\d+)/);
+    if (!numeroInscricaoMatch) numeroInscricaoMatch = stdout.match(/Número de Inscrição:\s*(\d+)/);
+    const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
+
+    // Alerta de inconsistência
+    const alertaMatch = stdout.match(/ALERTA_INSCRICAO:\s*(.+)/);
+    if (alertaMatch) {
+      const msg = alertaMatch[1].trim();
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: msg, etapa_erro: 'alerta_cadastro', output_final: stdout.slice(-3000) });
+      return res.status(200).json({ sucesso: false, erro: msg, tipo_erro: 'alerta_cadastro', logId, cliente: { nome, cpf, email } });
+    }
+
+    // CPF já inscrito
+    if (stdout.includes('CPF já possui uma inscrição') || stdout.includes('CPF JÁ POSSUI INSCRIÇÃO')) {
+      if (logId) await db.finalizarLogErro(logId, { erro_mensagem: 'CPF já possui inscrição', etapa_erro: 'validacao_cpf', output_final: stdout.slice(-3000) });
+      return res.status(200).json({ sucesso: false, erro: 'CPF já possui inscrição', logId, cliente: { nome, cpf, email } });
+    }
+
+    // Sucesso - tem número de inscrição (transferência não precisa de link de prova)
+    if (numeroInscricao) {
+      console.log(`✅ SUCESSO - Inscrição Transferência concluída! Nº ${numeroInscricao}`);
+      if (logId) await db.finalizarLogSucesso(logId, {
+        duracao_formatada: calcularDuracaoFormatada(inicioMs),
+        numero_inscricao: numeroInscricao,
+        output_final: `Inscrição transferência finalizada. Nº ${numeroInscricao}`
+      });
+      return res.status(200).json({
+        sucesso: true,
+        mensagem: 'Inscrição realizada com sucesso',
+        numeroInscricao,
+        linkProva: linkProva || null,
+        tipoIngresso,
+        logId,
+        cliente: { nome, cpf, email }
+      });
+    }
+
+    // Fallback - sem número mas com link
+    if (linkProva) {
+      console.log('✅ SUCESSO - Link capturado (sem número de inscrição)');
+      if (logId) await db.finalizarLogSucesso(logId, {
+        duracao_formatada: calcularDuracaoFormatada(inicioMs),
+        output_final: `Link: ${linkProva}`
+      });
+      return res.status(200).json({ sucesso: true, mensagem: 'Inscrição realizada com sucesso', linkProva, tipoIngresso, logId, cliente: { nome, cpf, email } });
+    }
+
+    // Erro genérico
+    console.log('❌ ERRO - Inscrição transferência não finalizada');
+    if (logId) await db.finalizarLogErro(logId, { erro_mensagem: code !== 0 ? `Código ${code}` : 'Não finalizada', etapa_erro: 'finalizacao', output_final: stdout.slice(-3000) });
+    return res.status(200).json({ sucesso: false, erro: code !== 0 ? `Processo terminou com código ${code}` : 'Inscrição não finalizada', logId, cliente: { nome, cpf, email }, logs: stdout.slice(-2000) });
+  });
+
+  processo.on('error', async (err) => {
+    if (logId) await db.finalizarLogErro(logId, { erro_mensagem: err.message, etapa_erro: 'spawn_processo', output_final: '' });
+    res.status(200).json({ sucesso: false, erro: err.message, logId, cliente: { nome, cpf, email } });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ROTA: Listar Logs de Execução
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/logs', async (req, res) => {
@@ -1423,6 +1554,7 @@ const server = app.listen(PORT, async () => {
   console.log('   POST /inscricao-enem/sync          - Inscrição ENEM com notas');
   console.log('   POST /inscricao-enem-sem-nota/sync - Inscrição ENEM sem notas');
   console.log('   POST /inscricao-pos/sync           - Inscrição PÓS-GRADUAÇÃO');
+  console.log('   POST /inscricao-transferencia/sync - Transferência / Segunda Graduação');
   console.log('   GET  /status                       - Status da execução atual');
   console.log('   GET  /files/:filename              - Serve arquivos gerados');
   console.log('   POST /kommo/upload-lead             - Upload seguro para Kommo (valida CPF)');
