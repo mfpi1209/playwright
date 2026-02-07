@@ -36,7 +36,8 @@ async function runSetup() {
         DO $$ BEGIN
           CREATE TYPE tipo_inscricao_enum AS ENUM (
             'pos', 'mba', 'graduacao', 'multipla', 'redacao',
-            'enem_com_nota', 'enem_sem_nota', 'profissionalizante', 'outro'
+            'enem_com_nota', 'enem_sem_nota', 'profissionalizante',
+            'transferencia', 'segunda_graduacao', 'outro'
           );
         EXCEPTION
           WHEN duplicate_object THEN null;
@@ -45,6 +46,15 @@ async function runSetup() {
       console.log('   ✅ tipo_inscricao_enum');
     } catch (e) {
       console.log('   ℹ️ tipo_inscricao_enum já existe');
+    }
+    
+    // Adiciona novos valores ao enum se não existirem
+    try {
+      await pool.query(`ALTER TYPE tipo_inscricao_enum ADD VALUE IF NOT EXISTS 'transferencia';`);
+      await pool.query(`ALTER TYPE tipo_inscricao_enum ADD VALUE IF NOT EXISTS 'segunda_graduacao';`);
+      console.log('   ✅ Valores transferencia/segunda_graduacao adicionados ao enum');
+    } catch (e) {
+      console.log('   ℹ️ Valores já existem no enum');
     }
     
     // Status de execução
