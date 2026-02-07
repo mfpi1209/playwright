@@ -2518,8 +2518,12 @@ test('inscricao-pos', async ({ page, context }) => {
     return false;
   });
   
-  if (enderecoJaPreenchido) {
-    console.log('   ✅ Endereço já preenchido anteriormente');
+  // Mesmo com endereço "preenchido", verifica se precisa calcular frete
+  const btnCalcular = page.locator('#shipping-calculate-link, button:has-text("Calcular")').first();
+  const calculaVisivel = await btnCalcular.isVisible({ timeout: 2000 }).catch(() => false);
+
+  if (enderecoJaPreenchido && !calculaVisivel) {
+    console.log('   ✅ Endereço já preenchido e frete calculado');
   } else {
     console.log('   📝 Tentando preencher campos de endereço...');
     // Usa JavaScript para preencher os campos de endereço diretamente
@@ -2576,6 +2580,30 @@ test('inscricao-pos', async ({ page, context }) => {
     
     // Aguarda o CEP ser processado (autocomplete de endereço)
     await page.waitForTimeout(3000);
+
+    // Clica em "Calcular" se o botão estiver visível (calcula o frete)
+    const btnCalc = page.locator('#shipping-calculate-link, button:has-text("Calcular")').first();
+    const calcVisivel = await btnCalc.isVisible({ timeout: 3000 }).catch(() => false);
+    if (calcVisivel) {
+      console.log('   📝 Clicando em "Calcular" (frete)...');
+      await btnCalc.click();
+      await page.waitForTimeout(5000);
+      console.log('   ✅ Frete calculado');
+    }
+
+    // Seleciona opção de frete se aparecer (radio buttons de entrega)
+    try {
+      const opcaoFrete = page.locator('input[type="radio"][name*="shipping"], .shipping-option input[type="radio"]').first();
+      const freteVisivel = await opcaoFrete.isVisible({ timeout: 3000 }).catch(() => false);
+      if (freteVisivel) {
+        const jaChecked = await opcaoFrete.isChecked().catch(() => false);
+        if (!jaChecked) {
+          await opcaoFrete.click();
+          console.log('   ✅ Opção de frete selecionada');
+          await page.waitForTimeout(2000);
+        }
+      }
+    } catch (e) {}
   }
   
   await page.waitForTimeout(1000);
