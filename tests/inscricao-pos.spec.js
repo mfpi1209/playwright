@@ -293,8 +293,13 @@ const CLIENTE = {
   estado: corrigirEncoding(process.env.CLIENTE_ESTADO || ''),
   cidade: corrigirEncoding(process.env.CLIENTE_CIDADE || ''),
   curso: corrigirEncoding(process.env.CLIENTE_CURSO || ''),
-  // Duração: usa env var se fornecida, senão extrai do nome do curso (ex: "MBA... 9 Meses" → 9)
-  duracao: process.env.CLIENTE_DURACAO || (() => {
+  // Duração: só o número (sem "meses"). Ex: "9 meses" → "9", "9" → "9"
+  duracao: (() => {
+    const raw = (process.env.CLIENTE_DURACAO || '').trim();
+    if (raw) {
+      const m = raw.match(/(\d+)/);
+      return m ? m[1] : raw;
+    }
     const cursoNome = corrigirEncoding(process.env.CLIENTE_CURSO || '');
     const matchDur = cursoNome.match(/(\d+)\s*meses?/i);
     return matchDur ? matchDur[1] : '';

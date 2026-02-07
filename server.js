@@ -943,9 +943,18 @@ app.post('/inscricao-pos/sync', async (req, res) => {
   const matricula = (req.body.matricula || '').toString().replace(/[R$\s]/g, '').replace(',', '.').trim();
   const mensalidade = (req.body.mensalidade || '').toString().replace(/[R$\s]/g, '').replace(',', '.').trim();
   
-  // Extrai duração do nome do curso se não fornecida explicitamente
-  // Ex: "MBA em Empreendedorismo e Inovação 9 Meses" → duracao = "9"
-  let duracao = req.body.duracao || '';
+  // Extrai duração como número puro (sem "meses")
+  // n8n pode enviar "9", "9 meses", "9 Meses" etc → sempre extrair só o número
+  let duracaoRaw = (req.body.duracao || '').toString().trim();
+  let duracao = '';
+  
+  // Se veio duração do n8n, extrai só o número
+  if (duracaoRaw) {
+    const numMatch = duracaoRaw.match(/(\d+)/);
+    duracao = numMatch ? numMatch[1] : duracaoRaw;
+  }
+  
+  // Se não veio duração, tenta extrair do nome do curso
   if (!duracao && curso) {
     const duracaoMatch = curso.match(/(\d+)\s*meses?/i);
     if (duracaoMatch) {
