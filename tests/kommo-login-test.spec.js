@@ -14,8 +14,22 @@ const SELECTORS_PASSWORD = ['input[placeholder="Password"]', 'input[name="passwo
 const SELECTORS_SUBMIT   = ['button[type="submit"]', 'button:has-text("Entrar")', 'input[type="submit"]', 'button:has-text("Login")', 'button:has-text("Log in")'];
 
 test('Teste de Login no Kommo', async ({ page, context }) => {
-  const KOMMO_EMAIL    = process.env.KOMMO_EMAIL || 'adm@eduit.com.br';
-  const KOMMO_PASSWORD = process.env.KOMMO_PASSWORD;
+  // Lê usuários Kommo do .env (formato: email:senha|email:senha) ou variáveis individuais
+  const { KOMMO_EMAIL, KOMMO_PASSWORD } = (() => {
+    const envUsers = process.env.KOMMO_USERS || '';
+    if (envUsers.includes(':')) {
+      const users = envUsers.split('|').filter(Boolean).map(par => {
+        const [email, ...senhaParts] = par.split(':');
+        return { email: email.trim(), senha: senhaParts.join(':').trim() };
+      });
+      const escolhido = users[Math.floor(Math.random() * users.length)];
+      return { KOMMO_EMAIL: escolhido.email, KOMMO_PASSWORD: escolhido.senha };
+    }
+    return {
+      KOMMO_EMAIL: process.env.KOMMO_EMAIL || 'adm@eduit.com.br',
+      KOMMO_PASSWORD: process.env.KOMMO_PASSWORD
+    };
+  })();
   const LEAD_ID        = process.env.LEAD_ID || '20412541';
 
   console.log('');

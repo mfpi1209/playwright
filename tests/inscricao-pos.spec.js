@@ -438,10 +438,24 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 1: Login Admin');
   
-  const ADMINS = [
-    { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit777' },
-    { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'MFPedu!t678@!' },
-  ];
+  // Lê admins do .env (formato: email:senha|email:senha) ou usa hardcoded como fallback
+  const ADMINS = (() => {
+    const envAdmins = process.env.VTEX_ADMINS || '';
+    if (envAdmins.includes('|') || envAdmins.includes(':')) {
+      return envAdmins.split('|').filter(Boolean).map(par => {
+        const [email, ...senhaParts] = par.split(':');
+        return { email: email.trim(), senha: senhaParts.join(':').trim() };
+      });
+    }
+    // Fallback: variáveis individuais ou hardcoded
+    if (process.env.VTEX_ADMIN_EMAIL && process.env.VTEX_ADMIN_PASSWORD) {
+      return [{ email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD }];
+    }
+    return [
+      { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit777' },
+      { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'MFPedu!t678@!' },
+    ];
+  })();
   const adminEscolhido = ADMINS[Math.floor(Math.random() * ADMINS.length)];
   console.log(`   🔑 Admin: ${adminEscolhido.email}`);
   
