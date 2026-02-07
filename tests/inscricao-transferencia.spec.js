@@ -1725,7 +1725,7 @@ test('test', async ({ page }) => {
   
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 10: FINALIZAÇÃO - Transferência / Segunda Graduação
-  // NÃO vai à modal de prova. Captura número de inscrição da URL orderPlaced.
+  // Captura inscricaoSIAA via API VTEX na página orderPlaced.
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 10: Finalização (Transferência/Segunda Graduação)');
   console.log('─────────────────────────────────────────────────────────────────────────');
@@ -1733,26 +1733,123 @@ test('test', async ({ page }) => {
   const urlFinal = page.url();
   console.log(`📍 URL final: ${urlFinal}`);
   
-  // Extrai número de inscrição da URL orderPlaced (parâmetro og=)
-  let numeroInscricao = null;
+  let numeroInscricaoSIAA = null;
+  let orderId = null;
   
   if (urlFinal.includes('orderPlaced')) {
+    // Extrai og da URL
     const ogMatch = urlFinal.match(/og=(\d+)/);
-    if (ogMatch) {
-      numeroInscricao = ogMatch[1];
+    orderId = ogMatch ? ogMatch[1] : null;
+    console.log(`📋 Order ID: ${orderId || '(não encontrado)'}`);
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // CAPTURA inscricaoSIAA via API VTEX /api/dataentities/OP/documents/
+    // ═══════════════════════════════════════════════════════════════════════
+    console.log('');
+    console.log('🔍 Capturando inscricaoSIAA via API VTEX...');
+    
+    // Aguarda a página orderPlaced carregar e fazer as requisições
+    await page.waitForTimeout(5000);
+    
+    // Tenta capturar via JavaScript na própria página
+    try {
+      const resultado = await page.evaluate(async () => {
+        // Busca todas as requisições feitas para dataentities/OP
+        // Tenta buscar diretamente via fetch
+        try {
+          // Procura links ou dados na página que contenham o document ID
+          const scripts = document.querySelectorAll('script');
+          let documentId = null;
+          
+          // Tenta extrair o document ID do conteúdo da página
+          const pageContent = document.body.innerHTML;
+          const docIdMatch = pageContent.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/);
+          if (docIdMatch) {
+            documentId = docIdMatch[1];
+          }
+          
+          if (documentId) {
+            const response = await fetch(`/api/dataentities/OP/documents/${documentId}?an=cruzeirodosul&_fields=inscricaoSIAA,orderId,firstName,lastName,email,formaIngresso,product,codigoDoCurso,unidade`, {
+              headers: { 'Accept': 'application/json' }
+            });
+            if (response.ok) {
+              return await response.json();
+            }
+          }
+          
+          return null;
+        } catch (e) {
+          return { erro: e.message };
+        }
+      });
+      
+      if (resultado && resultado.inscricaoSIAA) {
+        numeroInscricaoSIAA = resultado.inscricaoSIAA;
+        console.log(`✅ inscricaoSIAA capturado via API: ${numeroInscricaoSIAA}`);
+        console.log(`   📋 Dados: ${JSON.stringify(resultado)}`);
+      } else {
+        console.log(`   ⚠️ Resultado da API: ${JSON.stringify(resultado)}`);
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao buscar via evaluate: ${e.message}`);
+    }
+    
+    // Fallback: Intercepta as requisições já feitas pela página
+    if (!numeroInscricaoSIAA) {
+      console.log('');
+      console.log('🔍 Tentando interceptar via requisições da página...');
+      
+      // Registra interceptador e recarrega para capturar
+      let capturedData = null;
+      
+      page.on('response', async (response) => {
+        const url = response.url();
+        if (url.includes('/api/dataentities/OP/documents/') && url.includes('inscricaoSIAA')) {
+          try {
+            const body = await response.json();
+            if (body && body.inscricaoSIAA) {
+              capturedData = body;
+              console.log(`   ✅ INTERCEPTADO inscricaoSIAA: ${body.inscricaoSIAA}`);
+            }
+          } catch (e) {}
+        }
+      });
+      
+      // Recarrega a página para capturar a requisição
+      console.log('   🔄 Recarregando página para interceptar...');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(8000);
+      
+      if (capturedData && capturedData.inscricaoSIAA) {
+        numeroInscricaoSIAA = capturedData.inscricaoSIAA;
+        orderId = capturedData.orderId || orderId;
+        console.log(`   ✅ inscricaoSIAA capturado via interceptação: ${numeroInscricaoSIAA}`);
+      }
+    }
+    
+    // Fallback final: busca diretamente na página
+    if (!numeroInscricaoSIAA) {
+      console.log('');
+      console.log('🔍 Tentando extrair do conteúdo da página...');
+      
+      const pageText = await page.locator('body').innerText().catch(() => '');
+      
+      // Procura padrões como "inscricaoSIAA":"265229682" ou SIAA: 265229682
+      const siaaMatch = pageText.match(/(?:inscricaoSIAA|SIAA)[:\s"]*(\d{6,})/i);
+      if (siaaMatch) {
+        numeroInscricaoSIAA = siaaMatch[1];
+        console.log(`   ✅ inscricaoSIAA encontrado no texto: ${numeroInscricaoSIAA}`);
+      } else {
+        console.log('   ⚠️ inscricaoSIAA não encontrado no texto da página');
+      }
     }
   }
   
-  // Fallback: tenta extrair qualquer número grande da URL
-  if (!numeroInscricao) {
-    const numMatch = urlFinal.match(/(\d{10,})/);
-    if (numMatch) {
-      numeroInscricao = numMatch[1];
-    }
-  }
-  
-  if (numeroInscricao) {
-    console.log(`NUMERO_INSCRICAO_EXTRAIDO: ${numeroInscricao}`);
+  // Marca para extração pelo server.js
+  if (numeroInscricaoSIAA) {
+    console.log(`NUMERO_INSCRICAO_EXTRAIDO: ${numeroInscricaoSIAA}`);
+  } else if (orderId) {
+    console.log(`NUMERO_INSCRICAO_EXTRAIDO: ${orderId}`);
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1762,7 +1859,8 @@ test('test', async ({ page }) => {
   console.log('═══════════════════════════════════════════════════════════════════════════');
   if (urlFinal.includes('orderPlaced')) {
     console.log('INSCRICAO_TRANSFERENCIA_SUCESSO');
-    console.log(`📋 Número de Inscrição: ${numeroInscricao || '(não extraído)'}`);
+    console.log(`📋 inscricaoSIAA: ${numeroInscricaoSIAA || '(não capturado)'}`);
+    console.log(`📋 Order ID: ${orderId || '(não encontrado)'}`);
     console.log(`📋 Tipo de Ingresso: ${CLIENTE.tipoIngresso}`);
     console.log(`📋 Curso: ${CLIENTE.curso}`);
     console.log(`📋 CPF: ${CLIENTE.cpf}`);
