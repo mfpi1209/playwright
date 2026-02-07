@@ -26,6 +26,20 @@ pool.on('error', (err) => {
   console.error('❌ [DB] Erro no pool de conexões:', err.message);
 });
 
+// Garante que os valores de enum existam no banco
+(async () => {
+  try {
+    await pool.query(`ALTER TYPE tipo_inscricao_enum ADD VALUE IF NOT EXISTS 'transferencia';`);
+    await pool.query(`ALTER TYPE tipo_inscricao_enum ADD VALUE IF NOT EXISTS 'segunda_graduacao';`);
+    console.log('✅ [DB] Enum tipo_inscricao_enum atualizado (transferencia/segunda_graduacao)');
+  } catch (e) {
+    // Ignora se já existe ou se enum não foi criado ainda
+    if (!e.message.includes('already exists')) {
+      console.log(`ℹ️ [DB] Enum update: ${e.message}`);
+    }
+  }
+})();
+
 // ═══════════════════════════════════════════════════════════════════════════
 // FUNÇÕES DE LOG
 // ═══════════════════════════════════════════════════════════════════════════
