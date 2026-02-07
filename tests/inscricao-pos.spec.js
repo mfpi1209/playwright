@@ -1269,56 +1269,123 @@ test('inscricao-pos', async ({ page, context }) => {
     console.log('✅ ETAPA 5 CONCLUÍDA');
     console.log('');
   } else {
-    try {
-      const btnInscreva = page.getByRole('button', { name: /inscreva-se/i });
-      if (await btnInscreva.isVisible({ timeout: 5000 })) {
-        await btnInscreva.scrollIntoViewIfNeeded();
-        await btnInscreva.click();
-        console.log('   ✅ Botão Inscreva-se clicado');
-      } else {
-        // Fallback
-        const btnAlternativo = page.locator('button').filter({ hasText: /inscreva/i }).first();
-        if (await btnAlternativo.isVisible({ timeout: 2000 })) {
-          await btnAlternativo.click();
-          console.log('   ✅ Botão clicado (alternativo)');
+    // RETRY LOOP: preenche formulário + clica Inscreva-se, com refresh se travar
+    let formLocalizacaoOk = false;
+    
+    for (let tentativaGlobal = 1; tentativaGlobal <= 3; tentativaGlobal++) {
+      if (tentativaGlobal > 1) {
+        console.log(`   🔄 Tentativa ${tentativaGlobal}/3: Recarregando página e re-preenchendo formulário...`);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(3000);
+        await fecharTodosOverlays(page);
+        
+        // Re-preenche nome
+        for (const seletor of seletoresNome) {
+          try {
+            const campo = page.locator(seletor).first();
+            if (await campo.isVisible({ timeout: 3000 })) {
+              await campo.click();
+              await campo.fill('');
+              await campo.fill(CLIENTE.nome);
+              console.log(`   ✅ Nome re-preenchido: "${CLIENTE.nome}"`);
+              break;
+            }
+          } catch (e) {}
         }
+        await page.waitForTimeout(300);
+        
+        // Re-preenche telefone
+        for (const seletor of seletoresTelefone) {
+          try {
+            const campo = page.locator(seletor).first();
+            if (await campo.isVisible({ timeout: 2000 })) {
+              await campo.click();
+              await campo.fill(CLIENTE.telefone);
+              console.log(`   ✅ Telefone re-preenchido: "${CLIENTE.telefone}"`);
+              break;
+            }
+          } catch (e) {}
+        }
+        await page.waitForTimeout(300);
+        
+        // Re-marca checkbox
+        try {
+          const checkboxVtex = page.locator('.cruzeirodosul-product-purchase-box-0-x-checkboxWrapperFakeInput');
+          if (await checkboxVtex.isVisible({ timeout: 2000 })) {
+            await checkboxVtex.click();
+          } else {
+            const cb = page.locator('input[type="checkbox"]').first();
+            if (await cb.isVisible({ timeout: 2000 })) await cb.click({ force: true });
+          }
+          console.log('   ✅ Checkbox re-marcado');
+        } catch (e) {}
+        await page.waitForTimeout(500);
+        await fecharTodosOverlays(page);
       }
       
-      // Aguarda o formulário de localização aparecer com retry
-      console.log('   ⏳ Aguardando formulário de localização...');
+      // Clica em Inscreva-se
+      try {
+        const btnInscreva = page.getByRole('button', { name: /inscreva-se/i });
+        if (await btnInscreva.isVisible({ timeout: 5000 })) {
+          await btnInscreva.scrollIntoViewIfNeeded();
+          await btnInscreva.click();
+          console.log('   ✅ Botão Inscreva-se clicado');
+        } else {
+          const btnAlt = page.locator('button').filter({ hasText: /inscreva/i }).first();
+          if (await btnAlt.isVisible({ timeout: 2000 })) {
+            await btnAlt.click();
+            console.log('   ✅ Botão clicado (alternativo)');
+          }
+        }
+      } catch (e) {
+        console.log(`   ⚠️ Erro ao clicar Inscreva-se: ${e.message}`);
+        continue;
+      }
       
-      let formEncontrado = false;
-      for (let tentativa = 1; tentativa <= 5; tentativa++) {
+      // Aguarda formulário de localização (máx 20s)
+      console.log('   ⏳ Aguardando formulário de localização...');
+      let formOk = false;
+      
+      for (let espera = 1; espera <= 10; espera++) {
         await page.waitForTimeout(2000);
         
-        // Scroll para baixo para revelar formulário se estiver oculto
-        await page.evaluate(() => window.scrollBy(0, 300));
-        await page.waitForTimeout(1000);
+        // Verifica se "Carregando..." sumiu e formulário apareceu
+        const carregando = await page.locator('text=Carregando').isVisible({ timeout: 500 }).catch(() => false);
         
-        // Re-detecta a tela
         telaAtual = await detectarTelaAtual(page);
         
         if (telaAtual.tela === 'FORMULARIO_LOCALIZACAO' || telaAtual.detalhes.reactSelects >= 3) {
-          console.log(`   ✅ Formulário de localização detectado na tentativa ${tentativa}`);
-          formEncontrado = true;
+          console.log(`   ✅ Formulário de localização detectado!`);
+          formOk = true;
           break;
         } else if (['CAMPANHA', 'CHECKOUT_CART'].includes(telaAtual.tela)) {
-          console.log(`   ✅ Navegou para ${telaAtual.tela}, localização já preenchida`);
-          formEncontrado = true;
+          console.log(`   ✅ Navegou para ${telaAtual.tela}`);
+          formOk = true;
           break;
         }
         
-        console.log(`   ⏳ Tentativa ${tentativa}/5 - Tela: ${telaAtual.tela}`);
+        // Se ainda mostra "Carregando..." após 10s, é hora de retry
+        if (espera >= 5 && carregando) {
+          console.log(`   ⚠️  Página travada em "Carregando..." (${espera * 2}s)`);
+          break;
+        }
+        
+        if (espera % 3 === 0) {
+          await page.evaluate(() => window.scrollBy(0, 300));
+        }
       }
       
-      if (!formEncontrado) {
-        console.log('   ⚠️ Formulário de localização não apareceu após 5 tentativas');
-        await page.screenshot({ path: 'debug-pos-inscreva-se.png', fullPage: true });
-        // debug screenshot salvo silenciosamente
+      if (formOk) {
+        formLocalizacaoOk = true;
+        break;
       }
       
-    } catch (e) {
-      console.log(`   ⚠️ Erro ao clicar Inscreva-se: ${e.message}`);
+      console.log(`   ⚠️ Formulário não carregou na tentativa ${tentativaGlobal}/3`);
+    }
+    
+    if (!formLocalizacaoOk) {
+      console.log('   ⚠️ Formulário de localização não apareceu após 3 tentativas com refresh');
+      await page.screenshot({ path: 'debug-pos-inscreva-se.png', fullPage: true });
     }
     
     console.log('✅ ETAPA 5 CONCLUÍDA');
