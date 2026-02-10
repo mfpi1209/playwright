@@ -58,6 +58,12 @@ function corrigirAcentos(texto) {
     .replace(/AdministraÁ§Á£o/g, 'Administração');
 }
 
+// Normaliza polo "sapopemba" → "sapopemba (vila ema)" (nunca pode ir só "sapopemba")
+function normalizarPolo(polo) {
+  if (!polo) return polo;
+  return polo.trim().toLowerCase() === 'sapopemba' ? 'sapopemba (vila ema)' : polo;
+}
+
 // Gera número de residência aleatório entre 1 e 999
 const numeroAleatorio = Math.floor(Math.random() * 999) + 1;
 
@@ -96,7 +102,7 @@ const CLIENTE = {
   cidade: corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo',
   // Curso
   curso: corrigirAcentos(process.env.CLIENTE_CURSO) || 'pedagogia',
-  polo: corrigirAcentos(process.env.CLIENTE_POLO) || 'vila mariana',
+  polo: normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO)) || 'vila mariana',
   tipoVestibular: corrigirAcentos(process.env.CLIENTE_TIPO_VESTIBULAR) || 'Vestibular Múltipla Escolha',
   tipoIngresso: corrigirAcentos(process.env.CLIENTE_TIPO_INGRESSO) || 'Segunda Graduação',
 };
@@ -1121,7 +1127,7 @@ test('test', async ({ page }) => {
   
   // Polo - tenta o polo solicitado primeiro, depois fallbacks em ordem de prioridade
   const polosFallback = [
-    'sapopemba',
+    'sapopemba (vila ema)',
     'vila prudente 2',
     'vila mariana',
     'santana 2',

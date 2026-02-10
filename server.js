@@ -13,6 +13,15 @@ process.stderr.setEncoding('utf-8');
 const app = express();
 app.use(express.json());
 
+// Middleware: normaliza polo "sapopemba" → "sapopemba (vila ema)"
+app.use((req, res, next) => {
+  if (req.body && req.body.polo && req.body.polo.trim().toLowerCase() === 'sapopemba') {
+    console.log('⚠️ POLO CORRIGIDO: "sapopemba" → "sapopemba (vila ema)"');
+    req.body.polo = 'sapopemba (vila ema)';
+  }
+  next();
+});
+
 // Helper: configura spawn com encoding UTF-8
 function configuraSpawnUTF8(processo) {
   processo.stdout.setEncoding('utf-8');

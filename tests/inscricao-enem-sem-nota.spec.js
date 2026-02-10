@@ -58,6 +58,12 @@ function corrigirAcentos(texto) {
     .replace(/AdministraÁ§Á£o/g, 'Administração');
 }
 
+// Normaliza polo "sapopemba" → "sapopemba (vila ema)" (nunca pode ir só "sapopemba")
+function normalizarPolo(polo) {
+  if (!polo) return polo;
+  return polo.trim().toLowerCase() === 'sapopemba' ? 'sapopemba (vila ema)' : polo;
+}
+
 // Função para capitalizar nome (primeira letra maiúscula de cada palavra)
 function capitalizarNome(nome) {
   return corrigirAcentos(nome).toLowerCase().split(' ').map(palavra => 
@@ -93,7 +99,7 @@ const CLIENTE = {
   cidade: corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo',
   // Curso
   curso: corrigirAcentos(process.env.CLIENTE_CURSO) || 'pedagogia',
-  polo: corrigirAcentos(process.env.CLIENTE_POLO) || 'vila mariana',
+  polo: normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO)) || 'vila mariana',
   // Forma de ingresso ENEM
   tipoVestibular: 'ENEM',
 };

@@ -37,6 +37,12 @@ function downloadFile(url, destPath) {
 // Baseado na gravação do Playwright Codegen
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Normaliza polo "sapopemba" → "sapopemba (vila ema)" (nunca pode ir só "sapopemba")
+function normalizarPolo(polo) {
+  if (!polo) return polo;
+  return polo.trim().toLowerCase() === 'sapopemba' ? 'sapopemba (vila ema)' : polo;
+}
+
 function capitalizarNome(nome) {
   if (!nome) return nome;
   return nome.toLowerCase().split(' ').map(palavra => 
@@ -304,7 +310,7 @@ const CLIENTE = {
     const matchDur = cursoNome.match(/(\d+)\s*meses?/i);
     return matchDur ? matchDur[1] : '';
   })(),
-  polo: corrigirEncoding(process.env.CLIENTE_POLO || ''),
+  polo: normalizarPolo(corrigirEncoding(process.env.CLIENTE_POLO || '')),
   campanha: corrigirEncoding(process.env.CLIENTE_CAMPANHA || ''),
   // Limpa R$, espaços e vírgulas dos valores monetários para garantir que parseFloat funcione
   matricula: (process.env.CLIENTE_MATRICULA || '').replace(/[R$\s]/g, '').replace(',', '.').trim(),
