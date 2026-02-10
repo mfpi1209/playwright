@@ -2258,8 +2258,65 @@ test('inscricao-pos', async ({ page, context }) => {
     } catch (e) {}
   }
   
+  // Se nenhum botão "Continuar" foi encontrado, tenta "Comprar" / "Adicionar ao carrinho" (página de produto)
   if (!btnClicado) {
-    console.log('   ⚠️ Botão Continuar não encontrado - tentando screenshot');
+    console.log('   ⚠️ Botão Continuar não encontrado, verificando se está na página de produto...');
+    const urlAtualE8 = page.url();
+    
+    if (urlAtualE8.includes('/p') || urlAtualE8.match(/\/[^/]+-cruzeiro-do-sul/)) {
+      console.log('   📍 Detectada página de produto VTEX, tentando "Comprar"...');
+      
+      // Tenta botão "Comprar" (padrão VTEX para página de produto)
+      const botoesComprar = [
+        page.getByRole('button', { name: /Comprar/i }),
+        page.getByRole('link', { name: /Comprar/i }),
+        page.locator('button:has-text("Comprar")').first(),
+        page.locator('a:has-text("Comprar")').first(),
+        page.locator('.vtex-button:has-text("Comprar")').first(),
+        page.locator('[class*="buyButton"], [class*="buy-button"]').first(),
+        page.getByRole('button', { name: /Adicionar ao carrinho/i }),
+        page.locator('button:has-text("Adicionar")').first(),
+        page.locator('[class*="add-to-cart"]').first(),
+      ];
+      
+      for (const btn of botoesComprar) {
+        try {
+          if (await btn.isVisible({ timeout: 2000 })) {
+            await btn.scrollIntoViewIfNeeded();
+            await btn.click({ force: true });
+            console.log('   ✅ Botão "Comprar" clicado na página de produto');
+            btnClicado = true;
+            break;
+          }
+        } catch (e) {}
+      }
+      
+      // Fallback: tenta via JavaScript buscar qualquer botão com "Comprar" ou "Adicionar"
+      if (!btnClicado) {
+        try {
+          const clicked = await page.evaluate(() => {
+            const btns = document.querySelectorAll('button, a, [role="button"]');
+            for (const btn of btns) {
+              const texto = (btn.textContent || '').toLowerCase().trim();
+              if ((texto.includes('comprar') || texto.includes('adicionar ao carrinho') || texto.includes('add to cart')) && btn.offsetParent !== null) {
+                btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                btn.click();
+                return texto;
+              }
+            }
+            return null;
+          });
+          if (clicked) {
+            console.log(`   ✅ Botão "${clicked}" clicado via JavaScript`);
+            btnClicado = true;
+          }
+        } catch (e) {}
+      }
+    }
+  }
+  
+  if (!btnClicado) {
+    console.log('   ⚠️ Nenhum botão encontrado (Continuar nem Comprar) - tentando screenshot');
     try {
       await page.screenshot({ path: 'erro-carrinho-pos.png', fullPage: true });
     } catch (e) {}
@@ -2276,31 +2333,50 @@ test('inscricao-pos', async ({ page, context }) => {
     console.log('   ⚠️ Timeout esperando checkout, continuando...');
   }
   
-  // Verifica se realmente saiu da página de campanha
+  // Verifica se realmente saiu da página anterior
   const urlAposClique = page.url();
   console.log(`   📍 URL após clique: ${urlAposClique}`);
   
-  if (urlAposClique.includes('campanha-comercial')) {
-    console.log('   ⚠️ Ainda na página de campanha, tentando novamente...');
+  // Se ainda está na página de campanha ou produto, tenta novamente
+  if (urlAposClique.includes('campanha-comercial') || (urlAposClique.includes('/p') && !urlAposClique.includes('checkout'))) {
+    console.log('   ⚠️ Ainda na página anterior, tentando novamente...');
     
-    // Segunda tentativa com mais força
+    // Segunda tentativa com mais força - busca qualquer botão de ação
     try {
-      await page.evaluate(() => {
-        const allButtons = Array.from(document.querySelectorAll('button'));
-        const continuar = allButtons.find(b => 
-          b.textContent?.toLowerCase().includes('continuar') && 
-          !b.disabled
-        );
-        if (continuar) {
-          continuar.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          continuar.focus();
-          continuar.click();
+      const btnTexto = await page.evaluate(() => {
+        const allButtons = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+        const alvos = ['continuar', 'comprar', 'seguir', 'carrinho', 'checkout', 'adicionar'];
+        const btn = allButtons.find(b => {
+          const texto = (b.textContent || '').toLowerCase();
+          return alvos.some(alvo => texto.includes(alvo)) && !b.disabled && b.offsetParent !== null;
+        });
+        if (btn) {
+          btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          btn.focus();
+          btn.click();
+          return btn.textContent?.trim().substring(0, 50);
         }
+        return null;
       });
+      if (btnTexto) {
+        console.log(`   ✅ Botão "${btnTexto}" clicado na segunda tentativa`);
+      }
       await page.waitForTimeout(8000);
       console.log(`   📍 URL após segunda tentativa: ${page.url()}`);
     } catch (e) {
       console.log(`   ⚠️ Segunda tentativa falhou: ${e.message}`);
+    }
+    
+    // Última tentativa: navega direto para o checkout
+    if (!page.url().includes('checkout')) {
+      console.log('   🔄 Tentando navegar diretamente para o checkout...');
+      try {
+        await page.goto('https://cruzeirodosul.myvtex.com/checkout/', { waitUntil: 'networkidle', timeout: 30000 });
+        await page.waitForTimeout(3000);
+        console.log(`   📍 URL após navegação direta: ${page.url()}`);
+      } catch (e) {
+        console.log(`   ⚠️ Navegação direta falhou: ${e.message}`);
+      }
     }
   }
   
