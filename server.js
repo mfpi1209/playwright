@@ -1290,10 +1290,10 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     const linhaDigitavel = linhaDigitavelMatch ? linhaDigitavelMatch[1].trim() : null;
     
     const screenshotMatch = stdout.match(/Screenshot aprovação:\s*(\S+)/);
-    const screenshotPath = screenshotMatch ? screenshotMatch[1] : null;
+    const screenshotFilename = screenshotMatch ? screenshotMatch[1] : null;
     
     const boletoMatch = stdout.match(/Boleto:\s*(\S+)/);
-    const boletoPath = boletoMatch ? boletoMatch[1] : null;
+    const boletoFilename = boletoMatch ? boletoMatch[1] : null;
     
     const campanhaMatch = stdout.match(/Campanha:\s*(.+)/);
     const campanhaUsada = campanhaMatch ? campanhaMatch[1].trim() : campanha;
@@ -1302,6 +1302,37 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     const valorMatriculaMatch = stdout.match(/Valor matrícula:\s*R?\$?\s*([\d,.]+)/);
     const valorMensalidadeMatch = stdout.match(/Valor mensalidade:\s*R?\$?\s*([\d,.]+)/);
     const qtdParcelasMatch = stdout.match(/Parcelas:\s*(\d+)/);
+    
+    // ═════════════════════════════════════════════════════════════════
+    // Lê arquivos e converte para Base64 (entrega confiável via JSON)
+    // ═════════════════════════════════════════════════════════════════
+    function lerArquivoBase64(filename, mimeType) {
+      if (!filename) return null;
+      // Procura na pasta de arquivos, com fallback na raiz
+      let filePath = path.join(ARQUIVOS_DIR, filename);
+      if (!fs.existsSync(filePath)) {
+        filePath = path.join(__dirname, filename);
+      }
+      if (!fs.existsSync(filePath)) {
+        console.log(`   ⚠️ Arquivo não encontrado para Base64: ${filename}`);
+        return null;
+      }
+      try {
+        const buffer = fs.readFileSync(filePath);
+        console.log(`   ✅ Arquivo lido para Base64: ${filename} (${(buffer.length / 1024).toFixed(1)} KB)`);
+        return {
+          name: filename,
+          mimeType,
+          base64: buffer.toString('base64')
+        };
+      } catch (err) {
+        console.log(`   ❌ Erro ao ler arquivo: ${err.message}`);
+        return null;
+      }
+    }
+    
+    const aprovacaoBase64 = lerArquivoBase64(screenshotFilename, 'image/png');
+    const boletoBase64 = lerArquivoBase64(boletoFilename, 'application/pdf');
     
     if (processoCompleto) {
       console.log('✅ SUCESSO - Inscrição Pós-Graduação concluída!');
@@ -1318,10 +1349,10 @@ app.post('/inscricao-pos/sync', async (req, res) => {
         qtd_parcelas: qtdParcelasMatch ? parseInt(qtdParcelasMatch[1]) : null,
         numero_inscricao: numeroInscricaoSiaa || numeroInscricao,
         numero_inscricao_siaa: numeroInscricaoSiaa,
-        output_final: `SIAA: ${numeroInscricaoSiaa || 'N/A'} | Campanha: ${campanhaUsada} | Boleto: ${boletoPath || 'N/A'}`,
-        arquivo_aprovacao: screenshotPath,
-        arquivo_boleto: boletoPath,
-        arquivos: { screenshot: screenshotPath, boleto: boletoPath, linhaDigitavel }
+        output_final: `SIAA: ${numeroInscricaoSiaa || 'N/A'} | Campanha: ${campanhaUsada} | Boleto: ${boletoFilename || 'N/A'}`,
+        arquivo_aprovacao: screenshotFilename,
+        arquivo_boleto: boletoFilename,
+        arquivos: { screenshot: screenshotFilename, boleto: boletoFilename, linhaDigitavel }
       });
       
       return res.status(200).json({
@@ -1331,10 +1362,10 @@ app.post('/inscricao-pos/sync', async (req, res) => {
         numeroPedidoVtex: numeroInscricao,
         linhaDigitavel,
         linkCartaoCredito,
-        screenshotPath,
-        boletoPath,
-        screenshotUrl: screenshotPath ? `${BASE_URL}/files/${screenshotPath}` : null,
-        boletoUrl: boletoPath ? `${BASE_URL}/files/${boletoPath}` : null,
+        aprovacao: aprovacaoBase64,
+        boleto: boletoBase64,
+        screenshotUrl: screenshotFilename ? `${BASE_URL}/files/${screenshotFilename}` : null,
+        boletoUrl: boletoFilename ? `${BASE_URL}/files/${boletoFilename}` : null,
         campanhaUsada,
         mensagem: 'Inscrição Pós-Graduação concluída com sucesso!',
         logId,
@@ -1357,10 +1388,10 @@ app.post('/inscricao-pos/sync', async (req, res) => {
       numeroInscricao: numeroInscricaoSiaa || numeroInscricao,
       numeroInscricaoSiaa,
       numeroPedidoVtex: numeroInscricao,
-      screenshotPath,
-      boletoPath,
-      screenshotUrl: screenshotPath ? `${BASE_URL}/files/${screenshotPath}` : null,
-      boletoUrl: boletoPath ? `${BASE_URL}/files/${boletoPath}` : null,
+      aprovacao: aprovacaoBase64,
+      boleto: boletoBase64,
+      screenshotUrl: screenshotFilename ? `${BASE_URL}/files/${screenshotFilename}` : null,
+      boletoUrl: boletoFilename ? `${BASE_URL}/files/${boletoFilename}` : null,
       logId,
       cliente: { nome, cpf, email },
       logs: stdout.slice(-2000)
