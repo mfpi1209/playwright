@@ -2,6 +2,11 @@ node_modules/
 test-results/
 playwright-report/
 *.png
+*.pdf
 *.webm
 *.zip
 .env
+
+# Pasta de arquivos gerados (mantém a pasta, ignora conteúdo)
+arquivos/*
+!arquivos/.gitkeep

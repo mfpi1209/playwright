@@ -5,6 +5,12 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 
+// Pasta padrão para arquivos gerados (acessível por todas as instâncias)
+const ARQUIVOS_DIR = process.env.ARQUIVOS_DIR || path.join(__dirname, '..', 'arquivos');
+if (!fs.existsSync(ARQUIVOS_DIR)) {
+  fs.mkdirSync(ARQUIVOS_DIR, { recursive: true });
+}
+
 // Função para fazer download HTTP de um arquivo
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
@@ -3770,8 +3776,12 @@ test('inscricao-pos', async ({ page, context }) => {
   const cpf3 = CLIENTE.cpf.replace(/\D/g, '').substring(0, 3);
   const dataHoje = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
   const prefixoArquivo = `${primeiroNome}-${cpf3}-${dataHoje}`;
-  const screenshotPath = `aprovacao-${prefixoArquivo}.png`;
-  const boletoPath = `boleto-${prefixoArquivo}.pdf`;
+  // Nomes dos arquivos (usados nos console.log para o server.js extrair)
+  const screenshotFilename = `aprovacao-${prefixoArquivo}.png`;
+  const boletoFilename = `boleto-${prefixoArquivo}.pdf`;
+  // Caminhos completos (pasta padrão arquivos/)
+  const screenshotPath = path.join(ARQUIVOS_DIR, screenshotFilename);
+  const boletoPath = path.join(ARQUIVOS_DIR, boletoFilename);
   
   // Captura screenshot ESPECÍFICO: apenas "Parabéns" + dados + tabela até 6ª mensalidade
   try {
@@ -3923,7 +3933,7 @@ test('inscricao-pos', async ({ page, context }) => {
         console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
         console.log(`📋 CPF: ${CLIENTE.cpf}`);
         console.log(`📋 Status SIAA: Não vinculada`);
-        console.log(`📸 Screenshot aprovação: ${screenshotPath}`);
+        console.log(`📸 Screenshot aprovação: ${screenshotFilename}`);
         console.log('📋 Boleto: Não disponível');
         console.log('═══════════════════════════════════════════════════════════════════════════');
         console.log('');
@@ -4510,8 +4520,8 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
   console.log(`📋 CPF: ${CLIENTE.cpf}`);
   console.log(`📋 Campanha: ${CLIENTE.campanha}`);
-  console.log(`📸 Screenshot aprovação: ${screenshotPath}`);
-  console.log(`📄 Boleto: ${boletoPath}`);
+  console.log(`📸 Screenshot aprovação: ${screenshotFilename}`);
+  console.log(`📄 Boleto: ${boletoFilename}`);
   if (linkCartaoCredito) {
     console.log(`💳 Link Cartão de Crédito: ${linkCartaoCredito}`);
     console.log(`LINK_CARTAO_CREDITO: ${linkCartaoCredito}`);
@@ -4545,28 +4555,29 @@ test('inscricao-pos', async ({ page, context }) => {
       // Adiciona screenshot de aprovação
       if (fs.existsSync(screenshotPath)) {
         formData.append('screenshot', fs.createReadStream(screenshotPath), {
-          filename: screenshotPath,
+          filename: screenshotFilename,
           contentType: 'image/png'
         });
-        console.log(`   📸 Anexando screenshot: ${screenshotPath}`);
+        console.log(`   📸 Anexando screenshot: ${screenshotFilename}`);
       }
       
       // Adiciona boleto PDF
       if (fs.existsSync(boletoPath)) {
         formData.append('boleto', fs.createReadStream(boletoPath), {
-          filename: boletoPath,
+          filename: boletoFilename,
           contentType: 'application/pdf'
         });
-        console.log(`   📄 Anexando boleto: ${boletoPath}`);
+        console.log(`   📄 Anexando boleto: ${boletoFilename}`);
       } else {
         // Tenta anexar PNG se PDF não existir
         const boletoPngPath = boletoPath.replace('.pdf', '.png');
+        const boletoPngFilename = boletoFilename.replace('.pdf', '.png');
         if (fs.existsSync(boletoPngPath)) {
           formData.append('boleto', fs.createReadStream(boletoPngPath), {
-            filename: boletoPngPath,
+            filename: boletoPngFilename,
             contentType: 'image/png'
           });
-          console.log(`   📄 Anexando boleto (PNG): ${boletoPngPath}`);
+          console.log(`   📄 Anexando boleto (PNG): ${boletoPngFilename}`);
         }
       }
       
