@@ -3048,6 +3048,7 @@ test('inscricao-pos', async ({ page, context }) => {
           await campo.click();
           await campo.fill('');
           await campo.type(CLIENTE.cep, { delay: 50 });
+          await campo.press('Tab');
           console.log(`   ✅ CEP preenchido: ${CLIENTE.cep} (via ${sel})`);
           cepPreenchido = true;
           break;
@@ -3058,71 +3059,128 @@ test('inscricao-pos', async ({ page, context }) => {
       console.log('   ⚠️ Campo CEP não encontrado');
     }
 
-    // Clica em "Calcular" para validar o endereço
-    await page.waitForTimeout(1000);
+    // Aguarda endereço carregar (a busca é acionada pelo Tab/blur do campo CEP)
+    await page.waitForTimeout(3000);
+
+    // Clica em "Calcular" se visível (em alguns layouts o botão aparece)
     const btnCalc = page.locator('#shipping-calculate-link, button:has-text("Calcular")').first();
     const calcVisivel = await btnCalc.isVisible({ timeout: 3000 }).catch(() => false);
     if (calcVisivel) {
       console.log('   📝 Clicando em "Calcular" (validar endereço)...');
-      // Scroll forçado via JS + click com force para evitar "element is outside of the viewport"
       try {
         await btnCalc.scrollIntoViewIfNeeded().catch(() => {});
         await page.waitForTimeout(300);
       } catch (e) {}
       try {
-        await page.evaluate((sel) => {
-          const el = document.querySelector(sel);
-          if (el) el.scrollIntoView({ block: 'center', behavior: 'instant' });
-        }, '#shipping-calculate-link');
-        await page.waitForTimeout(300);
-      } catch (e) {}
-      
-      // Tenta clicar normalmente primeiro, depois com force
-      try {
         await btnCalc.click({ timeout: 5000 });
       } catch (e) {
-        console.log('   📍 Click normal falhou, tentando force...');
         try {
           await btnCalc.click({ force: true, timeout: 5000 });
         } catch (e2) {
-          // Último fallback: click via JavaScript
-          console.log('   📍 Force click falhou, tentando JS click...');
           await page.evaluate(() => {
-            const btn = document.querySelector('#shipping-calculate-link') || 
-                        document.querySelector('button:contains("Calcular")');
+            const btn = document.querySelector('#shipping-calculate-link');
             if (btn) btn.click();
           });
         }
       }
       await page.waitForTimeout(5000);
       console.log('   ✅ Endereço validado');
+    } else {
+      // Sem botão Calcular visível, tenta acionar busca via API VTEX
+      console.log('   📝 Botão Calcular não visível, tentando busca de endereço via API VTEX...');
+      const apiResult = await page.evaluate(async (cep) => {
+        try {
+          if (window.vtexjs && window.vtexjs.checkout && window.vtexjs.checkout.orderForm) {
+            const ofId = window.vtexjs.checkout.orderForm.orderFormId;
+            const r = await fetch(`/api/checkout/pub/orderForm/${ofId}/attachments/shippingData`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                address: {
+                  postalCode: cep,
+                  country: 'BRA'
+                }
+              })
+            });
+            return r.ok ? 'api-ok' : `api-erro-${r.status}`;
+          }
+          return 'sem-vtexjs';
+        } catch (e) { return `erro: ${e.message}`; }
+      }, CLIENTE.cep).catch(() => 'evaluate-erro');
+      console.log(`   📋 Resultado busca endereço: ${apiResult}`);
+      await page.waitForTimeout(5000);
     }
 
     // Preenche Número (aparece após CEP ser validado)
     const seletoresNum = [
       '#ship-number',
       'input[name="number"]',
-      'input[id*="number"]',
-      'input[placeholder*="Número" i]'
+      'input[id*="number"][id*="ship"]',
+      'input[placeholder*="Número" i]',
+      '.ship-number input',
+      '#shipping-data input[name="number"]'
     ];
 
     let numPreenchido = false;
-    for (const sel of seletoresNum) {
-      try {
-        const campo = page.locator(sel).first();
-        if (await campo.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await campo.scrollIntoViewIfNeeded().catch(() => {});
-          await campo.click();
-          await campo.fill('');
-          await campo.type(CLIENTE.numero, { delay: 50 });
-          console.log(`   ✅ Número preenchido: ${CLIENTE.numero} (via ${sel})`);
-          numPreenchido = true;
-          break;
-        }
-      } catch (e) {}
+    
+    // Aguarda o campo número aparecer (pode demorar após busca do CEP)
+    for (let tentNum = 1; tentNum <= 3; tentNum++) {
+      for (const sel of seletoresNum) {
+        try {
+          const campo = page.locator(sel).first();
+          if (await campo.isVisible({ timeout: 3000 }).catch(() => false)) {
+            await campo.scrollIntoViewIfNeeded().catch(() => {});
+            await campo.click();
+            await campo.fill('');
+            await campo.type(CLIENTE.numero, { delay: 50 });
+            console.log(`   ✅ Número preenchido: ${CLIENTE.numero} (via ${sel})`);
+            numPreenchido = true;
+            break;
+          }
+        } catch (e) {}
+      }
+      if (numPreenchido) break;
+      
+      if (tentNum < 3) {
+        console.log(`   🔄 Campo Número não visível, aguardando (tentativa ${tentNum}/3)...`);
+        await page.waitForTimeout(3000);
+      }
     }
+    
+    // Fallback: preenche Número via API VTEX
     if (!numPreenchido) {
-      console.log('   ⚠️ Campo Número não encontrado');
+      console.log('   ⚠️ Campo Número não encontrado nos seletores, tentando via API VTEX...');
+      const numResult = await page.evaluate(async (dados) => {
+        try {
+          if (window.vtexjs && window.vtexjs.checkout && window.vtexjs.checkout.orderForm) {
+            const ofId = window.vtexjs.checkout.orderForm.orderFormId;
+            const address = window.vtexjs.checkout.orderForm.shippingData?.address || {};
+            const r = await fetch(`/api/checkout/pub/orderForm/${ofId}/attachments/shippingData`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                address: {
+                  ...address,
+                  postalCode: dados.cep,
+                  number: dados.numero,
+                  country: 'BRA'
+                }
+              })
+            });
+            return r.ok ? 'api-ok' : `api-erro-${r.status}`;
+          }
+          return 'sem-vtexjs';
+        } catch (e) { return `erro: ${e.message}`; }
+      }, { cep: CLIENTE.cep, numero: CLIENTE.numero }).catch(() => 'evaluate-erro');
+      console.log(`   📋 Número via API VTEX: ${numResult}`);
+      if (numResult === 'api-ok') {
+        numPreenchido = true;
+        console.log(`   ✅ Número ${CLIENTE.numero} enviado via API VTEX`);
+      }
+    }
+    
+    if (!numPreenchido) {
+      console.log('   ⚠️ Campo Número não encontrado por nenhum método');
     }
 
     await page.waitForTimeout(3000);
