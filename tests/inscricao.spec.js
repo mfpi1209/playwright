@@ -357,37 +357,65 @@ test('test', async ({ page }) => {
   console.log('📌 ETAPA 1: Login Admin');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
-  await aguardarCarregamento('Página de login');
+  // Monta lista de admins: usa VTEX_ADMINS (formato email:senha|email:senha) ou fallback
+  const ADMINS = [];
+  if (process.env.VTEX_ADMINS) {
+    process.env.VTEX_ADMINS.split('|').forEach(par => {
+      const [email, senha] = par.split(':');
+      if (email && senha) ADMINS.push({ email: email.trim(), senha: senha.trim() });
+    });
+  }
+  if (process.env.VTEX_ADMIN_EMAIL && process.env.VTEX_ADMIN_PASSWORD) {
+    const jaExiste = ADMINS.some(a => a.email === process.env.VTEX_ADMIN_EMAIL);
+    if (!jaExiste) ADMINS.push({ email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD });
+  }
+  if (ADMINS.length === 0) {
+    ADMINS.push(
+      { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
+      { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
+    );
+  }
   
-  // Login admin: usa .env (VTEX_ADMIN_EMAIL / VTEX_ADMIN_PASSWORD) ou fallback
-  const ADMINS = [
-    { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
-    { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
-  ];
-  const adminEscolhido = (process.env.VTEX_ADMIN_EMAIL && process.env.VTEX_ADMIN_PASSWORD)
-    ? { email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD }
-    : ADMINS[Math.floor(Math.random() * ADMINS.length)];
-  console.log(`   🔑 Admin: ${adminEscolhido.email}`);
+  async function tentarLoginAdmin(admin) {
+    console.log(`   🔑 Tentando admin: ${admin.email}`);
+    await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
+    await aguardarCarregamento('Página de login');
+    const emailInput = page.getByRole('textbox', { name: 'Email' });
+    await preencherCampo(emailInput, admin.email, 'Email admin', false);
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await page.waitForTimeout(1500);
+    const senhaInput = page.getByRole('textbox', { name: 'Senha' });
+    await senhaInput.waitFor({ state: 'visible', timeout: 15000 });
+    await senhaInput.fill(admin.senha);
+    console.log('   ✅ Senha preenchida');
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await aguardarCarregamento('Login', 30000);
+    await page.waitForTimeout(2000);
+    const urlAposLogin = page.url();
+    const loginOk = !urlAposLogin.includes('admin-login');
+    console.log(`   📍 URL após login: ${urlAposLogin} → ${loginOk ? 'OK' : 'FALHOU'}`);
+    return loginOk;
+  }
   
-  // Email
-  const emailInput = page.getByRole('textbox', { name: 'Email' });
-  await preencherCampo(emailInput, adminEscolhido.email, 'Email admin', false);
+  let adminLogado = false;
+  for (const admin of ADMINS) {
+    adminLogado = await tentarLoginAdmin(admin);
+    if (adminLogado) break;
+    console.log('   ⚠️ Login falhou com este admin, tentando próximo...');
+  }
   
-  // Clica continuar
-  await page.getByRole('button', { name: 'Continuar' }).click();
-  await page.waitForTimeout(1000);
+  if (!adminLogado) {
+    console.log('   ⚠️ Nenhum admin conseguiu logar na primeira tentativa, tentando novamente...');
+    await page.waitForTimeout(3000);
+    for (const admin of ADMINS) {
+      adminLogado = await tentarLoginAdmin(admin);
+      if (adminLogado) break;
+    }
+  }
   
-  // Senha
-  const senhaInput = page.getByRole('textbox', { name: 'Senha' });
-  await senhaInput.waitFor({ state: 'visible', timeout: 15000 });
-  await senhaInput.fill(adminEscolhido.senha);
-  console.log('✅ Senha preenchida');
-  
-  // Clica continuar para login
-  await page.getByRole('button', { name: 'Continuar' }).click();
-  await aguardarCarregamento('Login', 30000);
-  await page.waitForTimeout(1500);
+  if (!adminLogado) {
+    throw new Error('Login admin falhou com todos os admins disponíveis. Verifique as credenciais.');
+  }
   
   console.log(`✅ ETAPA 1 CONCLUÍDA - URL: ${page.url()}`);
   console.log('');
