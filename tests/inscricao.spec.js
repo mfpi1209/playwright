@@ -487,7 +487,36 @@ test('test', async ({ page }) => {
   
   // Fecha modais se existirem
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(1000)
+  await page.waitForTimeout(1000);
+  
+  // CRÍTICO: Verifica se estamos realmente na página de graduação (não redirecionados para login)
+  let urlAposEtapa2 = page.url();
+  if (urlAposEtapa2.includes('admin-login') || (urlAposEtapa2.includes('login') && !urlAposEtapa2.includes('/graduacao'))) {
+    console.log('');
+    console.log('⚠️ ERRO: Após Etapa 2 a URL ainda é a página de login (sessão admin pode ter expirado ou redirecionamento).');
+    console.log(`   URL atual: ${urlAposEtapa2}`);
+    console.log('   Refazendo login admin e navegação para /graduacao...');
+    await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
+    await aguardarCarregamento('Página de login', 10000);
+    const adminEscolhidoRetry = (process.env.VTEX_ADMIN_EMAIL && process.env.VTEX_ADMIN_PASSWORD)
+      ? { email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD }
+      : ADMINS[Math.floor(Math.random() * ADMINS.length)];
+    await preencherCampo(page.getByRole('textbox', { name: 'Email' }), adminEscolhidoRetry.email, 'Email admin retry', false);
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await page.waitForTimeout(1000);
+    await page.getByRole('textbox', { name: 'Senha' }).fill(adminEscolhidoRetry.senha);
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await aguardarCarregamento('Login retry', 30000);
+    await page.waitForTimeout(2000);
+    await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await aguardarCarregamento('Página de graduação (retry)', 30000);
+    await page.waitForTimeout(2000);
+    urlAposEtapa2 = page.url();
+  }
+  
+  if (urlAposEtapa2.includes('admin-login') || (urlAposEtapa2.includes('login') && !urlAposEtapa2.includes('/graduacao'))) {
+    throw new Error('Não foi possível permanecer na página de graduação após login admin. URL: ' + urlAposEtapa2);
+  }
   
   console.log(`✅ ETAPA 2 CONCLUÍDA - URL: ${page.url()}`);
   console.log('');
@@ -514,23 +543,28 @@ test('test', async ({ page }) => {
     console.log('🧹 Removendo overlays que bloqueiam cliques...');
     try {
       await page.evaluate(() => {
+        // Remove apenas backdrops do formulário de contato ("Antes de Você Sair") - NÃO remove portalContainer genérico para não apagar o painel de login do cliente
         const backdropSelectors = [
           '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsBackdrop',
           '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsDownloadFormBackdrop',
           '[class*="Backdrop"]',
           '[class*="backdrop"]',
           '.overlay',
-          '.modal-backdrop',
-          '[class*="portalContainer"]'
+          '.modal-backdrop'
         ];
-        
         backdropSelectors.forEach(selector => {
           document.querySelectorAll(selector).forEach(el => {
             console.log(`Removendo: ${el.className}`);
             el.remove();
           });
         });
-        
+        // Remove portalContainer só se for o modal "Antes de Você Sair" (contém esse texto), preservando o dropdown de login
+        document.querySelectorAll('[class*="portalContainer"]').forEach(el => {
+          const text = (el.textContent || '').toLowerCase();
+          if (text.includes('antes de você sair') || text.includes('deixe seus dados') || text.includes('fale com um dos nossos consultores')) {
+            el.remove();
+          }
+        });
         // Esconde formulários de contato que podem bloquear
         document.querySelectorAll('[class*="ContactForm"], [class*="DownloadForm"]').forEach(el => {
           if (el.style) el.style.display = 'none';
@@ -555,32 +589,55 @@ test('test', async ({ page }) => {
     for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
       console.log(`🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de login do cliente...`);
       
-      // 1. Clica em "Entrar como cliente"
+      // 1. Clica no elemento que abre o login (botão ou link "Entrar como cliente")
       console.log('   📍 Procurando "Entrar como cliente"...');
-  const entrarComoCliente = page.getByText('Entrar como cliente').first();
+      const entrarComoCliente = page.getByRole('button', { name: /entrar como cliente/i })
+        .or(page.getByRole('link', { name: /entrar como cliente/i }))
+        .or(page.locator('a, button').filter({ hasText: /entrar como cliente/i }).first())
+        .or(page.getByText('Entrar como cliente').first());
       
       try {
-        await entrarComoCliente.waitFor({ state: 'visible', timeout: 10000 });
-        await entrarComoCliente.scrollIntoViewIfNeeded();
+        await entrarComoCliente.first().waitFor({ state: 'visible', timeout: 10000 });
+        await entrarComoCliente.first().scrollIntoViewIfNeeded();
         await page.waitForTimeout(500);
-  await entrarComoCliente.click({ force: true });
+        await entrarComoCliente.first().click({ force: true });
         console.log('   ✅ Clicou em "Entrar como cliente"');
       } catch (e) {
         console.log('   ⚠️ "Entrar como cliente" não encontrado');
         continue;
       }
       
-  await page.waitForTimeout(2000);
-  
-      const emailCliente = page.getByPlaceholder('Ex: example@mail.com').or(page.getByRole('textbox', { name: /e-mail|email/i }));
+      // Aguarda o painel de login abrir (campo de email ficar visível) em vez de tempo fixo
+      const emailCliente = page.getByPlaceholder('Ex: example@mail.com')
+        .or(page.getByPlaceholder(/e-mail|email/i))
+        .or(page.getByRole('textbox', { name: /e-mail|email/i }))
+        .or(page.locator('input[type="email"]').first())
+        .or(page.locator('input[placeholder*="mail"]').first());
+      try {
+        await emailCliente.first().waitFor({ state: 'visible', timeout: 15000 });
+        console.log('   ✅ Painel de login aberto (campo de email visível)');
+      } catch (e) {
+        console.log('   ⚠️ Campo de email não apareceu após abrir "Entrar como cliente"');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      
+      await page.waitForTimeout(500);
+      // Remove pop-up "Antes de Você Sair..." se estiver na frente (não remove o painel de login)
+      await removerOverlays();
+      await page.waitForTimeout(300);
+      
       const btnEntrar = page.getByRole('button', { name: 'Entrar' });
       
       // Função: apagar email, inserir de novo, esperar e clicar em Entrar
       async function preencherEmailEClicarEntrar() {
+        await removerOverlays();
+        await page.waitForTimeout(300);
         const campoEmail = emailCliente.first();
         await campoEmail.waitFor({ state: 'visible', timeout: 5000 }).catch(() => null);
         if (!(await campoEmail.isVisible().catch(() => false))) return false;
-        await campoEmail.click();
+        await campoEmail.click({ force: true });
         await page.waitForTimeout(300);
         await campoEmail.fill('');
         await page.waitForTimeout(200);
@@ -679,8 +736,12 @@ test('test', async ({ page }) => {
   const loginSucesso = await fazerLoginCliente();
   
   if (!loginSucesso) {
+    const urlEtapa3 = page.url();
+    if (urlEtapa3.includes('admin-login') || (urlEtapa3.includes('login') && !urlEtapa3.includes('/graduacao'))) {
+      throw new Error('Não foi possível acessar a página de graduação como cliente. A URL ainda é a de login: ' + urlEtapa3);
+    }
     console.log('❌ ERRO: Não foi possível fazer login do cliente após várias tentativas');
-    // Continua mesmo assim para tentar o fluxo
+    throw new Error('Login do cliente falhou. Não é possível continuar para busca do curso.');
   }
   
   console.log(`✅ ETAPA 3 CONCLUÍDA - Cliente logado`);
