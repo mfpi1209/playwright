@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { test, expect } from '@playwright/test';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -359,12 +360,14 @@ test('test', async ({ page }) => {
   await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
   await aguardarCarregamento('Página de login');
   
-  // Randomiza login admin
+  // Login admin: usa .env (VTEX_ADMIN_EMAIL / VTEX_ADMIN_PASSWORD) ou fallback
   const ADMINS = [
-    { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit777' },
-    { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'MFPedu!t678@!' },
+    { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
+    { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
   ];
-  const adminEscolhido = ADMINS[Math.floor(Math.random() * ADMINS.length)];
+  const adminEscolhido = (process.env.VTEX_ADMIN_EMAIL && process.env.VTEX_ADMIN_PASSWORD)
+    ? { email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD }
+    : ADMINS[Math.floor(Math.random() * ADMINS.length)];
   console.log(`   🔑 Admin: ${adminEscolhido.email}`);
   
   // Email
@@ -569,35 +572,59 @@ test('test', async ({ page }) => {
       
   await page.waitForTimeout(2000);
   
-      // 2. Preenche o email
-      console.log('   📝 Procurando campo de email...');
-      const emailCliente = page.getByPlaceholder('Ex: example@mail.com');
-      
-      try {
-        await emailCliente.waitFor({ state: 'visible', timeout: 10000 });
-        await emailCliente.click();
-        await emailCliente.fill('');
-        await emailCliente.type(CLIENTE.email, { delay: 50 });
-        console.log(`   ✅ Email preenchido: "${CLIENTE.email}"`);
-      } catch (e) {
-        console.log('   ⚠️ Erro ao preencher email');
-  await page.keyboard.press('Escape');
-        await page.waitForTimeout(1000);
-        continue;
-      }
-      
-      await page.waitForTimeout(1000);
-      
-      // 3. Clica no botão "Entrar"
-      console.log('   📍 Clicando em "Entrar"...');
+      const emailCliente = page.getByPlaceholder('Ex: example@mail.com').or(page.getByRole('textbox', { name: /e-mail|email/i }));
       const btnEntrar = page.getByRole('button', { name: 'Entrar' });
       
-      try {
-        await btnEntrar.waitFor({ state: 'visible', timeout: 5000 });
-        await btnEntrar.click();
-        console.log('   ✅ Clicou em "Entrar"');
-      } catch (e) {
-        console.log('   ⚠️ Botão "Entrar" não encontrado');
+      // Função: apagar email, inserir de novo, esperar e clicar em Entrar
+      async function preencherEmailEClicarEntrar() {
+        const campoEmail = emailCliente.first();
+        await campoEmail.waitFor({ state: 'visible', timeout: 5000 }).catch(() => null);
+        if (!(await campoEmail.isVisible().catch(() => false))) return false;
+        await campoEmail.click();
+        await page.waitForTimeout(300);
+        await campoEmail.fill('');
+        await page.waitForTimeout(200);
+        await campoEmail.type(CLIENTE.email, { delay: 60 });
+        console.log(`   ✅ Email preenchido: "${CLIENTE.email}"`);
+        console.log('   ⏳ Aguardando antes de clicar em Entrar...');
+        await page.waitForTimeout(2500);
+        try {
+          await btnEntrar.waitFor({ state: 'visible', timeout: 5000 });
+          await btnEntrar.click();
+          console.log('   ✅ Clicou em "Entrar"');
+          return true;
+        } catch (e) {
+          console.log(`   ⚠️ Erro ao clicar em Entrar: ${e.message}`);
+          return false;
+        }
+      }
+      
+      // 2. Preenche email e clica Entrar (com retry: se falhar, apaga e reinsere)
+      let entrouComSucesso = false;
+      const MAX_TENTATIVAS_ENTRAR = 3;
+      
+      for (let t = 1; t <= MAX_TENTATIVAS_ENTRAR; t++) {
+        console.log(`   📝 Tentativa ${t}/${MAX_TENTATIVAS_ENTRAR} - campo de email...`);
+        try {
+          await emailCliente.first().waitFor({ state: 'visible', timeout: 10000 });
+        } catch (e) {
+          console.log('   ⚠️ Campo de email não encontrado');
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(1000);
+          break;
+        }
+        
+        entrouComSucesso = await preencherEmailEClicarEntrar();
+        if (entrouComSucesso) break;
+        
+        if (t < MAX_TENTATIVAS_ENTRAR) {
+          console.log('   🔄 Apagando email e reinserindo antes de clicar em Entrar...');
+          await page.waitForTimeout(1000);
+        }
+      }
+      
+      if (!entrouComSucesso) {
+        console.log('   ⚠️ Não foi possível clicar em Entrar após várias tentativas');
         continue;
       }
       
@@ -608,17 +635,14 @@ test('test', async ({ page }) => {
       // 5. VALIDAÇÃO: Verifica se o nome do cliente aparece no header
       console.log('   🔍 Validando login...');
       
-      // Procura pelo nome do cliente ou email no header
       const emailPrefix = CLIENTE.email.split('@')[0].toLowerCase();
       const headerText = await page.locator('header').innerText().catch(() => '');
       const headerLower = headerText.toLowerCase();
       
-      // Verifica se o header contém o email/nome do cliente
       const clienteLogado = headerLower.includes(emailPrefix) || 
                             headerLower.includes('olá') ||
                             headerLower.includes(CLIENTE.email.toLowerCase());
       
-      // Também verifica se não aparece mais "Entrar como cliente"
       const entrarAindaVisivel = await entrarComoCliente.isVisible({ timeout: 2000 }).catch(() => false);
       
       console.log(`   📋 Header contém cliente: ${clienteLogado}`);
@@ -629,7 +653,22 @@ test('test', async ({ page }) => {
         return true;
       }
       
-      console.log('   ⚠️ Login não confirmado, tentando novamente...');
+      // Login não confirmado: apagar email, reinserir e clicar Entrar de novo (uma vez)
+      console.log('   ⚠️ Login não confirmado, apagando email e reinserindo...');
+      await page.waitForTimeout(1500);
+      const tentouReinserir = await preencherEmailEClicarEntrar();
+      if (tentouReinserir) {
+        await page.waitForTimeout(3000);
+        const headerText2 = await page.locator('header').innerText().catch(() => '');
+        const clienteLogado2 = headerText2.toLowerCase().includes(emailPrefix) || headerText2.toLowerCase().includes('olá') || headerText2.toLowerCase().includes(CLIENTE.email.toLowerCase());
+        const entrarAinda2 = await entrarComoCliente.isVisible({ timeout: 2000 }).catch(() => false);
+        if (clienteLogado2 || !entrarAinda2) {
+          console.log('   ✅ LOGIN VALIDADO COM SUCESSO (após reinserir email)!');
+          return true;
+        }
+      }
+      
+      console.log('   ⚠️ Login não confirmado, tentando novamente na próxima iteração...');
       await page.keyboard.press('Escape');
       await page.waitForTimeout(1000);
     }
