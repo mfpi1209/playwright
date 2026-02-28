@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { test, expect } from '@playwright/test';
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
@@ -301,7 +302,7 @@ const CLIENTE = {
   telefone: formatarTelefone(process.env.CLIENTE_TELEFONE || ''),
   nascimento: process.env.CLIENTE_NASCIMENTO || '',
   cep: process.env.CLIENTE_CEP || '',
-  numero: process.env.CLIENTE_NUMERO || '',
+  numero: process.env.CLIENTE_NUMERO || String(Math.floor(Math.random() * 999) + 1),
   estado: corrigirEncoding(process.env.CLIENTE_ESTADO || ''),
   cidade: corrigirEncoding(process.env.CLIENTE_CIDADE || ''),
   curso: corrigirEncoding(process.env.CLIENTE_CURSO || ''),
@@ -445,36 +446,86 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log('📌 ETAPA 1: Login Admin');
   
   const ADMINS = (() => {
+    const list = [];
     const envAdmins = process.env.VTEX_ADMINS || '';
     if (envAdmins.includes('|') || envAdmins.includes(':')) {
-      return envAdmins.split('|').filter(Boolean).map(par => {
+      envAdmins.split('|').filter(Boolean).forEach(par => {
         const [email, ...senhaParts] = par.split(':');
-        return { email: email.trim(), senha: senhaParts.join(':').trim() };
+        if (email && senhaParts.length) list.push({ email: email.trim(), senha: senhaParts.join(':').trim() });
       });
     }
     if (process.env.VTEX_ADMIN_EMAIL && process.env.VTEX_ADMIN_PASSWORD) {
-      return [{ email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD }];
+      const jaExiste = list.some(a => a.email === process.env.VTEX_ADMIN_EMAIL);
+      if (!jaExiste) list.push({ email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD });
     }
-    return [
-      { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit777' },
-      { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'MFPedu!t678@!' },
-    ];
+    if (list.length === 0) {
+      list.push(
+        { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
+        { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
+      );
+    }
+    return list;
   })();
-  const adminEscolhido = ADMINS[Math.floor(Math.random() * ADMINS.length)];
   
-  await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
-  await page.waitForTimeout(1000);
+  async function tentarLoginAdmin(admin) {
+    console.log(`   🔑 Tentando admin: ${admin.email}`);
+    try {
+      await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F', { waitUntil: 'domcontentloaded', timeout: 15000 });
+    } catch (e) {
+      console.log(`   ⚠️ Erro ao navegar para login: ${e.message}`);
+    }
+    await page.waitForTimeout(1500);
+    const urlAtual = page.url();
+    if (!urlAtual.includes('admin-login') && !urlAtual.includes('login')) {
+      console.log(`   ✅ Já logado (URL: ${urlAtual})`);
+      return true;
+    }
+    const emailField = page.getByRole('textbox', { name: 'Email' });
+    try {
+      await emailField.waitFor({ state: 'visible', timeout: 10000 });
+    } catch (e) {
+      console.log(`   ⚠️ Campo Email não encontrado na página de login (URL: ${page.url()})`);
+      return !page.url().includes('admin-login');
+    }
+    await emailField.click();
+    await emailField.fill(admin.email);
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await page.waitForTimeout(1500);
+    try {
+      const senhaInput = page.getByRole('textbox', { name: 'Senha' });
+      await senhaInput.waitFor({ state: 'visible', timeout: 15000 });
+      await senhaInput.fill(admin.senha);
+      await page.getByRole('button', { name: 'Continuar' }).click();
+      await page.waitForTimeout(2500);
+    } catch (e) {
+      console.log(`   ⚠️ Erro no campo de senha: ${e.message}`);
+      return false;
+    }
+    const urlAposLogin = page.url();
+    const loginOk = !urlAposLogin.includes('admin-login');
+    console.log(`   📍 URL após login: ${urlAposLogin} → ${loginOk ? 'OK' : 'FALHOU'}`);
+    return loginOk;
+  }
   
-  await page.getByRole('textbox', { name: 'Email' }).click();
-  await page.getByRole('textbox', { name: 'Email' }).fill(adminEscolhido.email);
-  await page.getByRole('button', { name: 'Continuar' }).click();
-  await page.waitForTimeout(1000);
+  let adminLogado = false;
+  for (const admin of ADMINS) {
+    adminLogado = await tentarLoginAdmin(admin);
+    if (adminLogado) break;
+    console.log('   ⚠️ Login falhou com este admin, tentando próximo...');
+  }
+  if (!adminLogado) {
+    console.log('   ⚠️ Nenhum admin logou na 1ª rodada, aguardando 3s e tentando novamente...');
+    await page.waitForTimeout(3000);
+    for (const admin of ADMINS) {
+      adminLogado = await tentarLoginAdmin(admin);
+      if (adminLogado) break;
+    }
+  }
+  if (!adminLogado) {
+    throw new Error('Login admin falhou com todos os admins disponíveis.');
+  }
   
-  await page.getByRole('textbox', { name: 'Senha' }).fill(adminEscolhido.senha);
-  await page.getByRole('button', { name: 'Continuar' }).click();
-  await page.waitForTimeout(2000);
-  
-  console.log(`✅ ETAPA 1 CONCLUÍDA - Admin: ${adminEscolhido.email}`);
+  console.log(`✅ ETAPA 1 CONCLUÍDA - Admin logado`);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 2: NAVEGAÇÃO E COOKIES
@@ -513,7 +564,23 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   } catch (e) {}
   
-  console.log('✅ ETAPA 2 CONCLUÍDA');
+  // Verifica se estamos na página de pós (não redirecionados para login)
+  let urlAposEtapa2 = page.url();
+  if (urlAposEtapa2.includes('admin-login') || (urlAposEtapa2.includes('login') && !urlAposEtapa2.includes('/pos'))) {
+    console.log(`⚠️ URL ainda é login: ${urlAposEtapa2}. Refazendo login admin...`);
+    for (const admin of ADMINS) {
+      const ok = await tentarLoginAdmin(admin);
+      if (ok) break;
+    }
+    await page.goto('https://cruzeirodosul.myvtex.com/pos-graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+    urlAposEtapa2 = page.url();
+    if (urlAposEtapa2.includes('admin-login')) {
+      throw new Error('Não foi possível acessar pós-graduação após retry de login. URL: ' + urlAposEtapa2);
+    }
+  }
+  
+  console.log(`✅ ETAPA 2 CONCLUÍDA - URL: ${page.url()}`);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 3: LOGIN CLIENTE
@@ -555,45 +622,90 @@ test('inscricao-pos', async ({ page, context }) => {
       } catch (e2) {}
     }
     
-    try {
-      await page.getByText('Entrar como cliente').first().click();
-    } catch (e) {
-      const btnEntrarCliente = page.locator('div.cruzeirodosul-telemarketing-2-x-loginAsText');
-      if (await btnEntrarCliente.isVisible({ timeout: 3000 })) {
-        await btnEntrarCliente.click();
-      }
-    }
-    
-    await page.waitForTimeout(2000);
-    
-    const campoEmailVisivel = await page.getByPlaceholder('Ex: example@mail.com').isVisible({ timeout: 3000 }).catch(() => false);
-    if (!campoEmailVisivel) {
+    // Função para remover apenas o modal "Antes de Você Sair" (preserva painel de login)
+    async function removerOverlaysSeletivo() {
       try {
-        await page.getByText('Entrar como cliente').first().click({ force: true });
-        await page.waitForTimeout(2000);
+        await page.evaluate(() => {
+          ['.cruzeirodosul-store-theme-3-x-sectionContactFormNewsBackdrop',
+           '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsDownloadFormBackdrop',
+           '[class*="Backdrop"]', '[class*="backdrop"]', '.overlay', '.modal-backdrop'
+          ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
+          document.querySelectorAll('[class*="portalContainer"]').forEach(el => {
+            const text = (el.textContent || '').toLowerCase();
+            if (text.includes('antes de você sair') || text.includes('deixe seus dados') || text.includes('fale com um dos nossos consultores')) el.remove();
+          });
+          document.querySelectorAll('[class*="ContactForm"], [class*="DownloadForm"]').forEach(el => { if (el.style) el.style.display = 'none'; });
+        });
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(300);
       } catch (e) {}
     }
     
-    const campoEmail = page.getByPlaceholder('Ex: example@mail.com');
-    await campoEmail.click();
-    await campoEmail.fill(CLIENTE.email);
+    const emailCliente = page.getByPlaceholder('Ex: example@mail.com')
+      .or(page.getByPlaceholder(/e-mail|email/i))
+      .or(page.getByRole('textbox', { name: /e-mail|email/i }))
+      .or(page.locator('input[type="email"]').first());
     
-    await page.waitForTimeout(500);
-    
-    const btnEntrar = page.getByRole('button', { name: 'Entrar' });
-    await btnEntrar.click();
-    
-    await page.waitForTimeout(2000);
-    
-    try {
-      const btnEntrar2 = page.getByRole('button', { name: 'Entrar' });
-      const visivel = await btnEntrar2.isVisible();
-      if (visivel) {
-        await btnEntrar2.click({ timeout: 3000 });
+    // Retry: clicar "Entrar como cliente", esperar campo email, preencher, clicar "Entrar"
+    let loginClienteOk = false;
+    for (let tentLogin = 1; tentLogin <= 3; tentLogin++) {
+      console.log(`   🔄 Tentativa ${tentLogin}/3 login cliente...`);
+      
+      try {
+        const entrarComoCliente = page.getByRole('button', { name: /entrar como cliente/i })
+          .or(page.getByRole('link', { name: /entrar como cliente/i }))
+          .or(page.locator('a, button').filter({ hasText: /entrar como cliente/i }).first())
+          .or(page.getByText('Entrar como cliente').first());
+        await entrarComoCliente.first().waitFor({ state: 'visible', timeout: 10000 });
+        await entrarComoCliente.first().click({ force: true });
+        console.log('   ✅ Clicou em "Entrar como cliente"');
+      } catch (e) {
+        console.log('   ⚠️ "Entrar como cliente" não encontrado');
+        continue;
       }
-    } catch (e) {}
+      
+      try {
+        await emailCliente.first().waitFor({ state: 'visible', timeout: 10000 });
+        console.log('   ✅ Painel de login aberto');
+      } catch (e) {
+        console.log('   ⚠️ Campo email não apareceu');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      
+      await page.waitForTimeout(500);
+      await removerOverlaysSeletivo();
+      
+      const campoEmail = emailCliente.first();
+      await campoEmail.click({ force: true });
+      await page.waitForTimeout(300);
+      await campoEmail.fill('');
+      await page.waitForTimeout(200);
+      await campoEmail.type(CLIENTE.email, { delay: 60 });
+      console.log(`   ✅ Email: ${CLIENTE.email}`);
+      
+      await page.waitForTimeout(2500);
+      
+      try {
+        const btnEntrar = page.getByRole('button', { name: 'Entrar' });
+        await btnEntrar.waitFor({ state: 'visible', timeout: 5000 });
+        await btnEntrar.click();
+        console.log('   ✅ Clicou em "Entrar"');
+        loginClienteOk = true;
+      } catch (e) {
+        console.log(`   ⚠️ Erro ao clicar Entrar: ${e.message}`);
+        continue;
+      }
+      
+      await page.waitForTimeout(3000);
+      break;
+    }
     
-    await page.waitForTimeout(3000);
+    if (!loginClienteOk) {
+      throw new Error('Login do cliente falhou após 3 tentativas.');
+    }
+    
     await fecharModalSair(page);
     
     try {
