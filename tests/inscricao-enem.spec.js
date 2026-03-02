@@ -64,6 +64,24 @@ function normalizarPolo(polo) {
   return polo.trim().toLowerCase() === 'sapopemba' ? 'sapopemba (vila ema)' : polo;
 }
 
+// Detecta se o polo é de Taboão da Serra (taboão centro, mituzi)
+function isPoloTaboao(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // Remove acentos
+  return poloNormalizado.includes('taboao') || 
+         poloNormalizado.includes('mituzi') ||
+         poloNormalizado.includes('mitsuzi');
+}
+
+// Retorna a cidade correta baseada no polo
+function obterCidadeDoPolo(polo, cidadePadrao) {
+  if (isPoloTaboao(polo)) {
+    return 'Taboão da Serra';
+  }
+  return cidadePadrao;
+}
+
 // Função para capitalizar nome (primeira letra maiúscula de cada palavra)
 function capitalizarNome(nome) {
   return corrigirAcentos(nome).toLowerCase().split(' ').map(palavra => 
@@ -83,6 +101,10 @@ function formatarTelefone(telefone) {
   return numeros;
 }
 
+// Calcula polo primeiro para determinar a cidade correta
+const poloSolicitado = normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO)) || 'vila mariana';
+const cidadePadrao = corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo';
+
 const CLIENTE = {
   // Dados pessoais
   nome: capitalizarNome(process.env.CLIENTE_NOME || 'Carlos Eduardo Ribeiro'),
@@ -94,12 +116,12 @@ const CLIENTE = {
   cep: process.env.CLIENTE_CEP || '05315030',
   numero: process.env.CLIENTE_NUMERO || String(Math.floor(Math.random() * 9000) + 100), // Número aleatório entre 100 e 9099
   complemento: process.env.CLIENTE_COMPLEMENTO || '',
-  // Localização
+  // Localização (cidade ajustada automaticamente para polos de Taboão da Serra)
   estado: corrigirAcentos(process.env.CLIENTE_ESTADO) || 'São Paulo',
-  cidade: corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo',
+  cidade: obterCidadeDoPolo(poloSolicitado, cidadePadrao),
   // Curso
   curso: corrigirAcentos(process.env.CLIENTE_CURSO) || 'pedagogia',
-  polo: normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO)) || 'vila mariana',
+  polo: poloSolicitado,
   // Forma de ingresso ENEM
   tipoVestibular: 'ENEM',
 };
@@ -431,6 +453,43 @@ test('test-enem', async ({ page }) => {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(1000);
   
+  // CRÍTICO: Verifica se estamos realmente na página de graduação (não redirecionados para login)
+  let urlAposEtapa2 = page.url();
+  if (urlAposEtapa2.includes('admin-login') || (urlAposEtapa2.includes('login') && !urlAposEtapa2.includes('/graduacao'))) {
+    console.log('');
+    console.log('⚠️ ERRO: Após Etapa 2 a URL ainda é a página de login (sessão admin pode ter expirado ou redirecionamento).');
+    console.log(`   URL atual: ${urlAposEtapa2}`);
+    console.log('   Refazendo login admin e navegação para /graduacao...');
+    
+    // Refaz login admin
+    await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
+    await aguardarCarregamento('Página de login retry', 10000);
+    
+    const adminRetry = process.env.VTEX_ADMIN_EMAIL || 'fabio.boas50@polo.cruzeirodosul.edu.br';
+    const senhaRetry = process.env.VTEX_ADMIN_PASSWORD || 'Uniasselvi@2025';
+    
+    await preencherCampo(page.getByRole('textbox', { name: 'Email' }), adminRetry, 'Email admin retry', false);
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await page.waitForTimeout(1000);
+    await page.getByRole('textbox', { name: 'Senha' }).fill(senhaRetry);
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await aguardarCarregamento('Login retry', 30000);
+    await page.waitForTimeout(3000);
+    
+    // Navega para graduação novamente
+    await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await aguardarCarregamento('Página de graduação (retry)', 30000);
+    await page.waitForTimeout(3000);
+    
+    urlAposEtapa2 = page.url();
+    console.log(`   📍 URL após retry: ${urlAposEtapa2}`);
+  }
+  
+  // Verifica se conseguiu sair da página de login
+  if (urlAposEtapa2.includes('admin-login') || (urlAposEtapa2.includes('login') && !urlAposEtapa2.includes('/graduacao'))) {
+    throw new Error('Não foi possível permanecer na página de graduação após login admin. URL: ' + urlAposEtapa2);
+  }
+  
   console.log(`✅ ETAPA 2 CONCLUÍDA - URL: ${page.url()}`);
   console.log('');
   
@@ -449,33 +508,131 @@ test('test-enem', async ({ page }) => {
     }
   } catch (e) {}
   
-  // Clica em "Entrar como cliente"
-  const entrarComoCliente = page.getByText('Entrar como cliente').first();
-  await entrarComoCliente.waitFor({ state: 'visible', timeout: 15000 });
-  await entrarComoCliente.click({ force: true });
-  await page.waitForTimeout(2000);
-  
-  // Fecha modal novamente se necessário
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
-  
-  // Preenche email do cliente
-  const emailCliente = page.getByPlaceholder('Ex: example@mail.com');
-  await preencherCampo(emailCliente, CLIENTE.email, 'Email cliente', false);
-  
-  // Clica em Entrar
-  await page.getByRole('button', { name: 'Entrar' }).click({ force: true });
-  await page.waitForTimeout(3000);
-  
-  // Tenta clicar novamente se visível
-  try {
-    const entrarBtn = page.getByRole('button', { name: 'Entrar' });
-    if (await entrarBtn.isVisible({ timeout: 2000 })) {
-      await entrarBtn.click({ force: true });
+  // FUNÇÃO: Login do cliente com validação e retry
+  async function fazerLoginCliente() {
+    const MAX_TENTATIVAS = 3;
+    
+    for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+      console.log(`🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de login do cliente...`);
+      
+      // 1. Clica no elemento que abre o login (botão ou link "Entrar como cliente")
+      console.log('   📍 Procurando "Entrar como cliente"...');
+      const entrarComoCliente = page.getByRole('button', { name: /entrar como cliente/i })
+        .or(page.getByRole('link', { name: /entrar como cliente/i }))
+        .or(page.locator('a, button').filter({ hasText: /entrar como cliente/i }).first())
+        .or(page.getByText('Entrar como cliente').first());
+      
+      try {
+        await entrarComoCliente.first().waitFor({ state: 'visible', timeout: 10000 });
+        await entrarComoCliente.first().scrollIntoViewIfNeeded();
+        await page.waitForTimeout(500);
+        await entrarComoCliente.first().click({ force: true });
+        console.log('   ✅ Clicou em "Entrar como cliente"');
+      } catch (e) {
+        console.log('   ⚠️ "Entrar como cliente" não encontrado');
+        if (tentativa < MAX_TENTATIVAS) {
+          await page.waitForTimeout(2000);
+          continue;
+        }
+        throw new Error('Não foi possível encontrar "Entrar como cliente" após várias tentativas');
+      }
+      
+      // Aguarda o painel de login abrir (campo de email ficar visível)
+      const emailCliente = page.getByPlaceholder('Ex: example@mail.com')
+        .or(page.getByPlaceholder(/e-mail|email/i))
+        .or(page.getByRole('textbox', { name: /e-mail|email/i }))
+        .or(page.locator('input[type="email"]').first())
+        .or(page.locator('input[placeholder*="mail"]').first());
+      
+      try {
+        await emailCliente.first().waitFor({ state: 'visible', timeout: 15000 });
+        console.log('   ✅ Painel de login aberto (campo de email visível)');
+      } catch (e) {
+        console.log('   ⚠️ Campo de email não apareceu após abrir "Entrar como cliente"');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      
+      await page.waitForTimeout(500);
+      await removerOverlays();
+      
+      // 2. Preenche email do cliente
+      console.log(`   📝 Tentativa ${tentativa}/${MAX_TENTATIVAS} - campo de email...`);
+      await removerOverlays();
+      
+      try {
+        const emailInput = emailCliente.first();
+        await emailInput.scrollIntoViewIfNeeded();
+        await emailInput.click({ force: true });
+        await emailInput.clear();
+        await emailInput.fill(CLIENTE.email);
+        console.log(`   ✅ Email preenchido: "${CLIENTE.email}"`);
+      } catch (e) {
+        console.log(`   ⚠️ Erro ao preencher email: ${e.message}`);
+        continue;
+      }
+      
+      // 3. Clica no botão "Entrar" para logar como cliente
+      console.log('   ⏳ Aguardando antes de clicar em Entrar...');
+      await page.waitForTimeout(1000);
+      
+      try {
+        const btnEntrar = page.getByRole('button', { name: 'Entrar' }).first();
+        await btnEntrar.waitFor({ state: 'visible', timeout: 5000 });
+        await btnEntrar.click({ force: true });
+        console.log('   ✅ Clicou em "Entrar"');
+      } catch (e) {
+        console.log(`   ⚠️ Erro ao clicar em Entrar: ${e.message}`);
+        continue;
+      }
+      
+      // 4. Aguarda processamento do login
+      console.log('   ⏳ Aguardando login ser processado...');
+      await page.waitForTimeout(4000);
+      
+      // 5. Valida se login foi bem-sucedido
+      console.log('   🔍 Validando login...');
+      
+      const headerArea = page.locator('header, [class*="header"], [class*="Header"]').first();
+      const headerTexto = await headerArea.innerText().catch(() => '');
+      const headerLower = headerTexto.toLowerCase();
+      const emailPrefix = CLIENTE.email.split('@')[0].toLowerCase();
+      
+      const clienteLogado = headerLower.includes(emailPrefix) ||
+                            headerLower.includes('olá') ||
+                            headerLower.includes(CLIENTE.email.toLowerCase());
+      
+      const entrarAindaVisivel = await entrarComoCliente.isVisible({ timeout: 2000 }).catch(() => false);
+      
+      console.log(`   📋 Header contém cliente: ${clienteLogado}`);
+      console.log(`   📋 "Entrar como cliente" ainda visível: ${entrarAindaVisivel}`);
+      
+      if (clienteLogado || !entrarAindaVisivel) {
+        console.log('   ✅ LOGIN VALIDADO COM SUCESSO!');
+        return true;
+      }
+      
+      // Login não confirmado: tentar novamente
+      console.log('   ⚠️ Login não confirmado, tentando novamente...');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(1000);
     }
-  } catch (e) {}
+    
+    return false;
+  }
   
-  await page.waitForTimeout(3000);
+  const loginSucesso = await fazerLoginCliente();
+  
+  if (!loginSucesso) {
+    const urlEtapa3 = page.url();
+    if (urlEtapa3.includes('admin-login') || (urlEtapa3.includes('login') && !urlEtapa3.includes('/graduacao'))) {
+      throw new Error('Não foi possível acessar a página de graduação como cliente. A URL ainda é a de login: ' + urlEtapa3);
+    }
+    console.log('❌ ERRO: Não foi possível fazer login do cliente após várias tentativas');
+    throw new Error('Login do cliente falhou. Não é possível continuar para busca do curso.');
+  }
+  
   console.log(`✅ ETAPA 3 CONCLUÍDA - Cliente logado`);
   console.log('');
   
