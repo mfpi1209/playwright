@@ -65,6 +65,24 @@ function normalizarPolo(polo) {
   return polo.trim().toLowerCase() === 'sapopemba' ? 'sapopemba (vila ema)' : polo;
 }
 
+// Detecta se o polo é de Taboão da Serra (taboão centro, mituzi)
+function isPoloTaboao(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // Remove acentos
+  return poloNormalizado.includes('taboao') || 
+         poloNormalizado.includes('mituzi') ||
+         poloNormalizado.includes('mitsuzi');
+}
+
+// Retorna a cidade correta baseada no polo
+function obterCidadeDoPolo(polo, cidadePadrao) {
+  if (isPoloTaboao(polo)) {
+    return 'Taboão da Serra';
+  }
+  return cidadePadrao;
+}
+
 // Gera número de residência aleatório entre 1 e 999
 const numeroAleatorio = Math.floor(Math.random() * 999) + 1;
 
@@ -87,6 +105,10 @@ function capitalizarNome(nome) {
   ).join(' ');
 }
 
+// Calcula polo primeiro para determinar a cidade correta
+const poloSolicitado = normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO)) || 'sapopemba (vila ema)';
+const cidadePadrao = corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo';
+
 const CLIENTE = {
   // Dados pessoais
   nome: capitalizarNome(process.env.CLIENTE_NOME || 'Analine Maria Da Silva'),
@@ -98,13 +120,22 @@ const CLIENTE = {
   cep: process.env.CLIENTE_CEP || '03252000',
   numero: process.env.CLIENTE_NUMERO || String(numeroAleatorio),
   complemento: process.env.CLIENTE_COMPLEMENTO || '',
-  // Localização
+  // Localização (cidade ajustada automaticamente para polos de Taboão da Serra)
   estado: corrigirAcentos(process.env.CLIENTE_ESTADO) || 'São Paulo',
-  cidade: corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo',
+  cidade: obterCidadeDoPolo(poloSolicitado, cidadePadrao),
   // Curso
   curso: corrigirAcentos(process.env.CLIENTE_CURSO) || 'Logística',
-  polo: normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO)) || 'sapopemba (vila ema)',
+  polo: poloSolicitado,
   tipoVestibular: corrigirAcentos(process.env.CLIENTE_TIPO_VESTIBULAR) || 'Vestibular Redação',
+  // Notas do ENEM (usadas quando tipoVestibular é ENEM)
+  enem: {
+    redacao: process.env.ENEM_REDACAO || '',
+    linguagens: process.env.ENEM_LINGUAGENS || '',
+    matematica: process.env.ENEM_MATEMATICA || '',
+    natureza: process.env.ENEM_NATUREZA || '',
+    humanas: process.env.ENEM_HUMANAS || '',
+    ano: process.env.ENEM_ANO || '',
+  },
 };
 
 test('test', async ({ page }) => {
@@ -127,10 +158,22 @@ test('test', async ({ page }) => {
   console.log(`   CEP: ${CLIENTE.cep}`);
   console.log(`   Número: ${CLIENTE.numero}`);
   console.log(`   Estado: ${CLIENTE.estado}`);
-  console.log(`   Cidade: ${CLIENTE.cidade}`);
+  console.log(`   Cidade: ${CLIENTE.cidade}${isPoloTaboao(CLIENTE.polo) ? ' (ajustada automaticamente para polo de Taboão)' : ''}`);
   console.log(`   Curso: ${CLIENTE.curso}`);
   console.log(`   Polo: ${CLIENTE.polo}`);
   console.log(`   Vestibular: ${CLIENTE.tipoVestibular}`);
+  
+  // Exibe notas do ENEM se for vestibular ENEM
+  const isEnem = CLIENTE.tipoVestibular.toLowerCase().includes('enem');
+  if (isEnem && (CLIENTE.enem.redacao || CLIENTE.enem.linguagens)) {
+    console.log('   📊 NOTAS DO ENEM:');
+    if (CLIENTE.enem.ano) console.log(`      Ano: ${CLIENTE.enem.ano}`);
+    if (CLIENTE.enem.redacao) console.log(`      Redação: ${CLIENTE.enem.redacao}`);
+    if (CLIENTE.enem.linguagens) console.log(`      Linguagens: ${CLIENTE.enem.linguagens}`);
+    if (CLIENTE.enem.matematica) console.log(`      Matemática: ${CLIENTE.enem.matematica}`);
+    if (CLIENTE.enem.natureza) console.log(`      Ciências da Natureza: ${CLIENTE.enem.natureza}`);
+    if (CLIENTE.enem.humanas) console.log(`      Ciências Humanas: ${CLIENTE.enem.humanas}`);
+  }
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1724,6 +1767,80 @@ test('test', async ({ page }) => {
     }
     
     await page.waitForTimeout(1000);
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // PREENCHIMENTO DAS NOTAS DO ENEM (se for vestibular ENEM)
+    // ═══════════════════════════════════════════════════════════════════════
+    const isEnemCheckout = CLIENTE.tipoVestibular.toLowerCase().includes('enem');
+    if (isEnemCheckout && (CLIENTE.enem.redacao || CLIENTE.enem.linguagens)) {
+      console.log('📌 CHECKOUT: Preenchendo Notas do ENEM...');
+      
+      // Mapeamento de campos de notas do ENEM (seletores comuns)
+      const camposEnem = [
+        { nome: 'Redação', valor: CLIENTE.enem.redacao, seletores: ['input[name*="redacao"]', 'input[name*="Redacao"]', 'input[placeholder*="Redação"]', 'input[placeholder*="redação"]'] },
+        { nome: 'Linguagens', valor: CLIENTE.enem.linguagens, seletores: ['input[name*="linguagens"]', 'input[name*="Linguagens"]', 'input[placeholder*="Linguagens"]', 'input[placeholder*="linguagens"]'] },
+        { nome: 'Matemática', valor: CLIENTE.enem.matematica, seletores: ['input[name*="matematica"]', 'input[name*="Matematica"]', 'input[placeholder*="Matemática"]', 'input[placeholder*="matemática"]'] },
+        { nome: 'Ciências da Natureza', valor: CLIENTE.enem.natureza, seletores: ['input[name*="natureza"]', 'input[name*="Natureza"]', 'input[placeholder*="Natureza"]', 'input[placeholder*="natureza"]'] },
+        { nome: 'Ciências Humanas', valor: CLIENTE.enem.humanas, seletores: ['input[name*="humanas"]', 'input[name*="Humanas"]', 'input[placeholder*="Humanas"]', 'input[placeholder*="humanas"]'] },
+        { nome: 'Ano do ENEM', valor: CLIENTE.enem.ano, seletores: ['input[name*="ano"]', 'select[name*="ano"]', 'input[placeholder*="ano"]'] },
+      ];
+      
+      // Tenta preencher por label também
+      for (const campo of camposEnem) {
+        if (!campo.valor) continue;
+        
+        let preenchido = false;
+        
+        // Tenta pelos seletores diretos
+        for (const seletor of campo.seletores) {
+          try {
+            const input = page.locator(seletor).first();
+            if (await input.isVisible({ timeout: 1000 })) {
+              await input.click();
+              await input.clear();
+              await input.fill(campo.valor);
+              console.log(`   ✅ ${campo.nome}: ${campo.valor}`);
+              preenchido = true;
+              break;
+            }
+          } catch (e) {}
+        }
+        
+        // Se não encontrou pelos seletores, tenta por label
+        if (!preenchido) {
+          try {
+            const labelInput = page.getByLabel(new RegExp(campo.nome, 'i')).first();
+            if (await labelInput.isVisible({ timeout: 1000 })) {
+              await labelInput.click();
+              await labelInput.clear();
+              await labelInput.fill(campo.valor);
+              console.log(`   ✅ ${campo.nome}: ${campo.valor}`);
+              preenchido = true;
+            }
+          } catch (e) {}
+        }
+        
+        // Tenta por texto próximo ao input
+        if (!preenchido) {
+          try {
+            const containerComTexto = page.locator(`text=${campo.nome}`).locator('..').locator('input').first();
+            if (await containerComTexto.isVisible({ timeout: 1000 })) {
+              await containerComTexto.click();
+              await containerComTexto.clear();
+              await containerComTexto.fill(campo.valor);
+              console.log(`   ✅ ${campo.nome}: ${campo.valor}`);
+              preenchido = true;
+            }
+          } catch (e) {}
+        }
+        
+        if (!preenchido && campo.valor) {
+          console.log(`   ⚠️ Campo "${campo.nome}" não encontrado`);
+        }
+      }
+      
+      await page.waitForTimeout(1000);
+    }
     
     // Clica no botão para avançar (Ir para Endereço / Ir para Pagamento)
     const seletoresBtnProximo = [
