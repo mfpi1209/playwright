@@ -362,11 +362,24 @@ test('test', async ({ page }) => {
   await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
   await aguardarCarregamento('Página de login');
   
-  // Randomiza login admin
-  const ADMINS = [
-    { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit777' },
-    { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'MFPedu!t678@!' },
-  ];
+  // Monta lista de admins: usa VTEX_ADMINS (formato email:senha|email:senha) ou fallback
+  const ADMINS = [];
+  if (process.env.VTEX_ADMINS) {
+    process.env.VTEX_ADMINS.split('|').forEach(par => {
+      const [email, senha] = par.split(':');
+      if (email && senha) ADMINS.push({ email: email.trim(), senha: senha.trim() });
+    });
+  }
+  if (process.env.VTEX_ADMIN_EMAIL && process.env.VTEX_ADMIN_PASSWORD) {
+    const jaExiste = ADMINS.some(a => a.email === process.env.VTEX_ADMIN_EMAIL);
+    if (!jaExiste) ADMINS.push({ email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD });
+  }
+  if (ADMINS.length === 0) {
+    ADMINS.push(
+      { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
+      { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
+    );
+  }
   const adminEscolhido = ADMINS[Math.floor(Math.random() * ADMINS.length)];
   console.log(`   🔑 Admin: ${adminEscolhido.email}`);
   
@@ -393,26 +406,73 @@ test('test', async ({ page }) => {
   console.log('');
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // ETAPA 2: NAVEGAÇÃO PARA GRADUAÇÃO
+  // ETAPA 2: NAVEGAÇÃO PARA GRADUAÇÃO (com verificação robusta)
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 2: Navegação para Graduação');
   console.log('─────────────────────────────────────────────────────────────────────────');
   
-  // Verifica se já está na página de graduação - com retry
-  const urlAtualEtapa2 = page.url();
-  if (!urlAtualEtapa2.includes('/graduacao')) {
-    for (let tentativa = 1; tentativa <= 3; tentativa++) {
-      try {
-        console.log(`   Tentativa ${tentativa}/3 de navegar para graduação...`);
-        await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
-        break;
-      } catch (e) {
-        console.log(`   ⚠️ Erro na tentativa ${tentativa}: ${e.message}`);
-        if (tentativa < 3) {
+  // Função auxiliar para verificar se está na página de login
+  const estaNaPaginaDeLogin = () => {
+    const url = page.url();
+    return url.includes('admin-login') || url.includes('returnUrl=');
+  };
+
+  // Navega para graduação com retry robusto
+  for (let tentativa = 1; tentativa <= 5; tentativa++) {
+    try {
+      console.log(`   Tentativa ${tentativa}/5 de navegar para graduação...`);
+      await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { 
+        waitUntil: 'networkidle', 
+        timeout: 45000 
+      });
+      await page.waitForTimeout(3000);
+      
+      // Verifica se ainda está na página de login (sessão não persistiu)
+      if (estaNaPaginaDeLogin()) {
+        console.log(`   ⚠️ Ainda na página de login, tentando login novamente...`);
+        
+        // Tenta fazer login novamente
+        const emailInputRetry = page.getByRole('textbox', { name: 'Email' });
+        const emailVisivel = await emailInputRetry.isVisible({ timeout: 5000 }).catch(() => false);
+        
+        if (emailVisivel) {
+          const adminRetry = ADMINS[0];
+          await emailInputRetry.fill(adminRetry.email);
+          await page.getByRole('button', { name: 'Continuar' }).click();
           await page.waitForTimeout(2000);
-        } else {
-          throw e;
+          
+          const senhaInputRetry = page.getByRole('textbox', { name: 'Senha' });
+          const senhaVisivel = await senhaInputRetry.isVisible({ timeout: 5000 }).catch(() => false);
+          if (senhaVisivel) {
+            await senhaInputRetry.fill(adminRetry.senha);
+            await page.getByRole('button', { name: 'Continuar' }).click();
+            await page.waitForTimeout(5000);
+          }
         }
+        
+        // Tenta navegar novamente após login
+        await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { 
+          waitUntil: 'networkidle', 
+          timeout: 45000 
+        });
+        await page.waitForTimeout(3000);
+      }
+      
+      // Verifica novamente após todas as tentativas
+      if (!estaNaPaginaDeLogin()) {
+        console.log(`   ✅ Navegação para graduação bem-sucedida!`);
+        break;
+      }
+      
+      if (tentativa === 5 && estaNaPaginaDeLogin()) {
+        throw new Error(`Não foi possível permanecer na página de graduação após login admin. URL: ${page.url()}`);
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Erro na tentativa ${tentativa}: ${e.message}`);
+      if (tentativa < 5) {
+        await page.waitForTimeout(3000);
+      } else {
+        throw e;
       }
     }
   }
@@ -487,11 +547,18 @@ test('test', async ({ page }) => {
   
   // Fecha modais se existirem
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(1000)
-  
+  await page.waitForTimeout(1000);
+
+  // Verificação final: garante que não está mais na página de login
+  const urlFinalEtapa2 = page.url();
+  if (urlFinalEtapa2.includes('admin-login') || urlFinalEtapa2.includes('returnUrl=')) {
+    console.log(`   ⚠️ Ainda na página de login após todas as tentativas. URL: ${urlFinalEtapa2}`);
+    throw new Error(`Não foi possível sair da página de login admin. URL: ${urlFinalEtapa2}`);
+  }
+
   console.log(`✅ ETAPA 2 CONCLUÍDA - URL: ${page.url()}`);
   console.log('');
-  
+
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 3: LOGIN COMO CLIENTE
   // ═══════════════════════════════════════════════════════════════════════════

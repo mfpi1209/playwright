@@ -255,18 +255,17 @@ test('test-enem', async ({ page }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO: Remover overlays/backdrops que interceptam cliques
   // ═══════════════════════════════════════════════════════════════════════════
-  async function removerOverlays() {
+  async function removerOverlays(pressionarEscape = true) {
     console.log('🧹 Removendo overlays que bloqueiam cliques...');
     try {
       await page.evaluate(() => {
         const backdropSelectors = [
           '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsBackdrop',
           '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsDownloadFormBackdrop',
-          '[class*="Backdrop"]',
-          '[class*="backdrop"]',
-          '.overlay',
-          '.modal-backdrop',
-          '[class*="portalContainer"]'
+          // Seletores mais específicos para não remover modais legítimos como o login
+          '.overlay:not([class*="login"]):not([class*="Login"])',
+          '.modal-backdrop:not([class*="login"]):not([class*="Login"])'
+          // Removido [class*="portalContainer"] pois pode remover o modal de login
         ];
         
         backdropSelectors.forEach(selector => {
@@ -282,9 +281,11 @@ test('test-enem', async ({ page }) => {
         });
       });
       
-      // Pressiona Escape para fechar qualquer modal
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(300);
+      // Pressiona Escape para fechar qualquer modal (opcional - não usar durante login)
+      if (pressionarEscape) {
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(300);
+      }
       console.log('   ✅ Overlays removidos');
     } catch (e) {
       console.log(`   ⚠️ Aviso ao remover overlays: ${e.message}`);
@@ -340,11 +341,24 @@ test('test-enem', async ({ page }) => {
   await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
   await aguardarCarregamento('Página de login');
   
-  // Randomiza login admin
-  const ADMINS = [
-    { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit777' },
-    { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'MFPedu!t678@!' },
-  ];
+  // Monta lista de admins: usa VTEX_ADMINS (formato email:senha|email:senha) ou fallback
+  const ADMINS = [];
+  if (process.env.VTEX_ADMINS) {
+    process.env.VTEX_ADMINS.split('|').forEach(par => {
+      const [email, senha] = par.split(':');
+      if (email && senha) ADMINS.push({ email: email.trim(), senha: senha.trim() });
+    });
+  }
+  if (process.env.VTEX_ADMIN_EMAIL && process.env.VTEX_ADMIN_PASSWORD) {
+    const jaExiste = ADMINS.some(a => a.email === process.env.VTEX_ADMIN_EMAIL);
+    if (!jaExiste) ADMINS.push({ email: process.env.VTEX_ADMIN_EMAIL, senha: process.env.VTEX_ADMIN_PASSWORD });
+  }
+  if (ADMINS.length === 0) {
+    ADMINS.push(
+      { email: 'fabio.boas50@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
+      { email: 'marcelo.pinheiro1876@polo.cruzeirodosul.edu.br', senha: 'Eduit123@!' },
+    );
+  }
   const adminEscolhido = ADMINS[Math.floor(Math.random() * ADMINS.length)];
   console.log(`   🔑 Admin: ${adminEscolhido.email}`);
   
@@ -402,45 +416,86 @@ test('test-enem', async ({ page }) => {
   
   async function aceitarCookiesObrigatorio() {
     const MAX_TENTATIVAS = 5;
-    
+
     for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
       console.log(`   🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de aceitar cookies...`);
-      
+
+      // Seletores em ordem de prioridade
       const seletores = [
+        // Seletores específicos para o banner visto no screenshot
+        { tipo: 'exact-text', loc: page.locator('button', { hasText: 'Aceitar todos' }).first() },
+        { tipo: 'contains-text', loc: page.locator('button:has-text("Aceitar todos")').first() },
+        { tipo: 'role-exact', loc: page.getByRole('button', { name: 'Aceitar todos', exact: true }) },
         { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar todos' }) },
-        { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar Todos' }) },
-        { tipo: 'text', loc: page.getByText('Aceitar todos') },
-        { tipo: 'text', loc: page.getByText('Aceitar Todos') },
-        { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar todos/i }).first() },
-        { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar/i }).first() },
-        { tipo: 'locator', loc: page.locator('[class*="cookie"] button').first() },
-        { tipo: 'locator', loc: page.locator('#onetrust-accept-btn-handler') },
-        { tipo: 'css', loc: page.locator('button:has-text("Aceitar")').first() },
+        { tipo: 'role-caps', loc: page.getByRole('button', { name: 'Aceitar Todos' }) },
+        // Seletores alternativos
+        { tipo: 'text', loc: page.getByText('Aceitar todos', { exact: true }) },
+        { tipo: 'text-caps', loc: page.getByText('Aceitar Todos', { exact: true }) },
+        { tipo: 'locator-filter', loc: page.locator('button').filter({ hasText: /aceitar todos/i }).first() },
+        { tipo: 'locator-aceitar', loc: page.locator('button').filter({ hasText: /aceitar/i }).first() },
+        // Seletores genéricos de cookies
+        { tipo: 'cookie-banner', loc: page.locator('[class*="cookie"] button').first() },
+        { tipo: 'consent-banner', loc: page.locator('[class*="consent"] button').first() },
+        { tipo: 'onetrust', loc: page.locator('#onetrust-accept-btn-handler') },
+        { tipo: 'css-aceitar', loc: page.locator('button:has-text("Aceitar")').first() },
       ];
-      
+
       for (const { tipo, loc } of seletores) {
         try {
           const count = await loc.count();
           if (count > 0) {
-            const isVis = await loc.isVisible({ timeout: 2000 });
+            const isVis = await loc.isVisible({ timeout: 3000 });
             if (isVis) {
               console.log(`   📍 Encontrou botão de cookies (${tipo})`);
-              await loc.scrollIntoViewIfNeeded();
+              // Scroll para garantir que está visível
+              await loc.scrollIntoViewIfNeeded().catch(() => {});
               await page.waitForTimeout(500);
-              await loc.click({ force: true, timeout: 5000 });
+              // Tenta clicar normalmente primeiro
+              try {
+                await loc.click({ timeout: 3000 });
+              } catch (clickErr) {
+                // Se falhar, tenta com force
+                await loc.click({ force: true, timeout: 3000 });
+              }
               console.log('   ✅ Cookies aceitos!');
-              await page.waitForTimeout(1500);
-              return true;
+              await page.waitForTimeout(2000);
+              
+              // Verifica se o banner sumiu
+              const bannerAindaVisivel = await loc.isVisible({ timeout: 1000 }).catch(() => false);
+              if (!bannerAindaVisivel) {
+                return true;
+              }
+              console.log('   ⚠️ Banner ainda visível após clique, tentando novamente...');
             }
           }
-        } catch (e) {}
+        } catch (e) {
+          // Ignora erros e tenta próximo seletor
+        }
       }
-      
+
       if (tentativa < MAX_TENTATIVAS) {
         console.log(`   ⏳ Aguardando mais 2s...`);
         await page.waitForTimeout(2000);
       }
     }
+    
+    // Última tentativa: tenta clicar diretamente via JavaScript
+    console.log('   📍 Tentando aceitar cookies via JavaScript...');
+    try {
+      await page.evaluate(() => {
+        const buttons = document.querySelectorAll('button');
+        for (const btn of buttons) {
+          if (btn.textContent && btn.textContent.toLowerCase().includes('aceitar')) {
+            btn.click();
+            return true;
+          }
+        }
+        return false;
+      });
+      await page.waitForTimeout(2000);
+      return true;
+    } catch (e) {}
+    
     return false;
   }
   
@@ -455,38 +510,81 @@ test('test-enem', async ({ page }) => {
   
   // CRÍTICO: Verifica se estamos realmente na página de graduação (não redirecionados para login)
   let urlAposEtapa2 = page.url();
-  if (urlAposEtapa2.includes('admin-login') || (urlAposEtapa2.includes('login') && !urlAposEtapa2.includes('/graduacao'))) {
+  
+  // Função auxiliar para verificar se está na página de login
+  function estaNoLogin(url) {
+    return url.includes('admin-login') || (url.includes('login') && !url.includes('/graduacao'));
+  }
+  
+  // Se ainda está no login, tenta múltiplas vezes com diferentes estratégias
+  const MAX_TENTATIVAS_GRADUACAO = 3;
+  for (let tentGrad = 1; tentGrad <= MAX_TENTATIVAS_GRADUACAO && estaNoLogin(urlAposEtapa2); tentGrad++) {
     console.log('');
-    console.log('⚠️ ERRO: Após Etapa 2 a URL ainda é a página de login (sessão admin pode ter expirado ou redirecionamento).');
+    console.log(`⚠️ ERRO: Após Etapa 2 a URL ainda é a página de login (tentativa ${tentGrad}/${MAX_TENTATIVAS_GRADUACAO})`);
     console.log(`   URL atual: ${urlAposEtapa2}`);
     console.log('   Refazendo login admin e navegação para /graduacao...');
     
-    // Refaz login admin
-    await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2F%3F');
-    await aguardarCarregamento('Página de login retry', 10000);
+    // Refaz login admin com returnUrl para graduacao
+    await page.goto('https://cruzeirodosul.myvtex.com/_v/segment/admin-login/v1/login?returnUrl=%2Fgraduacao', { 
+      waitUntil: 'networkidle', 
+      timeout: 30000 
+    }).catch(() => {});
+    await page.waitForTimeout(2000);
     
-    const adminRetry = process.env.VTEX_ADMIN_EMAIL || 'fabio.boas50@polo.cruzeirodosul.edu.br';
-    const senhaRetry = process.env.VTEX_ADMIN_PASSWORD || 'Uniasselvi@2025';
+    // Usa o primeiro admin da lista ADMINS para retry
+    const adminRetry = ADMINS[0].email;
+    const senhaRetry = ADMINS[0].senha;
     
-    await preencherCampo(page.getByRole('textbox', { name: 'Email' }), adminRetry, 'Email admin retry', false);
-    await page.getByRole('button', { name: 'Continuar' }).click();
-    await page.waitForTimeout(1000);
-    await page.getByRole('textbox', { name: 'Senha' }).fill(senhaRetry);
-    await page.getByRole('button', { name: 'Continuar' }).click();
-    await aguardarCarregamento('Login retry', 30000);
-    await page.waitForTimeout(3000);
+    // Verifica se precisa fazer login (campo de email visível)
+    const campoEmail = page.getByRole('textbox', { name: 'Email' });
+    if (await campoEmail.isVisible({ timeout: 3000 }).catch(() => false)) {
+      console.log(`   🔑 Fazendo login com: ${adminRetry}`);
+      await preencherCampo(campoEmail, adminRetry, 'Email admin retry', false);
+      await page.getByRole('button', { name: 'Continuar' }).click();
+      await page.waitForTimeout(2000);
+      
+      const campoSenha = page.getByRole('textbox', { name: 'Senha' });
+      if (await campoSenha.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await campoSenha.fill(senhaRetry);
+        await page.getByRole('button', { name: 'Continuar' }).click();
+        console.log('   ✅ Credenciais enviadas');
+      }
+      
+      // Aguarda o login processar e redirecionar
+      await page.waitForTimeout(5000);
+      
+      // Verifica se foi redirecionado automaticamente para graduação
+      urlAposEtapa2 = page.url();
+      console.log(`   📍 URL após login: ${urlAposEtapa2}`);
+      
+      if (!estaNoLogin(urlAposEtapa2)) {
+        console.log('   ✅ Redirecionado automaticamente para graduação!');
+        break;
+      }
+    }
     
-    // Navega para graduação novamente
-    await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await aguardarCarregamento('Página de graduação (retry)', 30000);
-    await page.waitForTimeout(3000);
-    
-    urlAposEtapa2 = page.url();
-    console.log(`   📍 URL após retry: ${urlAposEtapa2}`);
+    // Se ainda está no login, tenta navegar manualmente para graduação
+    if (estaNoLogin(page.url())) {
+      console.log('   📍 Navegando manualmente para /graduacao...');
+      await page.goto('https://cruzeirodosul.myvtex.com/graduacao', { 
+        waitUntil: 'networkidle', 
+        timeout: 30000 
+      }).catch(() => {});
+      await page.waitForTimeout(5000);
+      
+      urlAposEtapa2 = page.url();
+      console.log(`   📍 URL após navegação manual: ${urlAposEtapa2}`);
+    }
   }
   
   // Verifica se conseguiu sair da página de login
-  if (urlAposEtapa2.includes('admin-login') || (urlAposEtapa2.includes('login') && !urlAposEtapa2.includes('/graduacao'))) {
+  if (estaNoLogin(urlAposEtapa2)) {
+    console.log('');
+    console.log('❌ ERRO CRÍTICO: Não foi possível acessar a página de graduação.');
+    console.log('   Possíveis causas:');
+    console.log('   1. Credenciais do admin incorretas ou conta bloqueada');
+    console.log('   2. Site da Cruzeiro do Sul com problemas');
+    console.log('   3. Sessão sendo invalidada imediatamente');
     throw new Error('Não foi possível permanecer na página de graduação após login admin. URL: ' + urlAposEtapa2);
   }
   
@@ -508,7 +606,7 @@ test('test-enem', async ({ page }) => {
     }
   } catch (e) {}
   
-  // FUNÇÃO: Login do cliente com validação e retry
+  // FUNÇÃO: Login do cliente com validação e retry (igual ao inscricao.spec.js)
   async function fazerLoginCliente() {
     const MAX_TENTATIVAS = 3;
     
@@ -555,41 +653,73 @@ test('test-enem', async ({ page }) => {
       }
       
       await page.waitForTimeout(500);
-      await removerOverlays();
+      await removerOverlays(false); // Não pressionar Escape durante login
+      await page.waitForTimeout(300);
       
-      // 2. Preenche email do cliente
-      console.log(`   📝 Tentativa ${tentativa}/${MAX_TENTATIVAS} - campo de email...`);
-      await removerOverlays();
+      // Seletor do botão Entrar
+      const btnEntrar = page.getByRole('button', { name: 'Entrar' })
+        .or(page.getByRole('button', { name: /^entrar$/i }))
+        .or(page.locator('button').filter({ hasText: /^entrar$/i }).first())
+        .or(page.locator('button[type="submit"]').filter({ hasText: /entrar/i }).first());
       
-      try {
-        const emailInput = emailCliente.first();
-        await emailInput.scrollIntoViewIfNeeded();
-        await emailInput.click({ force: true });
-        await emailInput.clear();
-        await emailInput.fill(CLIENTE.email);
+      // Função: apagar email, inserir de novo, esperar e clicar em Entrar
+      async function preencherEmailEClicarEntrar() {
+        await removerOverlays(false); // Não pressionar Escape durante login
+        await page.waitForTimeout(300);
+        const campoEmail = emailCliente.first();
+        await campoEmail.waitFor({ state: 'visible', timeout: 5000 }).catch(() => null);
+        if (!(await campoEmail.isVisible().catch(() => false))) return false;
+        await campoEmail.click({ force: true });
+        await page.waitForTimeout(300);
+        await campoEmail.fill('');
+        await page.waitForTimeout(200);
+        // Usa type com delay como no inscricao.spec.js
+        await campoEmail.type(CLIENTE.email, { delay: 60 });
         console.log(`   ✅ Email preenchido: "${CLIENTE.email}"`);
-      } catch (e) {
-        console.log(`   ⚠️ Erro ao preencher email: ${e.message}`);
-        continue;
+        console.log('   ⏳ Aguardando antes de clicar em Entrar...');
+        await page.waitForTimeout(2500);
+        try {
+          await btnEntrar.first().waitFor({ state: 'visible', timeout: 8000 });
+          await btnEntrar.first().click();
+          console.log('   ✅ Clicou em "Entrar"');
+          return true;
+        } catch (e) {
+          console.log(`   ⚠️ Erro ao clicar em Entrar: ${e.message}`);
+          return false;
+        }
       }
       
-      // 3. Clica no botão "Entrar" para logar como cliente
-      console.log('   ⏳ Aguardando antes de clicar em Entrar...');
-      await page.waitForTimeout(1000);
+      // 2. Preenche email e clica Entrar (com retry: se falhar, apaga e reinsere)
+      let entrouComSucesso = false;
+      const MAX_TENTATIVAS_ENTRAR = 3;
       
-      try {
-        const btnEntrar = page.getByRole('button', { name: 'Entrar' }).first();
-        await btnEntrar.waitFor({ state: 'visible', timeout: 5000 });
-        await btnEntrar.click({ force: true });
-        console.log('   ✅ Clicou em "Entrar"');
-      } catch (e) {
-        console.log(`   ⚠️ Erro ao clicar em Entrar: ${e.message}`);
+      for (let t = 1; t <= MAX_TENTATIVAS_ENTRAR; t++) {
+        console.log(`   📝 Tentativa ${t}/${MAX_TENTATIVAS_ENTRAR} - campo de email...`);
+        
+        if (!(await emailCliente.first().isVisible().catch(() => false))) {
+          console.log('   ⚠️ Campo de email não encontrado');
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(1000);
+          break;
+        }
+        
+        entrouComSucesso = await preencherEmailEClicarEntrar();
+        if (entrouComSucesso) break;
+        
+        if (t < MAX_TENTATIVAS_ENTRAR) {
+          console.log('   🔄 Apagando email e reinserindo antes de clicar em Entrar...');
+          await page.waitForTimeout(1000);
+        }
+      }
+      
+      if (!entrouComSucesso) {
+        console.log('   ⚠️ Não foi possível clicar em Entrar após várias tentativas');
         continue;
       }
       
       // 4. Aguarda processamento do login
       console.log('   ⏳ Aguardando login ser processado...');
-      await page.waitForTimeout(4000);
+      await page.waitForTimeout(3000);
       
       // 5. Valida se login foi bem-sucedido
       console.log('   🔍 Validando login...');
