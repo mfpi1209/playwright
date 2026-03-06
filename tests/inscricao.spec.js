@@ -70,9 +70,24 @@ function isPoloTaboao(polo) {
   if (!polo) return false;
   const poloNormalizado = polo.trim().toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // Remove acentos
-  return poloNormalizado.includes('taboao') || 
-         poloNormalizado.includes('mituzi') ||
-         poloNormalizado.includes('mitsuzi');
+  return poloNormalizado.includes('taboao') ||
+         poloNormalizado.includes('mituzi');
+}
+
+// Detecta se o polo é de Capivari
+function isPoloCapivari(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return poloNormalizado.includes('capivari');
+}
+
+// Detecta se o polo é de Itapira
+function isPoloItapira(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return poloNormalizado.includes('itapira');
 }
 
 // Retorna a cidade correta baseada no polo
@@ -80,7 +95,21 @@ function obterCidadeDoPolo(polo, cidadePadrao) {
   if (isPoloTaboao(polo)) {
     return 'Taboão da Serra';
   }
+  if (isPoloCapivari(polo)) {
+    return 'Capivari';
+  }
+  if (isPoloItapira(polo)) {
+    return 'Itapira';
+  }
   return cidadePadrao;
+}
+
+// Retorna informação sobre ajuste de cidade para log
+function getInfoAjusteCidade(polo) {
+  if (isPoloTaboao(polo)) return ' (cidade ajustada para polo de Taboão)';
+  if (isPoloCapivari(polo)) return ' (cidade ajustada para polo de Capivari)';
+  if (isPoloItapira(polo)) return ' (cidade ajustada para polo de Itapira)';
+  return '';
 }
 
 // Gera número de residência aleatório entre 1 e 999
@@ -158,7 +187,7 @@ test('test', async ({ page }) => {
   console.log(`   CEP: ${CLIENTE.cep}`);
   console.log(`   Número: ${CLIENTE.numero}`);
   console.log(`   Estado: ${CLIENTE.estado}`);
-  console.log(`   Cidade: ${CLIENTE.cidade}${isPoloTaboao(CLIENTE.polo) ? ' (ajustada automaticamente para polo de Taboão)' : ''}`);
+  console.log(`   Cidade: ${CLIENTE.cidade}${getInfoAjusteCidade(CLIENTE.polo)}`);
   console.log(`   Curso: ${CLIENTE.curso}`);
   console.log(`   Polo: ${CLIENTE.polo}`);
   console.log(`   Vestibular: ${CLIENTE.tipoVestibular}`);
@@ -175,6 +204,35 @@ test('test', async ({ page }) => {
     if (CLIENTE.enem.humanas) console.log(`      Ciências Humanas: ${CLIENTE.enem.humanas}`);
   }
   console.log('');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VALIDAÇÃO DE POLO - Rejeita polos inválidos antes de iniciar
+  // ═══════════════════════════════════════════════════════════════════════════
+  const polosInvalidos = [
+    'polo mais próximo',
+    'polo mais proximo', 
+    'mais próximo',
+    'mais proximo',
+    'selecione',
+    'selecionar',
+    'escolha',
+    'nenhum',
+    'n/a',
+    ''
+  ];
+  
+  const poloLower = (CLIENTE.polo || '').toLowerCase().trim();
+  if (polosInvalidos.some(inv => poloLower === inv || poloLower.includes('mais próximo') || poloLower.includes('mais proximo'))) {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log('❌ ERRO: POLO INVÁLIDO');
+    console.log(`   Polo informado: "${CLIENTE.polo}"`);
+    console.log('   O polo deve ser um nome específico de polo válido.');
+    console.log('   Exemplos válidos: "barra funda", "ibirapuera", "vila mariana"');
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log('');
+    throw new Error(`POLO_INVALIDO: O polo "${CLIENTE.polo}" não é válido. Informe um polo específico.`);
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO AUXILIAR: Aguarda carregamento com verificação
@@ -491,21 +549,55 @@ test('test', async ({ page }) => {
   
   // ACEITAR COOKIES - CRÍTICO: não pode prosseguir sem aceitar
   console.log('📍 Aguardando banner de cookies...');
-  await page.waitForTimeout(3000); // Espera mais tempo para o banner aparecer
+  await page.waitForTimeout(2000); // Espera o banner aparecer
   
-  // Função para aceitar cookies - tenta várias vezes
+  // Função para aceitar cookies - versão robusta
   async function aceitarCookiesObrigatorio() {
-    const MAX_TENTATIVAS = 5;
+    const MAX_TENTATIVAS = 8;
     
     for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
       console.log(`   🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de aceitar cookies...`);
       
-      // Lista de seletores para tentar
-      const seletores = [
-        { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar todos' }) },
-        { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar Todos' }) },
-        { tipo: 'text', loc: page.getByText('Aceitar todos') },
-        { tipo: 'text', loc: page.getByText('Aceitar Todos') },
+      // Verifica se banner ainda existe
+      const bannerVisivel = await page.evaluate(() => {
+        const banner = document.querySelector('#privacytools-banner-consent, [class*="cookie-banner"], [class*="lgpd"], [class*="consent"], .cc-banner');
+        return banner && banner.offsetParent !== null;
+      });
+      
+      if (!bannerVisivel && tentativa > 2) {
+        console.log('   ✅ Banner de cookies não está mais visível - já foi aceito ou não existe');
+        return true;
+      }
+      
+      // MÉTODO 1: Seletores específicos do privacytools (mais comum no site VTEX)
+      const seletoresPrivacyTools = [
+        '#privacytools-banner-consent button[class*="accept"]',
+        '#privacytools-banner-consent button:has-text("Aceitar")',
+        '#privacytools-banner-consent .privacy-tools-accept',
+        '.privacy-tools-layout button[class*="accept"]',
+        '.privacy-tools-layout button:first-child',
+        '#privacytools-banner button',
+      ];
+      
+      for (const seletor of seletoresPrivacyTools) {
+        try {
+          const btn = page.locator(seletor).first();
+          if (await btn.count() > 0 && await btn.isVisible({ timeout: 1000 })) {
+            console.log(`   📍 Encontrou botão privacytools: ${seletor}`);
+            await btn.click({ force: true, timeout: 3000 });
+            await page.waitForTimeout(1000);
+            console.log('   ✅ Cookies aceitos (privacytools)!');
+            return true;
+          }
+        } catch (e) { /* continua */ }
+      }
+      
+      // MÉTODO 2: Seletores genéricos
+      const seletoresGenericos = [
+        { tipo: 'role', loc: page.getByRole('button', { name: /aceitar todos/i }) },
+        { tipo: 'role', loc: page.getByRole('button', { name: /aceitar/i }) },
+        { tipo: 'text', loc: page.getByText('Aceitar todos').first() },
+        { tipo: 'text', loc: page.getByText('Aceitar Todos').first() },
         { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar todos/i }).first() },
         { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar/i }).first() },
         { tipo: 'locator', loc: page.locator('[class*="cookie"] button').first() },
@@ -513,37 +605,69 @@ test('test', async ({ page }) => {
         { tipo: 'css', loc: page.locator('button:has-text("Aceitar")').first() },
         { tipo: 'css', loc: page.locator('[class*="lgpd"] button').first() },
         { tipo: 'css', loc: page.locator('[class*="consent"] button').first() },
+        { tipo: 'css', loc: page.locator('.cc-btn.cc-dismiss').first() },
       ];
       
-      for (const { tipo, loc } of seletores) {
+      for (const { tipo, loc } of seletoresGenericos) {
         try {
-          const count = await loc.count();
-          if (count > 0) {
-            const isVis = await loc.isVisible({ timeout: 2000 });
-            if (isVis) {
-              console.log(`   📍 Encontrou botão de cookies (${tipo})`);
-              await loc.scrollIntoViewIfNeeded();
-              await page.waitForTimeout(500);
-              await loc.click({ force: true, timeout: 5000 });
-              console.log('   ✅ Cookies aceitos!');
-              await page.waitForTimeout(1500);
+          if (await loc.count() > 0 && await loc.isVisible({ timeout: 1000 })) {
+            console.log(`   📍 Encontrou botão de cookies (${tipo})`);
+            await loc.scrollIntoViewIfNeeded().catch(() => {});
+            await page.waitForTimeout(300);
+            await loc.click({ force: true, timeout: 3000 });
+            console.log('   ✅ Cookies aceitos!');
+            await page.waitForTimeout(1000);
+            return true;
+          }
+        } catch (e) { /* continua */ }
+      }
+      
+      // MÉTODO 3: Fallback via JavaScript - clica em qualquer botão de aceitar no banner
+      try {
+        const clicouJS = await page.evaluate(() => {
+          // Tenta encontrar e clicar em botões de aceitar cookies via JS
+          const seletores = [
+            '#privacytools-banner-consent button',
+            '[class*="cookie"] button',
+            '[class*="lgpd"] button',
+            '[class*="consent"] button[class*="accept"]',
+            '[class*="consent"] button:first-child',
+            'button[class*="accept"]',
+          ];
+          
+          for (const sel of seletores) {
+            const btns = document.querySelectorAll(sel);
+            for (const btn of btns) {
+              const texto = btn.textContent?.toLowerCase() || '';
+              if (texto.includes('aceitar') || texto.includes('accept') || texto.includes('concordo') || texto.includes('ok')) {
+                btn.click();
+                return true;
+              }
+            }
+            // Se não encontrou por texto, clica no primeiro botão do banner
+            if (btns.length > 0) {
+              btns[0].click();
               return true;
             }
           }
-  } catch (e) {
-          // Continua para próximo seletor
+          return false;
+        });
+        
+        if (clicouJS) {
+          console.log('   ✅ Cookies aceitos via JavaScript!');
+          await page.waitForTimeout(1000);
+          return true;
         }
-      }
+      } catch (e) { /* continua */ }
       
       // Se não encontrou, espera e tenta novamente
       if (tentativa < MAX_TENTATIVAS) {
-        console.log(`   ⏳ Aguardando mais 2s...`);
-        await page.waitForTimeout(2000);
+        console.log(`   ⏳ Aguardando mais 1.5s...`);
+        await page.waitForTimeout(1500);
         
-        // Tenta scroll para ver se o banner aparece
-        await page.mouse.wheel(0, 100);
-        await page.waitForTimeout(500);
-        await page.mouse.wheel(0, -100);
+        // Tenta scroll leve para ativar o banner
+        await page.mouse.wheel(0, 50).catch(() => {});
+        await page.waitForTimeout(300);
       }
     }
     
@@ -553,12 +677,17 @@ test('test', async ({ page }) => {
   const cookieAceito = await aceitarCookiesObrigatorio();
   
   if (!cookieAceito) {
-    console.log('⚠️ AVISO: Banner de cookies não encontrado - continuando mesmo assim');
+    console.log('⚠️ AVISO: Banner de cookies não encontrado ou já aceito - continuando');
+    // Tenta remover o banner via JS mesmo assim
+    await page.evaluate(() => {
+      const banners = document.querySelectorAll('#privacytools-banner-consent, [class*="cookie-banner"], [class*="lgpd-banner"]');
+      banners.forEach(b => b.remove());
+    }).catch(() => {});
   }
   
   // Fecha modais se existirem
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   
   // CRÍTICO: Verifica se estamos realmente na página de graduação (não redirecionados para login)
   let urlAposEtapa2 = page.url();
@@ -1081,20 +1210,78 @@ test('test', async ({ page }) => {
     // Ignora erros ao fechar modal
   }
   
-  // Nome completo - usa force para evitar problemas com overlays
+  // Nome completo do CANDIDATO - usa force para evitar problemas com overlays
+  // IMPORTANTE: Evitar campos de "nome da mãe", "nome do pai", "nome do responsável"
+  console.log('📝 Preenchendo: Nome completo do candidato...');
+  
+  // Função para verificar se é campo de nome de parente
+  const ehCampoParente = async (campo) => {
+    try {
+      const placeholder = (await campo.getAttribute('placeholder') || '').toLowerCase();
+      const name = (await campo.getAttribute('name') || '').toLowerCase();
+      const id = (await campo.getAttribute('id') || '').toLowerCase();
+      const ariaLabel = (await campo.getAttribute('aria-label') || '').toLowerCase();
+      
+      const termosExcluir = ['mãe', 'mae', 'pai', 'mother', 'father', 'responsavel', 'responsável', 'parent'];
+      for (const termo of termosExcluir) {
+        if (placeholder.includes(termo) || name.includes(termo) || id.includes(termo) || ariaLabel.includes(termo)) {
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+  
+  // Tenta o seletor específico "Nome completo" (exato)
+  let nomePreenchido = false;
   const nomeInput = page.getByRole('textbox', { name: 'Nome completo' });
-  console.log('📝 Preenchendo: Nome completo...');
+  
   try {
     await nomeInput.waitFor({ state: 'visible', timeout: 15000 });
-    await nomeInput.scrollIntoViewIfNeeded();
-    await nomeInput.click({ force: true });
-    await page.waitForTimeout(100);
-    await nomeInput.fill(CLIENTE.nome);
-    console.log(`✅ Nome completo: "${CLIENTE.nome}"`);
+    
+    // Verifica se não é campo de parente
+    if (await ehCampoParente(nomeInput)) {
+      console.log('   ⚠️ Campo "Nome completo" é de parente, buscando alternativa...');
+    } else {
+      await nomeInput.scrollIntoViewIfNeeded();
+      await nomeInput.click({ force: true });
+      await page.waitForTimeout(100);
+      await nomeInput.fill(CLIENTE.nome);
+      console.log(`✅ Nome completo do candidato: "${CLIENTE.nome}"`);
+      nomePreenchido = true;
+    }
   } catch (e) {
     console.log(`⚠️ Erro ao preencher nome: ${e.message}`);
-    // Tenta novamente com force
-    await nomeInput.fill(CLIENTE.nome, { force: true });
+  }
+  
+  // Fallback: tenta outros seletores específicos (excluindo parentes)
+  if (!nomePreenchido) {
+    const seletoresNomeFallback = [
+      'input[placeholder*="nome completo" i]:not([placeholder*="mãe" i]):not([placeholder*="mae" i])',
+      'input[name="userName"]',
+      'input[name="nomecompleto"]:not([name*="mae"]):not([name*="mãe"])',
+    ];
+    
+    for (const seletor of seletoresNomeFallback) {
+      try {
+        const campo = page.locator(seletor).first();
+        if (await campo.isVisible({ timeout: 2000 })) {
+          if (!(await ehCampoParente(campo))) {
+            await campo.click({ force: true });
+            await campo.fill(CLIENTE.nome);
+            console.log(`✅ Nome completo do candidato (fallback): "${CLIENTE.nome}"`);
+            nomePreenchido = true;
+            break;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+  
+  if (!nomePreenchido) {
+    console.log('   ⚠️ ALERTA: Não conseguiu preencher nome do candidato de forma segura!');
   }
   
   // Telefone - usa force para evitar problemas com overlays
@@ -1875,6 +2062,56 @@ test('test', async ({ page }) => {
   // ═════════════════════════════════════════════════════════════════════════
   stepAtual = await detectarStepCheckout();
   console.log(`   📍 Step após dados pessoais: ${stepAtual}`);
+  
+  // Se ainda estamos em profile, verifica erros de validação e campos obrigatórios
+  if (stepAtual === 'profile') {
+    console.log('   ⚠️ Ainda em profile, verificando erros de validação...');
+    
+    // Verifica se há mensagens de erro na página
+    try {
+      const erros = await page.locator('.error, .invalid, [class*="error"], [class*="invalid"], .vtex-input__error, .help.is-danger').allTextContents();
+      const errosFiltrados = erros.filter(e => e && e.trim().length > 0);
+      if (errosFiltrados.length > 0) {
+        console.log(`   ❌ Erros de validação encontrados: ${errosFiltrados.join(', ')}`);
+      }
+    } catch (e) {}
+    
+    // Tenta preencher campos obrigatórios comuns que podem estar vazios
+    const camposObrigatorios = [
+      { nome: 'Telefone', seletores: ['input[name*="phone"]', 'input[name*="Phone"]', 'input[name*="celular"]', 'input[id*="phone"]'], valor: CLIENTE.telefone },
+      { nome: 'RG', seletores: ['input[name*="document"]', 'input[name*="rg"]', 'input[name*="RG"]'], valor: '' },
+      { nome: 'Nome da Mãe', seletores: ['input[name*="motherName"]', 'input[name*="mother"]'], valor: '' },
+    ];
+    
+    for (const campo of camposObrigatorios) {
+      if (!campo.valor) continue;
+      for (const seletor of campo.seletores) {
+        try {
+          const input = page.locator(seletor).first();
+          if (await input.isVisible({ timeout: 1000 })) {
+            const valorAtual = await input.inputValue().catch(() => '');
+            if (!valorAtual || valorAtual.length < 3) {
+              await input.click();
+              await input.clear();
+              await input.fill(campo.valor);
+              console.log(`   ✅ ${campo.nome} preenchido: ${campo.valor}`);
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+    
+    // Tenta clicar no botão novamente após corrigir campos
+    await page.waitForTimeout(1000);
+    const btnRetry = page.locator('button:has-text("Ir para o Endereço"), button:has-text("Ir para o pagamento")').first();
+    if (await btnRetry.isVisible({ timeout: 2000 }).catch(() => false)) {
+      console.log('   🔄 Tentando avançar novamente...');
+      await btnRetry.click({ force: true });
+      await page.waitForTimeout(3000);
+      stepAtual = await detectarStepCheckout();
+    }
+  }
   
   if (stepAtual === 'shipping' || stepAtual === 'profile') {
     console.log('📌 CHECKOUT: Verificando Endereço...');

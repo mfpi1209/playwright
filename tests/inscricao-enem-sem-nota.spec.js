@@ -357,60 +357,138 @@ test('test-enem-sem-nota', async ({ page }) => {
   
   // ACEITAR COOKIES - CRÍTICO: não pode prosseguir sem aceitar
   console.log('📍 Aguardando banner de cookies...');
-  await page.waitForTimeout(3000);
+  await page.waitForTimeout(2000);
   
+  // Função para aceitar cookies - versão robusta
   async function aceitarCookiesObrigatorio() {
-    const MAX_TENTATIVAS = 5;
+    const MAX_TENTATIVAS = 8;
     
     for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
       console.log(`   🔄 Tentativa ${tentativa}/${MAX_TENTATIVAS} de aceitar cookies...`);
       
-      const seletores = [
-        { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar todos' }) },
-        { tipo: 'role', loc: page.getByRole('button', { name: 'Aceitar Todos' }) },
-        { tipo: 'text', loc: page.getByText('Aceitar todos') },
-        { tipo: 'text', loc: page.getByText('Aceitar Todos') },
+      // Verifica se banner ainda existe
+      const bannerVisivel = await page.evaluate(() => {
+        const banner = document.querySelector('#privacytools-banner-consent, [class*="cookie-banner"], [class*="lgpd"], [class*="consent"], .cc-banner');
+        return banner && banner.offsetParent !== null;
+      });
+      
+      if (!bannerVisivel && tentativa > 2) {
+        console.log('   ✅ Banner de cookies não está mais visível - já foi aceito ou não existe');
+        return true;
+      }
+      
+      // MÉTODO 1: Seletores específicos do privacytools (mais comum no site VTEX)
+      const seletoresPrivacyTools = [
+        '#privacytools-banner-consent button[class*="accept"]',
+        '#privacytools-banner-consent button:has-text("Aceitar")',
+        '#privacytools-banner-consent .privacy-tools-accept',
+        '.privacy-tools-layout button[class*="accept"]',
+        '.privacy-tools-layout button:first-child',
+        '#privacytools-banner button',
+      ];
+      
+      for (const seletor of seletoresPrivacyTools) {
+        try {
+          const btn = page.locator(seletor).first();
+          if (await btn.count() > 0 && await btn.isVisible({ timeout: 1000 })) {
+            console.log(`   📍 Encontrou botão privacytools: ${seletor}`);
+            await btn.click({ force: true, timeout: 3000 });
+            await page.waitForTimeout(1000);
+            console.log('   ✅ Cookies aceitos (privacytools)!');
+            return true;
+          }
+        } catch (e) { /* continua */ }
+      }
+      
+      // MÉTODO 2: Seletores genéricos
+      const seletoresGenericos = [
+        { tipo: 'role', loc: page.getByRole('button', { name: /aceitar todos/i }) },
+        { tipo: 'role', loc: page.getByRole('button', { name: /aceitar/i }) },
+        { tipo: 'text', loc: page.getByText('Aceitar todos').first() },
+        { tipo: 'text', loc: page.getByText('Aceitar Todos').first() },
         { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar todos/i }).first() },
         { tipo: 'locator', loc: page.locator('button').filter({ hasText: /aceitar/i }).first() },
         { tipo: 'locator', loc: page.locator('[class*="cookie"] button').first() },
         { tipo: 'locator', loc: page.locator('#onetrust-accept-btn-handler') },
         { tipo: 'css', loc: page.locator('button:has-text("Aceitar")').first() },
+        { tipo: 'css', loc: page.locator('[class*="lgpd"] button').first() },
+        { tipo: 'css', loc: page.locator('[class*="consent"] button').first() },
+        { tipo: 'css', loc: page.locator('.cc-btn.cc-dismiss').first() },
       ];
       
-      for (const { tipo, loc } of seletores) {
+      for (const { tipo, loc } of seletoresGenericos) {
         try {
-          const count = await loc.count();
-          if (count > 0) {
-            const isVis = await loc.isVisible({ timeout: 2000 });
-            if (isVis) {
-              console.log(`   📍 Encontrou botão de cookies (${tipo})`);
-              await loc.scrollIntoViewIfNeeded();
-              await page.waitForTimeout(500);
-              await loc.click({ force: true, timeout: 5000 });
-              console.log('   ✅ Cookies aceitos!');
-              await page.waitForTimeout(1500);
+          if (await loc.count() > 0 && await loc.isVisible({ timeout: 1000 })) {
+            console.log(`   📍 Encontrou botão de cookies (${tipo})`);
+            await loc.scrollIntoViewIfNeeded().catch(() => {});
+            await page.waitForTimeout(300);
+            await loc.click({ force: true, timeout: 3000 });
+            console.log('   ✅ Cookies aceitos!');
+            await page.waitForTimeout(1000);
+            return true;
+          }
+        } catch (e) { /* continua */ }
+      }
+      
+      // MÉTODO 3: Fallback via JavaScript
+      try {
+        const clicouJS = await page.evaluate(() => {
+          const seletores = [
+            '#privacytools-banner-consent button',
+            '[class*="cookie"] button',
+            '[class*="lgpd"] button',
+            '[class*="consent"] button[class*="accept"]',
+            '[class*="consent"] button:first-child',
+            'button[class*="accept"]',
+          ];
+          
+          for (const sel of seletores) {
+            const btns = document.querySelectorAll(sel);
+            for (const btn of btns) {
+              const texto = btn.textContent?.toLowerCase() || '';
+              if (texto.includes('aceitar') || texto.includes('accept') || texto.includes('concordo') || texto.includes('ok')) {
+                btn.click();
+                return true;
+              }
+            }
+            if (btns.length > 0) {
+              btns[0].click();
               return true;
             }
           }
-        } catch (e) {}
-      }
+          return false;
+        });
+        
+        if (clicouJS) {
+          console.log('   ✅ Cookies aceitos via JavaScript!');
+          await page.waitForTimeout(1000);
+          return true;
+        }
+      } catch (e) { /* continua */ }
       
       if (tentativa < MAX_TENTATIVAS) {
-        console.log(`   ⏳ Aguardando mais 2s...`);
-        await page.waitForTimeout(2000);
+        console.log(`   ⏳ Aguardando mais 1.5s...`);
+        await page.waitForTimeout(1500);
+        await page.mouse.wheel(0, 50).catch(() => {});
+        await page.waitForTimeout(300);
       }
     }
+    
     return false;
   }
   
   const cookieAceito = await aceitarCookiesObrigatorio();
   if (!cookieAceito) {
-    console.log('⚠️ AVISO: Banner de cookies não encontrado');
+    console.log('⚠️ AVISO: Banner de cookies não encontrado ou já aceito - continuando');
+    await page.evaluate(() => {
+      const banners = document.querySelectorAll('#privacytools-banner-consent, [class*="cookie-banner"], [class*="lgpd-banner"]');
+      banners.forEach(b => b.remove());
+    }).catch(() => {});
   }
   
   // Fecha modais se existirem
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   
   console.log(`✅ ETAPA 2 CONCLUÍDA - URL: ${page.url()}`);
   console.log('');

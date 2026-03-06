@@ -101,25 +101,102 @@ function removerAcentos(texto) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FUNÇÃO PARA FECHAR COOKIE BANNER E OUTROS OVERLAYS
+// FUNÇÕES PARA AJUSTE DE CIDADE BASEADA NO POLO
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Detecta se o polo é de Taboão da Serra (taboão centro, mituzi)
+function isPoloTaboao(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return poloNormalizado.includes('taboao') ||
+         poloNormalizado.includes('mituzi') ||
+         poloNormalizado.includes('mitsuzi');
+}
+
+// Detecta se o polo é de Capivari
+function isPoloCapivari(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return poloNormalizado.includes('capivari');
+}
+
+// Detecta se o polo é de Itapira
+function isPoloItapira(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return poloNormalizado.includes('itapira');
+}
+
+// Retorna a cidade correta baseada no polo
+function obterCidadeDoPolo(polo, cidadePadrao) {
+  if (isPoloTaboao(polo)) {
+    return 'Taboão da Serra';
+  }
+  if (isPoloCapivari(polo)) {
+    return 'Capivari';
+  }
+  if (isPoloItapira(polo)) {
+    return 'Itapira';
+  }
+  return cidadePadrao;
+}
+
+// Retorna informação sobre ajuste de cidade para log
+function getInfoAjusteCidade(polo) {
+  if (isPoloTaboao(polo)) return ' (cidade ajustada para polo de Taboão)';
+  if (isPoloCapivari(polo)) return ' (cidade ajustada para polo de Capivari)';
+  if (isPoloItapira(polo)) return ' (cidade ajustada para polo de Itapira)';
+  return '';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FUNÇÃO PARA FECHAR COOKIE BANNER E OUTROS OVERLAYS - VERSÃO ROBUSTA
 // ═══════════════════════════════════════════════════════════════════════════
 async function fecharCookieBanner(page) {
   try {
-    // Tenta fechar cookie consent (vários seletores comuns)
+    // MÉTODO 1: Seletores específicos do privacytools (VTEX)
+    const seletoresPrivacyTools = [
+      '#privacytools-banner-consent button[class*="accept"]',
+      '#privacytools-banner-consent button:has-text("Aceitar")',
+      '#privacytools-banner-consent .privacy-tools-accept',
+      '.privacy-tools-layout button[class*="accept"]',
+      '.privacy-tools-layout button:first-child',
+      '#privacytools-banner button',
+    ];
+    
+    for (const seletor of seletoresPrivacyTools) {
+      try {
+        const btn = page.locator(seletor).first();
+        if (await btn.count() > 0 && await btn.isVisible({ timeout: 1000 })) {
+          await btn.click({ force: true, timeout: 3000 });
+          console.log(`   🍪 Cookie banner fechado (privacytools: ${seletor})`);
+          await page.waitForTimeout(500);
+          return true;
+        }
+      } catch (e) {}
+    }
+
+    // MÉTODO 2: Seletores genéricos
     const cookieSelectors = [
-      '#privacytools-banner-consent button',
+      'button:has-text("Aceitar todos")',
+      'button:has-text("Aceitar Todos")',
+      'button:has-text("Aceitar")',
       '.cc-dismiss',
       '.cc-btn',
+      '#onetrust-accept-btn-handler',
       'button[aria-label*="cookie"]',
       'button[aria-label*="aceitar"]',
-      'button:has-text("Aceitar")',
       'button:has-text("OK")',
       'button:has-text("Concordo")',
       'button:has-text("Entendi")',
-      '.privacy-tools-layout button',
-      '#cookieconsent button'
+      '#cookieconsent button',
+      '[class*="lgpd"] button',
+      '[class*="consent"] button'
     ];
-    
+
     for (const sel of cookieSelectors) {
       try {
         const btn = page.locator(sel).first();
@@ -127,22 +204,56 @@ async function fecharCookieBanner(page) {
           await btn.click({ force: true });
           console.log(`   🍪 Cookie banner fechado (${sel})`);
           await page.waitForTimeout(500);
-          break;
+          return true;
         }
       } catch (e) {}
     }
+
+    // MÉTODO 3: JavaScript fallback
+    const clicouJS = await page.evaluate(() => {
+      const seletores = [
+        '#privacytools-banner-consent button',
+        '[class*="cookie"] button',
+        '[class*="lgpd"] button',
+        '[class*="consent"] button',
+      ];
+      
+      for (const sel of seletores) {
+        const btns = document.querySelectorAll(sel);
+        for (const btn of btns) {
+          const texto = btn.textContent?.toLowerCase() || '';
+          if (texto.includes('aceitar') || texto.includes('accept') || texto.includes('concordo')) {
+            btn.click();
+            return true;
+          }
+        }
+        if (btns.length > 0) {
+          btns[0].click();
+          return true;
+        }
+      }
+      return false;
+    });
     
-    // Remove overlay via JavaScript se persistir
+    if (clicouJS) {
+      console.log('   🍪 Cookie banner fechado via JavaScript');
+      await page.waitForTimeout(500);
+      return true;
+    }
+
+    // MÉTODO 4: Remove overlay via JavaScript se persistir
     await page.evaluate(() => {
-      const overlays = document.querySelectorAll('#privacytools-banner-consent, .cc-window, [class*="cookie"], [id*="cookie"], .privacy-tools-layout');
+      const overlays = document.querySelectorAll('#privacytools-banner-consent, .cc-window, [class*="cookie-banner"], [class*="lgpd-banner"], .privacy-tools-layout');
       overlays.forEach(el => {
         el.style.display = 'none';
         el.remove();
       });
     });
-    
+
+    return false;
   } catch (e) {
     // Ignora erros - cookie banner é opcional
+    return false;
   }
 }
 
@@ -151,10 +262,33 @@ async function fecharCookieBanner(page) {
 // ═══════════════════════════════════════════════════════════════════════════
 async function fecharTodosOverlays(page) {
   try {
-    // 1) REMOVE TUDO via JavaScript (mais confiável - não depende de clique)
+    // 1) ACEITA COOKIES PRIMEIRO (antes de remover elementos)
+    // Tenta aceitar via clique direto nos seletores mais comuns
+    const seletoresCookies = [
+      '#privacytools-banner-consent button[class*="accept"]',
+      '#privacytools-banner-consent button:has-text("Aceitar")',
+      '.privacy-tools-layout button:first-child',
+      'button:has-text("Aceitar todos")',
+      'button:has-text("Aceitar Todos")',
+      'button:has-text("Aceitar")',
+    ];
+    
+    for (const sel of seletoresCookies) {
+      try {
+        const btn = page.locator(sel).first();
+        if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
+          await btn.click({ force: true });
+          console.log('   🍪 Cookies aceitos');
+          await page.waitForTimeout(500);
+          break;
+        }
+      } catch (e) {}
+    }
+    
+    // 2) REMOVE TUDO via JavaScript (mais confiável - não depende de clique)
     const removidos = await page.evaluate(() => {
       let count = 0;
-      
+
       // Remove popup "baixar guia do curso" e seus backdrops
       const popupSelectors = [
         '[class*="sectionContactFormNewsDownloadForm"]',
@@ -165,7 +299,7 @@ async function fecharTodosOverlays(page) {
       popupSelectors.forEach(sel => {
         document.querySelectorAll(sel).forEach(el => { el.remove(); count++; });
       });
-      
+
       // Remove qualquer overlay/backdrop fixo que cubra a tela
       document.querySelectorAll('[class*="Backdrop"], [class*="backdrop"], [class*="overlay"]').forEach(el => {
         const style = window.getComputedStyle(el);
@@ -175,38 +309,29 @@ async function fecharTodosOverlays(page) {
           }
         }
       });
-      
-      // Remove cookie banners
-      document.querySelectorAll('.cc-banner, #privacytools-banner-consent, [id*="cookie"], [class*="cookie-consent"], [class*="lgpd"]').forEach(el => { el.remove(); count++; });
-      
+
+      // Remove cookie banners que ainda persistem
+      document.querySelectorAll('.cc-banner, #privacytools-banner-consent, [class*="cookie-banner"], [class*="cookie-consent"], [class*="lgpd-banner"]').forEach(el => { el.remove(); count++; });
+
       // Remove modais genéricos que bloqueiam
       document.querySelectorAll('.modal-backdrop, .ui-widget-overlay').forEach(el => { el.remove(); count++; });
-      
+
       return count;
     });
-    
+
     if (removidos > 0) {
       console.log(`   🧹 ${removidos} overlay(s)/popup(s) removido(s) via JS`);
     }
-    
-    // 2) Aceita cookies se o botão ainda existir (renderizado após remoção)
-    await page.waitForTimeout(300);
-    const btnCookies = page.locator('button:has-text("Aceitar todos")').first();
-    if (await btnCookies.isVisible({ timeout: 500 }).catch(() => false)) {
-      await btnCookies.click();
-      await page.waitForTimeout(300);
-      console.log('   🍪 Cookies aceitos');
-    }
-    
+
     // 3) Escape para fechar qualquer coisa residual
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
-    
+
     // 4) Segunda passada de remoção (popups podem reaparecer após scroll)
     await page.evaluate(() => {
       document.querySelectorAll('[class*="sectionContactFormNewsDownloadForm"], [class*="DownloadForm"]').forEach(el => el.remove());
     });
-    
+
   } catch (e) {
     // Silencioso
   }
@@ -295,6 +420,10 @@ async function detectarTelaAtual(page) {
   return estado;
 }
 
+// Polo solicitado (precisa ser obtido antes de CLIENTE para ajustar cidade)
+const poloSolicitado = normalizarPolo(corrigirEncoding(process.env.CLIENTE_POLO || ''));
+const cidadePadrao = corrigirEncoding(process.env.CLIENTE_CIDADE || '');
+
 const CLIENTE = {
   nome: capitalizarNome(corrigirEncoding(process.env.CLIENTE_NOME || '')),
   cpf: process.env.CLIENTE_CPF || '',
@@ -304,7 +433,8 @@ const CLIENTE = {
   cep: process.env.CLIENTE_CEP || '',
   numero: process.env.CLIENTE_NUMERO || String(Math.floor(Math.random() * 999) + 1),
   estado: corrigirEncoding(process.env.CLIENTE_ESTADO || ''),
-  cidade: corrigirEncoding(process.env.CLIENTE_CIDADE || ''),
+  // Cidade ajustada automaticamente para polos específicos (Capivari, Itapira, Taboão)
+  cidade: obterCidadeDoPolo(poloSolicitado, cidadePadrao),
   curso: corrigirEncoding(process.env.CLIENTE_CURSO || ''),
   // Duração: só o número (sem "meses"). Ex: "9 meses" → "9", "9" → "9"
   duracao: (() => {
@@ -317,7 +447,7 @@ const CLIENTE = {
     const matchDur = cursoNome.match(/(\d+)\s*meses?/i);
     return matchDur ? matchDur[1] : '';
   })(),
-  polo: normalizarPolo(corrigirEncoding(process.env.CLIENTE_POLO || '')),
+  polo: poloSolicitado,
   campanha: corrigirEncoding(process.env.CLIENTE_CAMPANHA || ''),
   // Limpa R$, espaços e vírgulas dos valores monetários para garantir que parseFloat funcione
   matricula: (process.env.CLIENTE_MATRICULA || '').replace(/[R$\s]/g, '').replace(',', '.').trim(),
@@ -390,6 +520,35 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log(`   Matrícula esperada: R$ ${CLIENTE.matricula},00`);
   console.log(`   Mensalidade esperada: R$ ${CLIENTE.mensalidade},00`);
   console.log('');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VALIDAÇÃO DE POLO - Rejeita polos inválidos antes de iniciar
+  // ═══════════════════════════════════════════════════════════════════════════
+  const polosInvalidos = [
+    'polo mais próximo',
+    'polo mais proximo', 
+    'mais próximo',
+    'mais proximo',
+    'selecione',
+    'selecionar',
+    'escolha',
+    'nenhum',
+    'n/a',
+    ''
+  ];
+  
+  const poloLower = (CLIENTE.polo || '').toLowerCase().trim();
+  if (polosInvalidos.some(inv => poloLower === inv || poloLower.includes('mais próximo') || poloLower.includes('mais proximo'))) {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log('❌ ERRO: POLO INVÁLIDO');
+    console.log(`   Polo informado: "${CLIENTE.polo}"`);
+    console.log('   O polo deve ser um nome específico de polo válido.');
+    console.log('   Exemplos válidos: "barra funda", "ibirapuera", "vila mariana"');
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log('');
+    throw new Error(`POLO_INVALIDO: O polo "${CLIENTE.polo}" não é válido. Informe um polo específico.`);
+  }
 
   let numeroInscricao = null;
   let pdfBoletoBuffer = null; // Para capturar o PDF via listener passivo
@@ -1167,25 +1326,53 @@ test('inscricao-pos', async ({ page, context }) => {
   // Limpa overlays mais uma vez após scroll (o popup pode reaparecer)
   await fecharTodosOverlays(page);
   
-  // PREENCHER NOME - múltiplas estratégias
-  console.log('   📝 Preenchendo nome...');
+  // PREENCHER NOME DO CANDIDATO - múltiplas estratégias
+  // IMPORTANTE: Evitar campos de "nome da mãe", "nome do pai", "nome do responsável"
+  console.log('   📝 Preenchendo nome do candidato...');
   let nomePreenchido = false;
   
-  // Estratégia 1: Seletores específicos
+  // Função para verificar se é campo de nome de parente (mãe, pai, responsável)
+  const ehCampoParente = async (campo) => {
+    try {
+      const placeholder = (await campo.getAttribute('placeholder') || '').toLowerCase();
+      const name = (await campo.getAttribute('name') || '').toLowerCase();
+      const id = (await campo.getAttribute('id') || '').toLowerCase();
+      const ariaLabel = (await campo.getAttribute('aria-label') || '').toLowerCase();
+      
+      const termosExcluir = ['mãe', 'mae', 'pai', 'mother', 'father', 'responsavel', 'responsável', 'parent'];
+      for (const termo of termosExcluir) {
+        if (placeholder.includes(termo) || name.includes(termo) || id.includes(termo) || ariaLabel.includes(termo)) {
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+  
+  // Estratégia 1: Seletores específicos (EXCLUINDO campos de parentes)
   const seletoresNome = [
-    'input[placeholder*="nome completo" i]',
+    'input[placeholder*="nome completo" i]:not([placeholder*="mãe" i]):not([placeholder*="mae" i]):not([placeholder*="pai" i])',
     'input[name="userName"]',
-    'input[name="nomecompleto"]',
-    'input[name="name"]',
+    'input[name="nomecompleto"]:not([name*="mae"]):not([name*="mãe"])',
+    'input[name="name"]:not([name*="mother"]):not([name*="father"])',
     '[class*="userName"] input',
-    '[class*="nome"] input',
+    '[class*="nome"] input:not([class*="mae"]):not([class*="mãe"])',
+    'input[placeholder*="nome" i]:not([placeholder*="mãe" i]):not([placeholder*="mae" i]):not([placeholder*="pai" i])',
   ];
   
   for (const seletor of seletoresNome) {
     try {
       const campo = page.locator(seletor).first();
       if (await campo.isVisible({ timeout: 2000 })) {
-        console.log(`   📍 Campo nome encontrado: ${seletor}`);
+        // Verificação adicional: garantir que não é campo de parente
+        if (await ehCampoParente(campo)) {
+          console.log(`   ⚠️ Seletor ${seletor} retornou campo de parente, pulando...`);
+          continue;
+        }
+        
+        console.log(`   📍 Campo nome do candidato encontrado: ${seletor}`);
         
         // Clica no campo
         await campo.click();
@@ -1200,7 +1387,7 @@ test('inscricao-pos', async ({ page, context }) => {
         // Verifica se preencheu
         const valor = await campo.inputValue();
         if (valor && valor.length > 0) {
-          console.log(`   ✅ Nome preenchido: "${valor}"`);
+          console.log(`   ✅ Nome do candidato preenchido: "${valor}"`);
           nomePreenchido = true;
           break;
         }
@@ -1210,38 +1397,48 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   }
   
-  // Estratégia 2: getByRole
+  // Estratégia 2: getByRole com nome específico (EXCLUINDO "mãe")
   if (!nomePreenchido) {
     try {
-      const campoNome = page.getByRole('textbox', { name: /nome/i }).first();
-      if (await campoNome.isVisible({ timeout: 2000 })) {
-        await campoNome.click();
-        await campoNome.fill(CLIENTE.nome);
-        console.log(`   ✅ Nome preenchido via getByRole: "${CLIENTE.nome}"`);
-        nomePreenchido = true;
-      }
-    } catch (e) {}
-  }
-  
-  // Estratégia 3: Procura por label
-  if (!nomePreenchido) {
-    try {
-      const labelNome = page.locator('label').filter({ hasText: /nome/i }).first();
-      if (await labelNome.isVisible({ timeout: 2000 })) {
-        const forId = await labelNome.getAttribute('for');
-        if (forId) {
-          const campo = page.locator(`#${forId}`);
-          await campo.click();
-          await campo.fill(CLIENTE.nome);
-          console.log(`   ✅ Nome preenchido via label: "${CLIENTE.nome}"`);
+      // Busca campos com "nome" mas exclui os que contêm "mãe"
+      const campoNomeCompleto = page.getByRole('textbox', { name: /nome completo/i }).first();
+      if (await campoNomeCompleto.isVisible({ timeout: 2000 })) {
+        if (!(await ehCampoParente(campoNomeCompleto))) {
+          await campoNomeCompleto.click();
+          await campoNomeCompleto.fill(CLIENTE.nome);
+          console.log(`   ✅ Nome do candidato preenchido via getByRole: "${CLIENTE.nome}"`);
           nomePreenchido = true;
         }
       }
     } catch (e) {}
   }
   
+  // Estratégia 3: Procura por label específico (APENAS "Nome completo" ou "Nome do aluno")
   if (!nomePreenchido) {
-    console.log('   ⚠️ Não conseguiu preencher o nome!');
+    try {
+      // Labels específicos que indicam nome do candidato (não de parente)
+      const labelsPermitidos = ['nome completo', 'nome do aluno', 'nome do candidato', 'seu nome'];
+      for (const labelTexto of labelsPermitidos) {
+        const labelNome = page.locator('label').filter({ hasText: new RegExp(`^${labelTexto}`, 'i') }).first();
+        if (await labelNome.isVisible({ timeout: 1000 }).catch(() => false)) {
+          const forId = await labelNome.getAttribute('for');
+          if (forId) {
+            const campo = page.locator(`#${forId}`);
+            if (!(await ehCampoParente(campo))) {
+              await campo.click();
+              await campo.fill(CLIENTE.nome);
+              console.log(`   ✅ Nome do candidato preenchido via label "${labelTexto}": "${CLIENTE.nome}"`);
+              nomePreenchido = true;
+              break;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+  
+  if (!nomePreenchido) {
+    console.log('   ⚠️ Não conseguiu preencher o nome do candidato!');
     await page.screenshot({ path: 'erro-nome-pos.png', fullPage: true });
   }
   
@@ -3788,8 +3985,12 @@ test('inscricao-pos', async ({ page, context }) => {
         const nomeErro = CLIENTE.nome.split(' ')[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         const cpf3Erro = CLIENTE.cpf.replace(/\D/g, '').substring(0, 3);
         const screenshotErroPath = `erro-${nomeErro}-${cpf3Erro}-${timestampErro}.png`;
-        await siaaPage.screenshot({ path: screenshotErroPath, fullPage: true });
-        console.log(`   ✅ Screenshot de erro salvo: ${screenshotErroPath}`);
+        try {
+          await siaaPage.screenshot({ path: screenshotErroPath, fullPage: true, timeout: 15000 });
+          console.log(`   ✅ Screenshot de erro salvo: ${screenshotErroPath}`);
+        } catch (screenshotErr) {
+          console.log(`   ⚠️ Screenshot falhou (fontes): ${screenshotErr.message}`);
+        }
         
         // Marca que não há resultados disponíveis (para retornar 200 com o erro)
         resultadosDisponiveis = false;
@@ -3935,7 +4136,11 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   } catch (e) {
     console.log(`   ⚠️ Erro ao processar modal: ${e.message}`);
-    await siaaPage.screenshot({ path: `erro-modal-${Date.now()}.png`, fullPage: true });
+    try {
+      await siaaPage.screenshot({ path: `erro-modal-${Date.now()}.png`, fullPage: true, timeout: 15000 });
+    } catch (screenshotErr) {
+      console.log(`   ⚠️ Screenshot modal falhou: ${screenshotErr.message}`);
+    }
   }
   
   // Verifica se está na página de aprovação
@@ -4032,11 +4237,22 @@ test('inscricao-pos', async ({ page, context }) => {
       }
       
       // Captura screenshot
-      await siaaPage.screenshot({ 
-        path: screenshotPath, 
-        clip: clipArea
-      });
-      console.log(`   ✅ Screenshot aprovação salvo: ${screenshotPath}`);
+      try {
+        await siaaPage.screenshot({ 
+          path: screenshotPath, 
+          clip: clipArea,
+          timeout: 15000
+        });
+        console.log(`   ✅ Screenshot aprovação salvo: ${screenshotPath}`);
+      } catch (screenshotErr) {
+        console.log(`   ⚠️ Screenshot com clip falhou, tentando fullPage...`);
+        try {
+          await siaaPage.screenshot({ path: screenshotPath, fullPage: false, timeout: 15000 });
+          console.log(`   ✅ Screenshot aprovação (fallback) salvo: ${screenshotPath}`);
+        } catch (screenshotErr2) {
+          console.log(`   ⚠️ Screenshot falhou completamente: ${screenshotErr2.message}`);
+        }
+      }
       
       // Extrai informações da aprovação
       const infoAprovacao = await siaaPage.locator('text=NOME:').first().textContent().catch(() => '');
@@ -4085,7 +4301,11 @@ test('inscricao-pos', async ({ page, context }) => {
       
     } else {
       console.log('   ⚠️ Texto "Parabéns" não encontrado, capturando tela atual...');
-      await siaaPage.screenshot({ path: screenshotPath, fullPage: false });
+      try {
+        await siaaPage.screenshot({ path: screenshotPath, fullPage: false, timeout: 15000 });
+      } catch (screenshotErr) {
+        console.log(`   ⚠️ Screenshot falhou (fontes não carregaram): ${screenshotErr.message}`);
+      }
       
       // Se não há resultados após retries, pula a geração do boleto
       if (!resultadosDisponiveis) {
@@ -4095,16 +4315,37 @@ test('inscricao-pos', async ({ page, context }) => {
         console.log('');
         
         // ═══════════════════════════════════════════════════════════════════════════
-        // RESUMO FINAL - SIAA NÃO VINCULADO (NÃO é sucesso)
+        // RESUMO FINAL - SIAA NÃO VINCULADO (é SUCESSO se tem número de inscrição!)
         // ═══════════════════════════════════════════════════════════════════════════
+        const temNumeroInscricaoSiaa = numeroInscricao && numeroInscricao.trim() !== '';
+        const statusInscricaoSiaa = temNumeroInscricaoSiaa 
+          ? 'INSCRICAO_POS_SUCESSO_SIAA_PENDENTE' 
+          : 'INSCRICAO_POS_ERRO';
+        const statusDescricaoSiaa = temNumeroInscricaoSiaa
+          ? 'Inscrição concluída (SIAA aguardando sincronização - boleto/cartão disponível posteriormente)'
+          : 'Inscrição NÃO foi concluída - sem número de inscrição';
+        
         console.log('═══════════════════════════════════════════════════════════════════════════');
-        console.log('⚠️ INSCRICAO_SIAA_NAO_VINCULADA');
+        console.log(`🎯 STATUS: ${statusInscricaoSiaa}`);
+        console.log(`📋 ${statusDescricaoSiaa}`);
         console.log('═══════════════════════════════════════════════════════════════════════════');
-        console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
+        console.log(`📋 Número de Inscrição: ${numeroInscricao || 'NÃO GERADO'}`);
         console.log(`📋 CPF: ${CLIENTE.cpf}`);
-        console.log(`📋 Status SIAA: Não vinculada`);
+        console.log(`📋 Nome: ${CLIENTE.nome}`);
+        console.log(`📋 Email: ${CLIENTE.email}`);
+        console.log(`📋 Curso: ${CLIENTE.curso}`);
+        console.log(`📋 Campanha: ${CLIENTE.campanha}`);
+        console.log(`📋 Status SIAA: Aguardando sincronização`);
         console.log(`📸 Screenshot aprovação: ${screenshotFilename}`);
-        console.log('📋 Boleto: Não disponível');
+        console.log(`📄 Boleto: NÃO GERADO (SIAA pendente)`);
+        console.log(`💳 Link Cartão de Crédito: NÃO GERADO (SIAA pendente)`);
+        console.log('───────────────────────────────────────────────────────────────────────────');
+        // Outputs estruturados para o N8N parsear
+        console.log(`STATUS_INSCRICAO: ${statusInscricaoSiaa}`);
+        console.log(`NUMERO_INSCRICAO: ${numeroInscricao || ''}`);
+        console.log(`BOLETO_GERADO: NAO`);
+        console.log(`LINK_CARTAO_GERADO: NAO`);
+        console.log(`SIAA_STATUS: AGUARDANDO_SINCRONIZACAO`);
         console.log('═══════════════════════════════════════════════════════════════════════════');
         console.log('');
         
@@ -4127,7 +4368,10 @@ test('inscricao-pos', async ({ page, context }) => {
             formData.append('email', CLIENTE.email);
             formData.append('curso', CLIENTE.curso);
             formData.append('campanha', CLIENTE.campanha || '');
+            formData.append('status_inscricao', statusInscricaoSiaa);
             formData.append('status_siaa', 'aguardando_sincronizacao');
+            formData.append('boleto_gerado', 'NAO');
+            formData.append('link_cartao_gerado', 'NAO');
             
             if (fs.existsSync(screenshotPath)) {
               formData.append('screenshot', fs.createReadStream(screenshotPath));
@@ -4148,12 +4392,22 @@ test('inscricao-pos', async ({ page, context }) => {
         }
         
         console.log('✅ ETAPA 15 CONCLUÍDA');
-        return; // Encerra o teste aqui quando SIAA não tem resultados
+        
+        // Se a inscrição não foi concluída, lança erro
+        if (!temNumeroInscricaoSiaa) {
+          throw new Error(`INSCRICAO_POS_ERRO: Inscrição não foi concluída - sem número de inscrição`);
+        }
+        
+        return; // Encerra o teste aqui quando SIAA não tem resultados (mas inscrição OK)
       }
     }
   } catch (e) {
     console.log(`   ⚠️ Erro ao capturar aprovação: ${e.message}`);
-    await siaaPage.screenshot({ path: screenshotPath, fullPage: false });
+    try {
+      await siaaPage.screenshot({ path: screenshotPath, fullPage: false, timeout: 15000 });
+    } catch (screenshotErr) {
+      console.log(`   ⚠️ Screenshot de fallback também falhou: ${screenshotErr.message}`);
+    }
   }
   
   console.log('   📝 Preparando para gerar boleto...');
@@ -4299,8 +4553,9 @@ test('inscricao-pos', async ({ page, context }) => {
     } else {
       console.log('   ⚠️ Botão "Cartão de Crédito" não encontrado na página SIAA');
       // Debug: screenshot para análise
-      await siaaPage.screenshot({ path: 'debug-cartao-nao-encontrado.png', fullPage: true });
-      // debug screenshot salvo silenciosamente
+      try {
+        await siaaPage.screenshot({ path: 'debug-cartao-nao-encontrado.png', fullPage: true, timeout: 15000 });
+      } catch (e) {}
     }
     
     if (!linkCartaoCredito) {
@@ -4372,8 +4627,9 @@ test('inscricao-pos', async ({ page, context }) => {
     }
     
     // Screenshot de debug antes de clicar
-    await siaaPage.screenshot({ path: 'debug-antes-emitir-boleto.png', fullPage: true });
-    // debug screenshot salvo silenciosamente
+    try {
+      await siaaPage.screenshot({ path: 'debug-antes-emitir-boleto.png', fullPage: true, timeout: 15000 });
+    } catch (e) {}
     
     if (btnVisivel) {
       console.log('   📝 Clicando em "Emitir Boleto"...');
@@ -4498,8 +4754,9 @@ test('inscricao-pos', async ({ page, context }) => {
       } else {
         console.log('   ❌ Nenhum botão de boleto encontrado na página');
         // Salva screenshot para debug
-        await siaaPage.screenshot({ path: 'debug-sem-botao-boleto.png', fullPage: true });
-        // debug screenshot salvo silenciosamente
+        try {
+          await siaaPage.screenshot({ path: 'debug-sem-botao-boleto.png', fullPage: true, timeout: 15000 });
+        } catch (e) {}
       }
     }
   } catch (e) {
@@ -4507,7 +4764,7 @@ test('inscricao-pos', async ({ page, context }) => {
     console.log(`   📍 Stack: ${e.stack?.split('\n')[1] || 'N/A'}`);
     
     try {
-      await siaaPage.screenshot({ path: `erro-boleto-${timestamp}.png`, fullPage: true });
+      await siaaPage.screenshot({ path: `erro-boleto-${timestamp}.png`, fullPage: true, timeout: 15000 });
     } catch (e2) {}
   }
   
@@ -4664,7 +4921,7 @@ test('inscricao-pos', async ({ page, context }) => {
         console.log(`   ✅ Boleto PDF (screenshot): ${fs.statSync(boletoPath).size} bytes`);
         boletoPdfSalvo = true;
       } else {
-        await siaaPage.screenshot({ path: boletoPath.replace('.pdf', '.png'), fullPage: true });
+        await siaaPage.screenshot({ path: boletoPath.replace('.pdf', '.png'), fullPage: true, timeout: 15000 });
         console.log(`   📸 Screenshot SIAA salvo como fallback`);
       }
     } catch (e) {
@@ -4682,21 +4939,71 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // RESUMO FINAL
+  // RESUMO FINAL - Com lógica para N8N processar corretamente
   // ═══════════════════════════════════════════════════════════════════════════
+  
+  // Verifica o que foi gerado
+  const temBoleto = boletoPdfSalvo && fs.existsSync(boletoPath);
+  const temLinkCartao = linkCartaoCredito && linkCartaoCredito.trim() !== '';
+  const temNumeroInscricao = numeroInscricao && numeroInscricao.trim() !== '';
+  
+  // Determina o status baseado no que foi gerado
+  let statusInscricao = '';
+  let statusDescricao = '';
+  
+  if (temNumeroInscricao) {
+    // Inscrição foi concluída - NÃO é erro!
+    if (temBoleto && temLinkCartao) {
+      statusInscricao = 'INSCRICAO_POS_SUCESSO_COMPLETO';
+      statusDescricao = 'Inscrição concluída com boleto E link do cartão';
+    } else if (temBoleto && !temLinkCartao) {
+      statusInscricao = 'INSCRICAO_POS_SUCESSO_BOLETO';
+      statusDescricao = 'Inscrição concluída com boleto (sem link do cartão)';
+    } else if (!temBoleto && temLinkCartao) {
+      statusInscricao = 'INSCRICAO_POS_SUCESSO_CARTAO';
+      statusDescricao = 'Inscrição concluída com link do cartão (sem boleto)';
+    } else {
+      // Nenhum dos dois foi gerado, mas inscrição OK
+      statusInscricao = 'INSCRICAO_POS_SUCESSO_SEM_PAGAMENTO';
+      statusDescricao = 'Inscrição concluída (boleto e cartão não gerados - usar link manual)';
+    }
+  } else {
+    // Inscrição NÃO foi concluída - ERRO!
+    statusInscricao = 'INSCRICAO_POS_ERRO';
+    statusDescricao = 'Inscrição NÃO foi concluída (sem número de inscrição)';
+  }
+  
   console.log('═══════════════════════════════════════════════════════════════════════════');
-  console.log('🎉 PROCESSO COMPLETO DE INSCRIÇÃO PÓS-GRADUAÇÃO');
+  console.log(`🎯 STATUS: ${statusInscricao}`);
+  console.log(`📋 ${statusDescricao}`);
   console.log('═══════════════════════════════════════════════════════════════════════════');
-  console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
+  console.log(`📋 Número de Inscrição: ${numeroInscricao || 'NÃO GERADO'}`);
   console.log(`📋 CPF: ${CLIENTE.cpf}`);
+  console.log(`📋 Nome: ${CLIENTE.nome}`);
+  console.log(`📋 Email: ${CLIENTE.email}`);
+  console.log(`📋 Curso: ${CLIENTE.curso}`);
   console.log(`📋 Campanha: ${CLIENTE.campanha}`);
   console.log(`📸 Screenshot aprovação: ${screenshotFilename}`);
-  console.log(`📄 Boleto: ${boletoFilename}`);
-  if (linkCartaoCredito) {
-    console.log(`💳 Link Cartão de Crédito: ${linkCartaoCredito}`);
+  console.log(`📄 Boleto: ${temBoleto ? boletoFilename : 'NÃO GERADO'}`);
+  console.log(`💳 Link Cartão de Crédito: ${temLinkCartao ? linkCartaoCredito : 'NÃO GERADO'}`);
+  console.log('───────────────────────────────────────────────────────────────────────────');
+  // Outputs estruturados para o N8N parsear
+  console.log(`STATUS_INSCRICAO: ${statusInscricao}`);
+  console.log(`NUMERO_INSCRICAO: ${numeroInscricao || ''}`);
+  console.log(`BOLETO_GERADO: ${temBoleto ? 'SIM' : 'NAO'}`);
+  console.log(`LINK_CARTAO_GERADO: ${temLinkCartao ? 'SIM' : 'NAO'}`);
+  if (temLinkCartao) {
     console.log(`LINK_CARTAO_CREDITO: ${linkCartaoCredito}`);
   }
+  if (linhaDigitavel) {
+    console.log(`LINHA_DIGITAVEL: ${linhaDigitavel}`);
+  }
   console.log('═══════════════════════════════════════════════════════════════════════════');
+  
+  // Se a inscrição não foi concluída, lança erro para o Playwright reportar falha
+  if (!temNumeroInscricao) {
+    throw new Error(`INSCRICAO_POS_ERRO: Inscrição não foi concluída - sem número de inscrição`);
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 15: ENVIAR ARQUIVOS PARA N8N/WEBHOOK
