@@ -1917,9 +1917,19 @@ test('inscricao-pos', async ({ page, context }) => {
     await selecionarReactSelect(page, 1, 'são pau', 'São Paulo', 'Estado');
     await page.waitForTimeout(1500);
     
-    // 3. CIDADE
+    // 3. CIDADE - Usa termo de busca baseado na cidade (Capivari, Itapira, Taboão ou São Paulo)
     console.log(`   📝 Selecionando Cidade: ${CLIENTE.cidade}...`);
-    await selecionarReactSelect(page, 2, 'são pa', CLIENTE.cidade, 'Cidade');
+    // Determina o termo de busca correto baseado na cidade
+    let termoBuscaCidade = 'são pa'; // padrão para São Paulo
+    if (CLIENTE.cidade && CLIENTE.cidade.toLowerCase().includes('capivari')) {
+      termoBuscaCidade = 'capiv';
+    } else if (CLIENTE.cidade && CLIENTE.cidade.toLowerCase().includes('itapira')) {
+      termoBuscaCidade = 'itapi';
+    } else if (CLIENTE.cidade && CLIENTE.cidade.toLowerCase().includes('tabo')) {
+      termoBuscaCidade = 'taboa';
+    }
+    console.log(`   📍 Termo de busca cidade: "${termoBuscaCidade}" para encontrar "${CLIENTE.cidade}"`);
+    await selecionarReactSelect(page, 2, termoBuscaCidade, CLIENTE.cidade, 'Cidade');
     await page.waitForTimeout(1500);
     
     // 4. POLO
@@ -2143,7 +2153,7 @@ test('inscricao-pos', async ({ page, context }) => {
     let selectCampanha = page.locator('.react-select__control').first();
     
     // Verifica se o dropdown existe
-    const dropdownVisivel = await selectCampanha.isVisible({ timeout: 5000 }).catch(() => false);
+    let dropdownVisivel = await selectCampanha.isVisible({ timeout: 5000 }).catch(() => false);
     console.log(`   📍 Dropdown visível: ${dropdownVisivel}`);
     
     if (!dropdownVisivel) {
@@ -2163,11 +2173,58 @@ test('inscricao-pos', async ({ page, context }) => {
         const alt = page.locator(sel).first();
         if (await alt.isVisible({ timeout: 1000 }).catch(() => false)) {
           selectCampanha = alt;
+          dropdownVisivel = true;
           console.log(`   ✅ Dropdown encontrado via: ${sel}`);
           break;
         }
       }
     }
+    
+    // Se ainda não encontrou dropdown, pode ser que campanha seja opcional ou já aplicada
+    if (!dropdownVisivel) {
+      console.log('   ⚠️ Dropdown de campanha não encontrado na página');
+      console.log('   📍 Verificando se há botão para continuar ou se podemos ir para checkout...');
+      
+      // Tenta encontrar botão "Aplicar campanha" ou "Continuar" mesmo sem dropdown
+      const botoesAvancar = [
+        page.getByRole('button', { name: /Aplicar/i }),
+        page.getByRole('button', { name: /Continuar/i }),
+        page.getByRole('button', { name: /Prosseguir/i }),
+        page.locator('button:has-text("Aplicar")').first(),
+        page.locator('button:has-text("Continuar")').first(),
+        page.locator('a:has-text("Continuar")').first(),
+      ];
+      
+      let clicouBotaoAvancar = false;
+      for (const btn of botoesAvancar) {
+        try {
+          if (await btn.isVisible({ timeout: 2000 })) {
+            await btn.scrollIntoViewIfNeeded();
+            await btn.click({ force: true });
+            console.log('   ✅ Botão para avançar encontrado e clicado');
+            clicouBotaoAvancar = true;
+            await page.waitForTimeout(3000);
+            break;
+          }
+        } catch (e) {}
+      }
+      
+      // Se não encontrou botão, tenta navegar diretamente para checkout
+      if (!clicouBotaoAvancar) {
+        console.log('   📍 Nenhum botão encontrado, tentando ir direto para checkout...');
+        try {
+          await page.goto('https://cruzeirodosul.myvtex.com/checkout/#/cart', { waitUntil: 'domcontentloaded', timeout: 15000 });
+          await page.waitForTimeout(3000);
+          console.log('   ✅ Navegou para checkout diretamente');
+        } catch (e) {
+          console.log(`   ⚠️ Erro ao navegar para checkout: ${e.message}`);
+        }
+      }
+      
+      // Pula o resto da lógica de campanha
+      console.log('✅ ETAPA 7 CONCLUÍDA (campanha pulada ou já aplicada)');
+      console.log('');
+    } else {
     
     // Tira screenshot para debug
     try {
@@ -2330,8 +2387,9 @@ test('inscricao-pos', async ({ page, context }) => {
     await page.waitForTimeout(5000);
     console.log(`   ✅ Campanha ${campanhaEscolhida} aplicada`);
   }
-  
+
   console.log('✅ ETAPA 7 CONCLUÍDA');
+  } // Fecha o else do dropdown visível
   console.log('');
   } // Fecha o else (não pulou etapa 7)
 
@@ -2475,24 +2533,64 @@ test('inscricao-pos', async ({ page, context }) => {
   
   let btnClicado = false;
   
-  // Espera o botão aparecer
+  // Espera o botão aparecer e fecha aviso de "Atenção" se existir
   await page.waitForTimeout(2000);
   
-  // PRIMEIRA PRIORIDADE: "Continuar pagamento" (gravação)
+  // Fecha aviso "Atenção" se existir (não é bloqueante, é só informativo)
   try {
-    const linkPagamento = page.getByRole('link', { name: 'Continuar pagamento Continuar' });
-    if (await linkPagamento.isVisible({ timeout: 3000 })) {
-      await linkPagamento.click();
-      console.log('   ✅ Link "Continuar pagamento" clicado');
-      btnClicado = true;
+    const fecharAviso = page.locator('.vtex-modal__close, button[aria-label="close"], .close-button').first();
+    if (await fecharAviso.isVisible({ timeout: 1000 })) {
+      await fecharAviso.click();
+      console.log('   📍 Fechou aviso informativo');
+      await page.waitForTimeout(500);
     }
   } catch (e) {}
   
-  // SEGUNDA PRIORIDADE: "Seguir para o carrinho" (página de campanha)
+  // PRIORIDADE MÁXIMA: Botão "Continuar Inscrição" na página do carrinho (com ícone de carrinho)
+  if (!btnClicado) {
+    try {
+      // Seletores específicos para a página "Meu Carrinho" / "Resumindo a inscrição"
+      const seletoresContinuarInscricao = [
+        page.locator('button:has-text("Continuar Inscrição")').first(),
+        page.locator('a:has-text("Continuar Inscrição")').first(),
+        page.getByRole('button', { name: /Continuar Inscrição/i }),
+        page.getByRole('link', { name: /Continuar Inscrição/i }),
+        page.locator('[class*="summary"] button, [class*="summary"] a').filter({ hasText: /Continuar/i }).first(),
+        page.locator('[class*="checkout-button"], [class*="checkoutButton"]').first(),
+      ];
+      
+      for (const btn of seletoresContinuarInscricao) {
+        try {
+          if (await btn.isVisible({ timeout: 2000 })) {
+            await btn.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(300);
+            await btn.click({ force: true });
+            console.log('   ✅ Botão "Continuar Inscrição" clicado (carrinho)');
+            btnClicado = true;
+            break;
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
+  
+  // SEGUNDA PRIORIDADE: "Continuar pagamento" (gravação)
+  if (!btnClicado) {
+    try {
+      const linkPagamento = page.getByRole('link', { name: 'Continuar pagamento Continuar' });
+      if (await linkPagamento.isVisible({ timeout: 2000 })) {
+        await linkPagamento.click();
+        console.log('   ✅ Link "Continuar pagamento" clicado');
+        btnClicado = true;
+      }
+    } catch (e) {}
+  }
+  
+  // TERCEIRA PRIORIDADE: "Seguir para o carrinho" (página de campanha)
   if (!btnClicado) {
     try {
       const linkCarrinho = page.locator('a:has-text("Seguir para o carrinho"), text=Seguir para o carrinho').first();
-      if (await linkCarrinho.isVisible({ timeout: 3000 })) {
+      if (await linkCarrinho.isVisible({ timeout: 2000 })) {
         await linkCarrinho.scrollIntoViewIfNeeded();
         await linkCarrinho.click({ force: true });
         console.log('   ✅ Link "Seguir para o carrinho" clicado');
@@ -2505,7 +2603,7 @@ test('inscricao-pos', async ({ page, context }) => {
   if (!btnClicado) {
     try {
       const btnVtex = page.locator('button.vtex-button, .vtex-button__label, button[class*="vtex"]').filter({ hasText: /Continuar/i }).first();
-      if (await btnVtex.isVisible({ timeout: 3000 })) {
+      if (await btnVtex.isVisible({ timeout: 2000 })) {
         await btnVtex.scrollIntoViewIfNeeded();
         await btnVtex.click({ force: true });
         console.log('   ✅ Botão Continuar clicado (via classe VTEX)');
@@ -2514,23 +2612,10 @@ test('inscricao-pos', async ({ page, context }) => {
     } catch (e) {}
   }
   
-  // Tenta pelo texto exato
-  if (!btnClicado) {
-    try {
-      const btnContinuar = page.getByRole('button', { name: /Continuar Inscrição/i });
-      if (await btnContinuar.isVisible({ timeout: 3000 })) {
-        await btnContinuar.scrollIntoViewIfNeeded();
-        await btnContinuar.click({ force: true });
-        console.log('   ✅ Botão "Continuar Inscrição" clicado');
-        btnClicado = true;
-      }
-    } catch (e) {}
-  }
-  
   // Fallback: qualquer botão que contenha "Continuar"
   if (!btnClicado) {
     try {
-      const btn = page.locator('button:has-text("Continuar")').first();
+      const btn = page.locator('button:has-text("Continuar"), a:has-text("Continuar")').first();
       if (await btn.isVisible({ timeout: 2000 })) {
         await btn.scrollIntoViewIfNeeded();
         await btn.click({ force: true });
@@ -2540,7 +2625,38 @@ test('inscricao-pos', async ({ page, context }) => {
     } catch (e) {}
   }
   
-  // Fallback: link Continuar
+  // Fallback: tenta via JavaScript
+  if (!btnClicado) {
+    try {
+      const clicouJS = await page.evaluate(() => {
+        const btns = document.querySelectorAll('button, a');
+        for (const btn of btns) {
+          const texto = (btn.textContent || '').toLowerCase();
+          if (texto.includes('continuar inscrição') || texto.includes('continuar inscricao')) {
+            btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            btn.click();
+            return true;
+          }
+        }
+        // Segunda passada: qualquer "continuar"
+        for (const btn of btns) {
+          const texto = (btn.textContent || '').toLowerCase();
+          if (texto.includes('continuar') && !texto.includes('sem')) {
+            btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            btn.click();
+            return true;
+          }
+        }
+        return false;
+      });
+      if (clicouJS) {
+        console.log('   ✅ Botão clicado via JavaScript');
+        btnClicado = true;
+      }
+    } catch (e) {}
+  }
+  
+  // Fallback final: link Continuar
   if (!btnClicado) {
     try {
       const link = page.locator('a:has-text("Continuar")').first();

@@ -64,6 +64,53 @@ function normalizarPolo(polo) {
   return polo.trim().toLowerCase() === 'sapopemba' ? 'sapopemba (vila ema)' : polo;
 }
 
+// Detecta se o polo é de Taboão da Serra (mituzi ou centro)
+function isPoloTaboao(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // Remove acentos
+  return poloNormalizado.includes('taboao') ||
+         poloNormalizado.includes('mituzi');
+}
+
+// Detecta se o polo é de Capivari
+function isPoloCapivari(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return poloNormalizado.includes('capivari');
+}
+
+// Detecta se o polo é de Itapira
+function isPoloItapira(polo) {
+  if (!polo) return false;
+  const poloNormalizado = polo.trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return poloNormalizado.includes('itapira');
+}
+
+// Retorna a cidade correta baseada no polo
+function obterCidadeDoPolo(polo, cidadePadrao) {
+  if (isPoloTaboao(polo)) {
+    return 'Taboão da Serra';
+  }
+  if (isPoloCapivari(polo)) {
+    return 'Capivari';
+  }
+  if (isPoloItapira(polo)) {
+    return 'Itapira';
+  }
+  return cidadePadrao;
+}
+
+// Retorna informação sobre ajuste de cidade para log
+function getInfoAjusteCidade(polo) {
+  if (isPoloTaboao(polo)) return ' (cidade ajustada para polo de Taboão)';
+  if (isPoloCapivari(polo)) return ' (cidade ajustada para polo de Capivari)';
+  if (isPoloItapira(polo)) return ' (cidade ajustada para polo de Itapira)';
+  return '';
+}
+
 // Função para capitalizar nome (primeira letra maiúscula de cada palavra)
 function capitalizarNome(nome) {
   return corrigirAcentos(nome).toLowerCase().split(' ').map(palavra => 
@@ -901,10 +948,12 @@ test('test-enem-sem-nota', async ({ page }) => {
     'Estado'
   );
   
-  // Cidade
+  // Cidade (ajusta automaticamente para polo de Taboão, Capivari ou Itapira)
+  const cidadeCorreta = obterCidadeDoPolo(CLIENTE.polo, CLIENTE.cidade);
+  console.log(`   📍 Cidade a selecionar: ${cidadeCorreta}${getInfoAjusteCidade(CLIENTE.polo)}`);
   await selecionarOpcao(
     page.locator('.react-select__input-container').nth(2),
-    CLIENTE.cidade,
+    cidadeCorreta,
     null,
     'Cidade'
   );
