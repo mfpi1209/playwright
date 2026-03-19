@@ -1315,6 +1315,19 @@ test('test', async ({ page }) => {
   // Aguarda carregamento antes de clicar em Inscreva-se
   await aguardarCarregandoDesaparecer();
   
+  // Remove overlays que interceptam cliques (helpCenter, chat, etc)
+  await page.evaluate(() => {
+    const seletores = [
+      '[class*="helpCenter"]', '[class*="HelpCenter"]',
+      '[class*="zendesk"]', '[class*="chat-widget"]',
+      '[class*="intercom"]', '[class*="drift"]',
+      '.cruzeirodosul-store-theme-3-x-helpCenterBgOpen'
+    ];
+    for (const sel of seletores) {
+      document.querySelectorAll(sel).forEach(el => el.remove());
+    }
+  }).catch(() => {});
+  
   // Clica em Inscreva-se
   const inscreverBtn = page.getByRole('button', { name: 'Inscreva-se' });
   await inscreverBtn.scrollIntoViewIfNeeded();
@@ -1344,8 +1357,21 @@ test('test', async ({ page }) => {
     const btnVisivel = await btnInscreva.isVisible({ timeout: 5000 }).catch(() => false);
     
     if (btnVisivel) {
+      // Remove overlays que interceptam cliques (helpCenter, chat, etc)
+      await page.evaluate(() => {
+        const seletores = [
+          '[class*="helpCenter"]', '[class*="HelpCenter"]',
+          '[class*="zendesk"]', '[class*="chat-widget"]',
+          '[class*="intercom"]', '[class*="drift"]',
+          '.cruzeirodosul-store-theme-3-x-helpCenterBgOpen'
+        ];
+        for (const sel of seletores) {
+          document.querySelectorAll(sel).forEach(el => el.remove());
+        }
+      }).catch(() => {});
+      
       await btnInscreva.scrollIntoViewIfNeeded().catch(() => {});
-      await btnInscreva.click();
+      await btnInscreva.click({ force: true });
     }
     
     await aguardarCarregamento('Formulário de inscrição', 60000);
@@ -2348,12 +2374,27 @@ test('test', async ({ page }) => {
     console.log('');
     console.log('⚠️ "Continuar Processo" não encontrado, tentando alternativas...');
     
-    // Tenta clicar em "Continuar com a compra" ou "Realizar pagamento" ou similar
+    // Remove overlays antes de tentar alternativas
+    await page.evaluate(() => {
+      const seletores = ['[class*="helpCenter"]', '[class*="HelpCenter"]', '[class*="zendesk"]',
+        '[class*="chat-widget"]', '.cruzeirodosul-store-theme-3-x-helpCenterBgOpen'];
+      for (const sel of seletores) {
+        document.querySelectorAll(sel).forEach(el => el.remove());
+      }
+    }).catch(() => {});
+    
+    // Tenta alternativas para avançar no checkout
     const botoesAlternativos = [
       page.locator('a:has-text("Continuar com a compra")').first(),
       page.locator('button:has-text("Continuar com a compra")').first(),
+      page.locator('a:has-text("Continuar Processo")').first(),
       page.locator('a:has-text("Realizar pagamento")').first(),
       page.getByRole('link', { name: /Realizar pagamento/i }),
+      page.locator('a:has-text("Finalizar compra")').first(),
+      page.locator('button:has-text("Finalizar compra")').first(),
+      page.locator('a:has-text("Continuar sem autenticação")').first(),
+      page.locator('button:has-text("Continuar sem autenticação")').first(),
+      page.locator('#payment-data-submit, #btn-go-to-payment').first(),
       page.locator('a:has-text("Continuar")').first(),
     ];
     
@@ -2363,16 +2404,47 @@ test('test', async ({ page }) => {
           const textoBtn = await btn.innerText().catch(() => 'botão');
           console.log(`   📍 Encontrou "${textoBtn.trim().substring(0, 40)}", clicando...`);
           const page1Promise = page.waitForEvent('popup', { timeout: 15000 }).catch(() => null);
-          await btn.click();
+          await btn.click({ force: true });
           novaAba = await page1Promise;
           if (novaAba) {
             console.log('   ✅ Nova aba aberta!');
           } else {
             console.log('   ℹ️ Clicou mas nova aba não abriu');
+            // Se não abriu popup, verifica se a URL mudou (pode ter sido redirect na mesma aba)
+            await page.waitForTimeout(3000);
+            const urlApos = page.url();
+            if (urlApos.includes('orderPlaced') || urlApos.includes('gatewayCallback')) {
+              console.log(`   ✅ Redirecionou para: ${urlApos}`);
+              break;
+            }
           }
           break;
         }
       } catch (e) {}
+    }
+    
+    // Último recurso: tenta via JavaScript encontrar qualquer link/botão de continuação
+    if (!novaAba) {
+      console.log('   🔧 Tentando encontrar botão via JavaScript...');
+      const jsResult = await page.evaluate(() => {
+        const alvos = ['continuar processo', 'continuar com a compra', 'finalizar compra',
+          'realizar pagamento', 'continuar sem autenticação', 'place order', 'confirmar'];
+        const elements = document.querySelectorAll('a, button, [role="button"]');
+        for (const el of elements) {
+          const texto = (el.textContent || '').toLowerCase().trim();
+          if (alvos.some(alvo => texto.includes(alvo)) && el.offsetParent !== null) {
+            el.click();
+            return texto.substring(0, 50);
+          }
+        }
+        return null;
+      }).catch(() => null);
+      
+      if (jsResult) {
+        console.log(`   ✅ Clicou via JS: "${jsResult}"`);
+        const page1Promise = page.waitForEvent('popup', { timeout: 10000 }).catch(() => null);
+        novaAba = await page1Promise;
+      }
     }
     
     if (!novaAba) {

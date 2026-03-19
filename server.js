@@ -1116,6 +1116,15 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     });
   }
 
+  if (!polo || polo.trim() === '' || polo.trim().toLowerCase() === 'indefinido') {
+    console.log(`⚠️ POLO INVÁLIDO para pós-graduação: "${polo || ''}"`);
+    return res.status(200).json({
+      sucesso: false,
+      erro: `Polo inválido ou não informado: "${polo || ''}". Informe um polo específico (ex: "barra funda", "vila mariana", "ibirapuera").`,
+      cliente: { nome, cpf, email }
+    });
+  }
+
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('📥 NOVA REQUISIÇÃO DE INSCRIÇÃO PÓS-GRADUAÇÃO (SÍNCRONA)');

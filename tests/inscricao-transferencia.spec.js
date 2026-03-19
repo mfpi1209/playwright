@@ -1231,6 +1231,19 @@ test('test', async ({ page }) => {
   // Aguarda carregamento antes de clicar em Inscreva-se
   await aguardarCarregandoDesaparecer();
   
+  // Remove overlays que interceptam cliques (helpCenter, chat, etc)
+  await page.evaluate(() => {
+    const seletores = [
+      '[class*="helpCenter"]', '[class*="HelpCenter"]',
+      '[class*="zendesk"]', '[class*="chat-widget"]',
+      '[class*="intercom"]', '[class*="drift"]',
+      '.cruzeirodosul-store-theme-3-x-helpCenterBgOpen'
+    ];
+    for (const sel of seletores) {
+      document.querySelectorAll(sel).forEach(el => el.remove());
+    }
+  }).catch(() => {});
+  
   // Clica em Inscreva-se
   const inscreverBtn = page.getByRole('button', { name: 'Inscreva-se' });
   await inscreverBtn.scrollIntoViewIfNeeded();
@@ -1260,8 +1273,21 @@ test('test', async ({ page }) => {
     const btnVisivel = await btnInscreva.isVisible({ timeout: 5000 }).catch(() => false);
     
     if (btnVisivel) {
+      // Remove overlays que interceptam cliques (helpCenter, chat, etc)
+      await page.evaluate(() => {
+        const seletores = [
+          '[class*="helpCenter"]', '[class*="HelpCenter"]',
+          '[class*="zendesk"]', '[class*="chat-widget"]',
+          '[class*="intercom"]', '[class*="drift"]',
+          '.cruzeirodosul-store-theme-3-x-helpCenterBgOpen'
+        ];
+        for (const sel of seletores) {
+          document.querySelectorAll(sel).forEach(el => el.remove());
+        }
+      }).catch(() => {});
+      
       await btnInscreva.scrollIntoViewIfNeeded().catch(() => {});
-      await btnInscreva.click();
+      await btnInscreva.click({ force: true });
     }
     
     await aguardarCarregamento('Formulário de inscrição', 60000);

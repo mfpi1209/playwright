@@ -555,23 +555,67 @@ test('test-enem-sem-nota', async ({ page }) => {
     }
   } catch (e) {}
   
-  // Clica em "Entrar como cliente"
-  const entrarComoCliente = page.getByText('Entrar como cliente').first();
-  await entrarComoCliente.waitFor({ state: 'visible', timeout: 15000 });
-  await entrarComoCliente.click({ force: true });
-  await page.waitForTimeout(2000);
+  // Clica em "Entrar como cliente" (com retry)
+  let loginClienteOk = false;
+  for (let tentLogin = 1; tentLogin <= 3; tentLogin++) {
+    console.log(`   🔄 Tentativa ${tentLogin}/3 de login do cliente...`);
+    
+    // Remove overlays que podem estar bloqueando
+    await page.evaluate(() => {
+      const seletores = ['[class*="helpCenter"]', '[class*="HelpCenter"]', '[class*="zendesk"]',
+        '[class*="chat-widget"]', '.cruzeirodosul-store-theme-3-x-helpCenterBgOpen',
+        '[class*="backdrop"]', '[class*="Backdrop"]'];
+      for (const sel of seletores) {
+        document.querySelectorAll(sel).forEach(el => el.remove());
+      }
+    }).catch(() => {});
+    
+    const entrarComoCliente = page.getByText('Entrar como cliente').first()
+      .or(page.getByRole('button', { name: /entrar como cliente/i }))
+      .or(page.getByRole('link', { name: /entrar como cliente/i }));
+    
+    try {
+      await entrarComoCliente.first().waitFor({ state: 'visible', timeout: 15000 });
+      await entrarComoCliente.first().click({ force: true });
+      console.log('   ✅ Clicou em "Entrar como cliente"');
+      await page.waitForTimeout(2000);
+      
+      // Verifica se o campo de email apareceu
+      const emailCliente = page.getByPlaceholder('Ex: example@mail.com')
+        .or(page.getByPlaceholder(/e-mail|email/i));
+      
+      if (await emailCliente.first().isVisible({ timeout: 10000 }).catch(() => false)) {
+        // Fecha modal se necessário
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(500);
+        
+        // Preenche email do cliente
+        await preencherCampo(emailCliente.first(), CLIENTE.email, 'Email cliente', false);
+        
+        // Clica em Entrar
+        await page.getByRole('button', { name: 'Entrar' }).click({ force: true });
+        await page.waitForTimeout(3000);
+        loginClienteOk = true;
+        break;
+      } else {
+        console.log('   ⚠️ Campo de email não apareceu, tentando novamente...');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(2000);
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Tentativa ${tentLogin} falhou: ${e.message.split('\n')[0]}`);
+      if (tentLogin < 3) {
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.waitForTimeout(3000);
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+        await page.waitForTimeout(3000);
+      }
+    }
+  }
   
-  // Fecha modal novamente se necessário
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
-  
-  // Preenche email do cliente
-  const emailCliente = page.getByPlaceholder('Ex: example@mail.com');
-  await preencherCampo(emailCliente, CLIENTE.email, 'Email cliente', false);
-  
-  // Clica em Entrar
-  await page.getByRole('button', { name: 'Entrar' }).click({ force: true });
-  await page.waitForTimeout(3000);
+  if (!loginClienteOk) {
+    throw new Error('Não foi possível fazer login como cliente após 3 tentativas');
+  }
   
   // Tenta clicar novamente se visível
   try {
