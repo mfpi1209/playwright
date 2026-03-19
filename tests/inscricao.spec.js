@@ -2163,82 +2163,170 @@ test('test', async ({ page }) => {
     } catch (e) {}
     
     // Verifica se precisa preencher CEP
-    const campoCep = page.getByRole('textbox', { name: 'CEP *' });
-    const cepVisivel = await campoCep.isVisible({ timeout: 2000 }).catch(() => false);
+    const seletoresCepCheckout = [
+      page.getByRole('textbox', { name: 'CEP *' }),
+      page.locator('#ship-postalCode'),
+      page.locator('input[name="postalCode"]'),
+    ];
     
-    if (cepVisivel) {
-      const cepAtual = await campoCep.inputValue().catch(() => '');
-      if (!cepAtual || cepAtual.length < 8) {
-        console.log('   📝 Preenchendo CEP...');
-        try {
-          await campoCep.click();
-          await campoCep.fill(CLIENTE.cep);
-          console.log(`   ✅ CEP: ${CLIENTE.cep}`);
-          await campoCep.press('Tab');
-          await page.waitForTimeout(3000);
-        } catch (e) {
-          console.log(`   ⚠️ Erro no CEP: ${e.message.split('\n')[0]}`);
+    let cepPreenchidoCheckout = false;
+    for (const campoCep of seletoresCepCheckout) {
+      try {
+        if (await campoCep.isVisible({ timeout: 2000 }).catch(() => false)) {
+          const cepAtual = await campoCep.inputValue().catch(() => '');
+          if (!cepAtual || cepAtual.length < 8) {
+            console.log('   📝 Preenchendo CEP...');
+            await campoCep.click();
+            await campoCep.fill(CLIENTE.cep);
+            await campoCep.press('Tab');
+            console.log(`   ✅ CEP: ${CLIENTE.cep}`);
+            cepPreenchidoCheckout = true;
+          } else {
+            console.log(`   ✅ CEP já preenchido: ${cepAtual}`);
+            cepPreenchidoCheckout = true;
+          }
+          break;
         }
+      } catch (e) {}
+    }
+    
+    // Aguarda endereço carregar após busca do CEP
+    if (cepPreenchidoCheckout) {
+      await page.waitForTimeout(4000);
+      
+      // Clica em "Calcular" se visível
+      const btnCalcCheckout = page.locator('#shipping-calculate-link, button:has-text("Calcular")').first();
+      if (await btnCalcCheckout.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log('   📝 Clicando em "Calcular"...');
+        await btnCalcCheckout.click({ force: true }).catch(() => {});
+        await page.waitForTimeout(4000);
       }
     }
     
     // Preenche campos de endereço se visíveis
     try {
-      const campoEnd = page.getByRole('textbox', { name: 'Endereço *' });
-      if (await campoEnd.isVisible({ timeout: 1000 }).catch(() => false)) {
-        const endAtual = await campoEnd.inputValue().catch(() => '');
+      const campoEnd = page.getByRole('textbox', { name: 'Endereço *' })
+        .or(page.locator('#ship-street'));
+      if (await campoEnd.first().isVisible({ timeout: 2000 }).catch(() => false)) {
+        const endAtual = await campoEnd.first().inputValue().catch(() => '');
         if (!endAtual || endAtual.trim() === '') {
-          await campoEnd.fill('Null');
+          await campoEnd.first().fill('Null');
           console.log('   ✅ Endereço: Null');
         }
       }
     } catch (e) {}
     
-    try {
-      const campoNum = page.getByRole('textbox', { name: 'Número *' });
-      if (await campoNum.isVisible({ timeout: 1000 }).catch(() => false)) {
-        const numAtual = await campoNum.inputValue().catch(() => '');
-        if (!numAtual || numAtual.trim() === '') {
-          await campoNum.fill(CLIENTE.numero);
-          console.log(`   ✅ Número: ${CLIENTE.numero}`);
-        }
+    // Preenche Número (com retry, pode demorar a aparecer)
+    const seletoresNumCheckout = [
+      page.getByRole('textbox', { name: 'Número *' }),
+      page.locator('#ship-number'),
+      page.locator('input[name="number"]'),
+      page.locator('#shipping-data input[name="number"]'),
+    ];
+    
+    let numPreenchidoCheckout = false;
+    for (let tentNum = 1; tentNum <= 3 && !numPreenchidoCheckout; tentNum++) {
+      for (const campoNum of seletoresNumCheckout) {
+        try {
+          if (await campoNum.isVisible({ timeout: 2000 }).catch(() => false)) {
+            const numAtual = await campoNum.inputValue().catch(() => '');
+            if (!numAtual || numAtual.trim() === '') {
+              await campoNum.click();
+              await campoNum.fill(CLIENTE.numero);
+              console.log(`   ✅ Número: ${CLIENTE.numero}`);
+            } else {
+              console.log(`   ✅ Número já preenchido: ${numAtual}`);
+            }
+            numPreenchidoCheckout = true;
+            break;
+          }
+        } catch (e) {}
       }
-    } catch (e) {}
+      if (!numPreenchidoCheckout && tentNum < 3) {
+        console.log(`   🔄 Campo Número não visível, aguardando (${tentNum}/3)...`);
+        await page.waitForTimeout(3000);
+      }
+    }
+    
+    // Fallback: preenche Número via API VTEX
+    if (!numPreenchidoCheckout) {
+      console.log('   📝 Tentando preencher endereço via API VTEX...');
+      const apiResult = await page.evaluate(async (dados) => {
+        try {
+          if (window.vtexjs && window.vtexjs.checkout && window.vtexjs.checkout.orderForm) {
+            const ofId = window.vtexjs.checkout.orderForm.orderFormId;
+            const addr = window.vtexjs.checkout.orderForm.shippingData?.address || {};
+            const r = await fetch(`/api/checkout/pub/orderForm/${ofId}/attachments/shippingData`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                address: { ...addr, postalCode: dados.cep, number: dados.numero, country: 'BRA' }
+              })
+            });
+            return r.ok ? 'api-ok' : `api-erro-${r.status}`;
+          }
+          return 'sem-vtexjs';
+        } catch (e) { return `erro: ${e.message}`; }
+      }, { cep: CLIENTE.cep, numero: CLIENTE.numero }).catch(() => 'evaluate-erro');
+      console.log(`   📋 Endereço via API: ${apiResult}`);
+      if (apiResult === 'api-ok') {
+        numPreenchidoCheckout = true;
+        await page.waitForTimeout(3000);
+      }
+    }
     
     try {
-      const campoBairro = page.getByRole('textbox', { name: 'Bairro *' });
-      if (await campoBairro.isVisible({ timeout: 1000 }).catch(() => false)) {
-        const bairroAtual = await campoBairro.inputValue().catch(() => '');
+      const campoBairro = page.getByRole('textbox', { name: 'Bairro *' })
+        .or(page.locator('#ship-neighborhood'));
+      if (await campoBairro.first().isVisible({ timeout: 2000 }).catch(() => false)) {
+        const bairroAtual = await campoBairro.first().inputValue().catch(() => '');
         if (!bairroAtual || bairroAtual.trim() === '') {
-          await campoBairro.fill('Centro');
+          await campoBairro.first().fill('Centro');
           console.log('   ✅ Bairro: Centro');
         }
       }
     } catch (e) {}
     
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
     
     // Avança para pagamento
     const seletoresAvancar = [
+      page.locator('#btn-go-to-payment-wrapper button, #btn-go-to-payment'),
       page.locator('button:has-text("Ir para o pagamento")'),
       page.getByRole('button', { name: /Ir para o pagamento/i }),
       page.locator('button:has-text("Continuar Inscrição")'),
       page.locator('button:has-text("Ir para o Endereço")'),
       page.locator('button:has-text("Prosseguir")'),
+      page.locator('#go-to-payment'),
     ];
     
+    let clicouAvancarShipping = false;
     for (const btn of seletoresAvancar) {
       try {
-        if (await btn.isVisible({ timeout: 1500 })) {
-          const textoBtn = await btn.innerText().catch(() => '');
+        if (await btn.first().isVisible({ timeout: 2000 })) {
+          const textoBtn = await btn.first().innerText().catch(() => '');
           console.log(`   📍 Clicando "${textoBtn.trim().substring(0, 40)}"...`);
-          await btn.scrollIntoViewIfNeeded().catch(() => {});
-          await btn.click({ force: true });
+          await btn.first().scrollIntoViewIfNeeded().catch(() => {});
+          await btn.first().click({ force: true });
           console.log('   ✅ Clicou!');
+          clicouAvancarShipping = true;
           await page.waitForTimeout(3000);
           break;
         }
       } catch (e) {}
+    }
+    
+    // Fallback: avança via JavaScript/hash
+    if (!clicouAvancarShipping) {
+      console.log('   📝 Botão não encontrado, tentando avançar via JS...');
+      await page.evaluate(() => {
+        const btn = document.querySelector('#btn-go-to-payment-wrapper button') ||
+                    document.querySelector('#btn-go-to-payment') ||
+                    document.querySelector('#go-to-payment');
+        if (btn) { btn.click(); return; }
+        window.location.hash = '#/payment';
+      }).catch(() => {});
+      await page.waitForTimeout(3000);
     }
   }
   
@@ -2249,12 +2337,20 @@ test('test', async ({ page }) => {
   console.log(`   📍 Step antes de pagamento: ${stepAtual}`);
   
   // Se ainda está preso em profile/shipping após tudo isso, faz refresh e tenta novamente
-  if (stepAtual === 'profile' && tentativaCheckout < MAX_TENTATIVAS_CHECKOUT_TOTAL) {
-    console.log(`   ❌ Ainda preso em #/profile. Fazendo refresh para tentar novamente...`);
+  if ((stepAtual === 'profile' || stepAtual === 'shipping') && tentativaCheckout < MAX_TENTATIVAS_CHECKOUT_TOTAL) {
+    console.log(`   ❌ Ainda preso em #/${stepAtual}. Fazendo refresh para tentar novamente...`);
     await page.screenshot({ path: `debug-checkout-stuck-t${tentativaCheckout}.png`, fullPage: true }).catch(() => {});
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-    await page.waitForTimeout(5000);
-    continue; // Volta para o início do loop
+    // Tenta navegar direto para payment antes de dar refresh
+    await page.evaluate(() => { window.location.hash = '#/payment'; }).catch(() => {});
+    await page.waitForTimeout(3000);
+    stepAtual = await detectarStepCheckout();
+    if (stepAtual === 'payment') {
+      console.log('   ✅ Conseguiu navegar para payment via hash!');
+    } else {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      await page.waitForTimeout(5000);
+      continue;
+    }
   }
   
   console.log('📌 CHECKOUT: Página de Pagamento...');
