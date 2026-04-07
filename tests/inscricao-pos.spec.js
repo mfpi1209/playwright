@@ -745,128 +745,204 @@ test('inscricao-pos', async ({ page, context }) => {
   // ETAPA 3: LOGIN CLIENTE
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 3: Login como Cliente');
-  
-  await fecharModais(page);
-  
-  try {
-    const cookieBanner = page.locator('text=Aceitar todos, text=Aceitar cookies, button:has-text("Aceitar")').first();
-    if (await cookieBanner.isVisible({ timeout: 3000 })) {
-      await cookieBanner.click();
-      await page.waitForTimeout(1000);
+
+  // Função para remover TODOS os overlays/banners que bloqueiam cliques na página
+  async function limparTelaCompleta() {
+    try {
+      const removidos = await page.evaluate(() => {
+        let count = 0;
+        // Cookie banners (privacytools/LGPD)
+        document.querySelectorAll(
+          '#privacytools-banner-consent, .cc-banner, [class*="cookie-banner"], [class*="cookie-consent"], ' +
+          '[class*="lgpd"], [id*="lgpd"], [class*="privacytools"], [id*="privacytools"]'
+        ).forEach(el => { el.remove(); count++; });
+        // Backdrops e overlays fixos
+        document.querySelectorAll(
+          '[class*="Backdrop"], [class*="backdrop"], .overlay, .modal-backdrop, ' +
+          '[class*="sectionContactFormNews"], [class*="DownloadForm"], [class*="ContactForm"]'
+        ).forEach(el => { el.remove(); count++; });
+        // Popups "Antes de Você Sair" e similares
+        document.querySelectorAll('[class*="portalContainer"], [class*="popup"], [class*="modal"]').forEach(el => {
+          const text = (el.textContent || '').toLowerCase();
+          if (text.includes('antes de você sair') || text.includes('deixe seus dados') ||
+              text.includes('fale com um dos nossos') || text.includes('baixar guia')) {
+            el.remove(); count++;
+          }
+        });
+        // Remove qualquer elemento fixed/absolute que cobre mais de 40% da tela
+        document.querySelectorAll('*').forEach(el => {
+          const style = window.getComputedStyle(el);
+          if ((style.position === 'fixed' || style.position === 'absolute') && style.zIndex > 100) {
+            if (el.offsetWidth > window.innerWidth * 0.4 && el.offsetHeight > window.innerHeight * 0.3) {
+              const tag = el.tagName.toLowerCase();
+              if (tag !== 'html' && tag !== 'body' && !el.querySelector('input[type="email"]')) {
+                el.remove(); count++;
+              }
+            }
+          }
+        });
+        return count;
+      });
+      if (removidos > 0) console.log(`   🧹 ${removidos} overlay(s) removido(s)`);
+    } catch (e) {}
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+  }
+
+  // Função para clicar via JavaScript diretamente no DOM (ignora overlays visuais)
+  async function clicarViaJS(locator, descricao) {
+    try {
+      await locator.evaluate(el => el.click());
+      console.log(`   ✅ ${descricao} (via JS)`);
+      return true;
+    } catch (e) {
+      console.log(`   ⚠️ Clique JS falhou para "${descricao}": ${e.message.substring(0, 60)}`);
+      return false;
     }
-  } catch (e) {}
-  
+  }
+
+  await fecharModais(page);
+  await limparTelaCompleta();
+  await page.waitForTimeout(1000);
+
   let jaLogado = false;
   try {
     const headerOla = page.locator('text=/Olá,/i').first();
     if (await headerOla.isVisible({ timeout: 2000 })) {
       jaLogado = true;
+      console.log('   ✅ Já logado como cliente');
     }
   } catch (e) {}
-  
+
   if (!jaLogado) {
-    try {
-      const btnAceitarCookies = page.getByRole('button', { name: /aceitar todos/i });
-      if (await btnAceitarCookies.isVisible({ timeout: 3000 })) {
-        await btnAceitarCookies.click();
-        await page.waitForTimeout(1000);
-      }
-    } catch (e) {
-      try {
-        const cookieBanner = page.locator('#privacytools-banner-consent, .cc-banner, [class*="cookie"]').first();
-        if (await cookieBanner.isVisible({ timeout: 1000 })) {
-          await page.keyboard.press('Escape');
-          await page.waitForTimeout(500);
-        }
-      } catch (e2) {}
-    }
-    
-    // Função para remover apenas o modal "Antes de Você Sair" (preserva painel de login)
-    async function removerOverlaysSeletivo() {
-      try {
-        await page.evaluate(() => {
-          ['.cruzeirodosul-store-theme-3-x-sectionContactFormNewsBackdrop',
-           '.cruzeirodosul-store-theme-3-x-sectionContactFormNewsDownloadFormBackdrop',
-           '[class*="Backdrop"]', '[class*="backdrop"]', '.overlay', '.modal-backdrop'
-          ].forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
-          document.querySelectorAll('[class*="portalContainer"]').forEach(el => {
-            const text = (el.textContent || '').toLowerCase();
-            if (text.includes('antes de você sair') || text.includes('deixe seus dados') || text.includes('fale com um dos nossos consultores')) el.remove();
-          });
-          document.querySelectorAll('[class*="ContactForm"], [class*="DownloadForm"]').forEach(el => { if (el.style) el.style.display = 'none'; });
-        });
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(300);
-      } catch (e) {}
-    }
-    
     const emailCliente = page.getByPlaceholder('Ex: example@mail.com')
       .or(page.getByPlaceholder(/e-mail|email/i))
       .or(page.getByRole('textbox', { name: /e-mail|email/i }))
       .or(page.locator('input[type="email"]').first());
-    
-    // Retry: clicar "Entrar como cliente", esperar campo email, preencher, clicar "Entrar"
+
     let loginClienteOk = false;
     for (let tentLogin = 1; tentLogin <= 3; tentLogin++) {
       console.log(`   🔄 Tentativa ${tentLogin}/3 login cliente...`);
-      
+
+      // Limpa overlays antes de cada tentativa
+      await limparTelaCompleta();
+      await page.waitForTimeout(500);
+
+      // Passo 1: Encontrar e clicar "Entrar como cliente"
+      const entrarComoCliente = page.getByText('Entrar como cliente').first()
+        .or(page.getByRole('button', { name: /entrar como cliente/i }).first())
+        .or(page.getByRole('link', { name: /entrar como cliente/i }).first())
+        .or(page.locator('a, button, span').filter({ hasText: /entrar como cliente/i }).first());
+
+      let clicouEntrar = false;
       try {
-        const entrarComoCliente = page.getByRole('button', { name: /entrar como cliente/i })
-          .or(page.getByRole('link', { name: /entrar como cliente/i }))
-          .or(page.locator('a, button').filter({ hasText: /entrar como cliente/i }).first())
-          .or(page.getByText('Entrar como cliente').first());
         await entrarComoCliente.first().waitFor({ state: 'visible', timeout: 10000 });
-        await entrarComoCliente.first().click({ force: true });
-        console.log('   ✅ Clicou em "Entrar como cliente"');
+
+        // Tenta clique normal primeiro
+        try {
+          await entrarComoCliente.first().click({ timeout: 3000 });
+          clicouEntrar = true;
+          console.log('   ✅ Clicou em "Entrar como cliente" (clique normal)');
+        } catch (clickErr) {
+          // Clique normal falhou (overlay?), remove overlays e tenta via JS
+          console.log('   ⚠️ Clique normal bloqueado, removendo overlays e tentando JS...');
+          await limparTelaCompleta();
+          await page.waitForTimeout(500);
+          clicouEntrar = await clicarViaJS(entrarComoCliente.first(), 'Clicou em "Entrar como cliente"');
+        }
       } catch (e) {
-        console.log('   ⚠️ "Entrar como cliente" não encontrado');
+        console.log('   ⚠️ "Entrar como cliente" não encontrado na página');
+        // Tenta scroll para cima onde o botão geralmente fica
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.waitForTimeout(1000);
+        await limparTelaCompleta();
         continue;
       }
-      
+
+      if (!clicouEntrar) continue;
+      await page.waitForTimeout(2000);
+
+      // Passo 2: Esperar campo de email aparecer
+      let campoEmailVisivel = false;
       try {
         await emailCliente.first().waitFor({ state: 'visible', timeout: 10000 });
+        campoEmailVisivel = true;
         console.log('   ✅ Painel de login aberto');
       } catch (e) {
-        console.log('   ⚠️ Campo email não apareceu');
-        await page.keyboard.press('Escape');
+        console.log('   ⚠️ Campo email não apareceu após clique');
+        // Pode ter overlay cobrindo — limpa e tenta clicar de novo
+        await limparTelaCompleta();
         await page.waitForTimeout(1000);
+        try {
+          await emailCliente.first().waitFor({ state: 'visible', timeout: 3000 });
+          campoEmailVisivel = true;
+          console.log('   ✅ Painel de login apareceu após limpeza');
+        } catch (e2) {
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(1000);
+          continue;
+        }
+      }
+
+      if (!campoEmailVisivel) continue;
+
+      // Passo 3: Limpar overlays residuais (preservando o painel de login)
+      try {
+        await page.evaluate(() => {
+          document.querySelectorAll(
+            '[class*="Backdrop"]:not([class*="login"]), [class*="backdrop"]:not([class*="login"]), ' +
+            '[class*="sectionContactFormNews"], [class*="DownloadForm"]'
+          ).forEach(el => {
+            if (!el.querySelector('input[type="email"]') && !el.querySelector('input[placeholder*="mail"]')) {
+              el.remove();
+            }
+          });
+        });
+      } catch (e) {}
+      await page.waitForTimeout(500);
+
+      // Passo 4: Preencher email
+      const campoEmail = emailCliente.first();
+      try {
+        await campoEmail.click({ force: true });
+        await page.waitForTimeout(300);
+        await campoEmail.fill('');
+        await page.waitForTimeout(200);
+        await campoEmail.type(CLIENTE.email, { delay: 60 });
+        console.log(`   ✅ Email: ${CLIENTE.email}`);
+      } catch (e) {
+        console.log(`   ⚠️ Erro ao preencher email: ${e.message.substring(0, 60)}`);
         continue;
       }
-      
-      await page.waitForTimeout(500);
-      await removerOverlaysSeletivo();
-      
-      const campoEmail = emailCliente.first();
-      await campoEmail.click({ force: true });
-      await page.waitForTimeout(300);
-      await campoEmail.fill('');
-      await page.waitForTimeout(200);
-      await campoEmail.type(CLIENTE.email, { delay: 60 });
-      console.log(`   ✅ Email: ${CLIENTE.email}`);
-      
+
       await page.waitForTimeout(2500);
-      
+
+      // Passo 5: Clicar "Entrar"
       try {
         const btnEntrar = page.getByRole('button', { name: 'Entrar' });
         await btnEntrar.waitFor({ state: 'visible', timeout: 5000 });
-        await btnEntrar.click();
+        try {
+          await btnEntrar.click({ timeout: 3000 });
+        } catch (e) {
+          await clicarViaJS(btnEntrar, 'Clicou "Entrar"');
+        }
         console.log('   ✅ Clicou em "Entrar"');
         loginClienteOk = true;
       } catch (e) {
-        console.log(`   ⚠️ Erro ao clicar Entrar: ${e.message}`);
+        console.log(`   ⚠️ Erro ao clicar Entrar: ${e.message.substring(0, 60)}`);
         continue;
       }
-      
+
       await page.waitForTimeout(3000);
       break;
     }
-    
+
     if (!loginClienteOk) {
       throw new Error('Login do cliente falhou após 3 tentativas.');
     }
-    
+
     await fecharModalSair(page);
-    
+
     try {
       const cookieBanner2 = page.getByText('Aceitar todos');
       if (await cookieBanner2.isVisible({ timeout: 2000 })) {
@@ -874,20 +950,22 @@ test('inscricao-pos', async ({ page, context }) => {
         await page.waitForTimeout(1000);
       }
     } catch (e) {}
-    
+
     let loginOk = false;
     try {
       const headerOla = page.locator('text=/Olá,/i').first();
       loginOk = await headerOla.isVisible({ timeout: 5000 });
     } catch (e) {}
-    
+
     if (!loginOk) {
-      console.log('   ⚠️ Login pode não ter funcionado');
+      console.log('   ⚠️ Login pode não ter funcionado (sem "Olá" no header)');
+    } else {
+      console.log('   ✅ Login confirmado (header "Olá" visível)');
     }
   }
-  
+
   await fecharModais(page);
-  
+
   console.log(`✅ ETAPA 3 CONCLUÍDA - ${jaLogado ? 'Já logado' : CLIENTE.email}`);
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -899,8 +977,12 @@ test('inscricao-pos', async ({ page, context }) => {
   await fecharModais(page);
   
   // PASSO 1: Pesquisar o curso (SEM a duração no termo de busca)
-  // Ex: "MBA em Empreendedorismo e Inovação 9 Meses" → busca "MBA em Empreendedorismo e Inovação"
-  const cursoSemDuracao = CLIENTE.curso.replace(/\s*\d+\s*meses?\s*$/i, '').trim();
+  // Remove TODAS as ocorrências de "N meses" e traços soltos (ex: "MBA em X - 6 meses 6 meses" → "MBA em X")
+  const cursoSemDuracao = CLIENTE.curso
+    .replace(/\s*-?\s*\d+\s*meses?\s*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*-\s*$/, '')
+    .trim();
   console.log(`   🔍 Pesquisando: "${cursoSemDuracao}" (${CLIENTE.duracao}m)`);
   
   const searchInput = page.getByRole('textbox', { name: 'O que você procura? Buscar' });
@@ -920,8 +1002,15 @@ test('inscricao-pos', async ({ page, context }) => {
   const duracaoDesejada = `${CLIENTE.duracao} meses`;
   
   const cursoNormalizado = CLIENTE.curso.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const palavrasGenericasCurso = ['meses', 'curso', 'cursos', 'graduacao', 'pos-graduacao', 'livre', 'livres', 'virtual', 'digital', 'presencial', 'semestre', 'semestres'];
-  const palavrasChaveCurso = cursoNormalizado.split(' ').filter(p => p.length > 3 && !palavrasGenericasCurso.includes(p) && !/^\d+$/.test(p));
+  const palavrasGenericasCurso = ['meses', 'curso', 'cursos', 'graduacao', 'pos-graduacao', 'livre', 'livres', 'virtual', 'digital', 'presencial', 'semestre', 'semestres', 'com', 'para', 'dos', 'das', 'nos', 'nas', 'por'];
+  const siglasCurso = ['mba', 'bi', 'ti', 'rh', 'ead'];
+  const palavrasChaveCurso = cursoNormalizado.split(/[\s\-]+/).filter(p => {
+    if (/^\d+$/.test(p)) return false;
+    if (palavrasGenericasCurso.includes(p)) return false;
+    if (siglasCurso.includes(p)) return true;
+    return p.length > 3;
+  });
+  console.log(`   🔑 Keywords do curso: [${palavrasChaveCurso.join(', ')}]`);
   
   let cursoClicado = false;
   
@@ -943,8 +1032,9 @@ test('inscricao-pos', async ({ page, context }) => {
       textoNormalizado.includes(palavra) || hrefNormalizado.includes(palavra)
     );
     
-    // Verifica se o card contém a duração desejada (ex: "9 meses")
-    const matchDuracao = textoNormalizado.includes(`${CLIENTE.duracao} meses`) || 
+    // Verifica se o card contém a duração desejada (ex: "9 meses") — só verifica se duração foi informada
+    const matchDuracao = !CLIENTE.duracao || 
+                         textoNormalizado.includes(`${CLIENTE.duracao} meses`) || 
                          textoNormalizado.includes(`${CLIENTE.duracao}meses`) ||
                          hrefNormalizado.includes(`${CLIENTE.duracao}-meses`);
     
@@ -959,8 +1049,8 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   }
   
-  // Se não encontrou com duração, tenta usar o filtro de duração
-  if (!cursoClicado) {
+  // Se não encontrou com duração, tenta usar o filtro de duração (só se duração for conhecida)
+  if (!cursoClicado && CLIENTE.duracao) {
     console.log(`   🔄 Card com duração não encontrado, tentando filtro...`);
     
     // Tenta aplicar filtro de duração
@@ -980,13 +1070,26 @@ test('inscricao-pos', async ({ page, context }) => {
           await page.waitForTimeout(3000);
           console.log(`   ✅ Filtro "${duracaoDesejada}" aplicado`);
           
-          // Agora clica no primeiro card do curso
-          const cardFiltrado = page.locator('a[href*="/pos-"][href$="/p"]').first();
-          if (await cardFiltrado.isVisible({ timeout: 3000 })) {
-            const textoCard = await cardFiltrado.textContent() || '';
-            console.log(`   ✅ Selecionando: "${textoCard.substring(0, 50).replace(/\s+/g, ' ')}..."`);
-            await cardFiltrado.click();
-            cursoClicado = true;
+          // Agora busca card que tenha as keywords do curso (NÃO clica cegamente no primeiro)
+          const cardsFiltrados = page.locator('a[href*="/pos-"][href$="/p"]');
+          const countFiltrados = await cardsFiltrados.count();
+          console.log(`   📋 ${countFiltrados} cards após filtro de duração`);
+          for (let fi = 0; fi < countFiltrados; fi++) {
+            const cardF = cardsFiltrados.nth(fi);
+            const textoF = (await cardF.textContent() || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            const hrefF = ((await cardF.getAttribute('href')) || '').toLowerCase();
+            const matchCountF = palavrasChaveCurso.filter(p => textoF.includes(p) || hrefF.includes(p)).length;
+            if (fi < 3) console.log(`      Card[${fi}] href: ${hrefF.substring(0,60)} | match: ${matchCountF}/${palavrasChaveCurso.length}`);
+            if (matchCountF >= Math.max(2, Math.floor(palavrasChaveCurso.length * 0.6))) {
+              const textoOriginal = await cardF.textContent() || '';
+              console.log(`   ✅ Card filtrado com match de nome (${matchCountF}/${palavrasChaveCurso.length} kw): "${textoOriginal.substring(0, 60).replace(/\s+/g, ' ')}..."`);
+              await cardF.click();
+              cursoClicado = true;
+              break;
+            }
+          }
+          if (!cursoClicado) {
+            console.log(`   ⚠️ Nenhum card filtrado corresponde ao curso "${CLIENTE.curso}"`);
           }
           break;
         }
@@ -994,10 +1097,10 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   }
   
-  // Último fallback com seletores padrão: exige pelo menos metade das keywords
+  // Fallback com seletores padrão: exige pelo menos 60% das keywords
   if (!cursoClicado) {
     console.log('   ⚠️ Tentando match parcial com seletores padrão...');
-    const minMatchPadrao = Math.max(2, Math.floor(palavrasChaveCurso.length / 2));
+    const minMatchPadrao = Math.max(3, Math.ceil(palavrasChaveCurso.length * 0.6));
     
     for (let i = 0; i < countCards; i++) {
       const card = todosCards.nth(i);
@@ -1016,14 +1119,9 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   }
   
-  // Fallback final (seletor original)
-  if (!cursoClicado) {
-    const primeiroCard = page.locator('a[href*="/pos-"][href$="/p"]').first();
-    if (await primeiroCard.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await primeiroCard.click();
-      cursoClicado = true;
-    }
-  }
+  // REMOVIDO: Fallback cego que clicava no primeiro card sem verificar nome/curso.
+  // Esse fallback era a causa de inscrições em cursos ERRADOS (ex: Psicologia em vez de MBA).
+  // Agora, se não houver match, o script continua para os fallbacks avançados que validam keywords.
 
   // ═══════════════════════════════════════════════════════════════════════════
   // FALLBACKS AVANÇADOS - quando nenhum card de curso foi encontrado
@@ -1043,10 +1141,10 @@ test('inscricao-pos', async ({ page, context }) => {
     const cardMatchCursoEDuracao = (texto, href) => {
       const txtNorm = texto.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const hrNorm = (href || '').toLowerCase();
-      // Verifica keywords do nome do curso
       const matchCount = palavrasChaveCurso.filter(p => txtNorm.includes(p) || hrNorm.includes(p)).length;
-      // Verifica duração (ex: "9 meses", "9meses", "9-meses")
-      const temDuracao = txtNorm.includes(`${CLIENTE.duracao} meses`) || 
+      // Se duração não foi informada, considera como "tem duração" (não filtra por ela)
+      const temDuracao = !CLIENTE.duracao ||
+                         txtNorm.includes(`${CLIENTE.duracao} meses`) || 
                          txtNorm.includes(`${CLIENTE.duracao}meses`) ||
                          hrNorm.includes(`${CLIENTE.duracao}-meses`) ||
                          hrNorm.includes(`-${CLIENTE.duracao}-`);
@@ -1075,21 +1173,27 @@ test('inscricao-pos', async ({ page, context }) => {
     }
 
     // FALLBACK B: Navegação direta via URL slug construída do nome do curso
-    // (mais seguro que seletores amplos - vai direto para o produto correto)
     if (!cursoClicado) {
-      const slug = CLIENTE.curso
+      // Usa cursoSemDuracao (sem "N meses") para gerar o slug limpo
+      const slugBase = cursoSemDuracao
         .toLowerCase()
         .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/[^a-z0-9\s-]/g, '')
         .replace(/\s+/g, '-')
         .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
         .trim();
+      const durSlug = CLIENTE.duracao ? `-${CLIENTE.duracao}-meses` : '';
+      const sufixos = ['', '-cruzeiro-do-sul-virtual', '-ead'];
 
-      const urlsTentativas = [
-        `https://cruzeirodosul.myvtex.com/${slug}/p`,
-        `https://cruzeirodosul.myvtex.com/pos-${slug}/p`,
-        `https://cruzeirodosul.myvtex.com/${slug.replace(/^mba-em-/, 'mba-')}/p`,
-      ];
+      const urlsTentativas = [];
+      for (const suf of sufixos) {
+        urlsTentativas.push(`https://cruzeirodosul.myvtex.com/pos-${slugBase}${durSlug}${suf}/p`);
+        urlsTentativas.push(`https://cruzeirodosul.myvtex.com/${slugBase}${durSlug}${suf}/p`);
+      }
+      // Sem duração no slug
+      urlsTentativas.push(`https://cruzeirodosul.myvtex.com/pos-${slugBase}-cruzeiro-do-sul-virtual/p`);
+      urlsTentativas.push(`https://cruzeirodosul.myvtex.com/${slugBase}/p`);
 
       for (const urlDireta of urlsTentativas) {
         console.log(`   🔄 FALLBACK B: Tentando URL direta: ${urlDireta}`);
@@ -1112,13 +1216,9 @@ test('inscricao-pos', async ({ page, context }) => {
       }
     }
 
-    // FALLBACK C: Re-buscar com nome simplificado (sem duração/números)
+    // FALLBACK C: Re-buscar com nome simplificado (reutiliza cursoSemDuracao que já está limpo)
     if (!cursoClicado) {
-      const cursoSimples = CLIENTE.curso
-        .replace(/\d+\s*meses?/gi, '')
-        .replace(/\d+/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+      const cursoSimples = cursoSemDuracao;
 
       console.log(`   🔄 FALLBACK C: Re-buscando com termo curto: "${cursoSimples}"`);
 
@@ -1160,16 +1260,16 @@ test('inscricao-pos', async ({ page, context }) => {
               break;
             }
           }
-          // PASSO 2: Se não achou com duração, busca só por keywords (fallback mais fraco)
+          // PASSO 2: Se não achou com duração, busca com mais keywords (exige 70%+ match)
           if (!cursoClicado) {
+            const minRigoroso = Math.max(3, Math.ceil(palavrasChaveCurso.length * 0.7));
             for (let i = 0; i < Math.min(countRetry, 30); i++) {
               const card = cardsRetry.nth(i);
               const texto = (await card.textContent()) || '';
               const href = (await card.getAttribute('href')) || '';
               const { matchCount } = cardMatchCursoEDuracao(texto, href);
-              if (matchCount >= minKeywordsMatch) {
-                console.log(`   ⚠️ FALLBACK C: Card sem duração confirmada (${matchCount} kw): "${texto.substring(0, 60).replace(/\s+/g, ' ')}..."`);
-                console.log(`      ⚠️ Duração ${CLIENTE.duracao}m não encontrada no card, selecionando mesmo assim`);
+              if (matchCount >= minRigoroso) {
+                console.log(`   ⚠️ FALLBACK C: Card sem duração mas com match rigoroso (${matchCount}/${palavrasChaveCurso.length} kw, mín ${minRigoroso}): "${texto.substring(0, 60).replace(/\s+/g, ' ')}..."`);
                 await card.click();
                 cursoClicado = true;
                 break;
@@ -1257,15 +1357,16 @@ test('inscricao-pos', async ({ page, context }) => {
             break;
           }
         }
-        // PASSO 2: Só keywords se não encontrou com duração
+        // PASSO 2: Só keywords se não encontrou com duração (exige 70%+ match rigoroso)
         if (!cursoClicado) {
+          const minRigorosoE = Math.max(3, Math.ceil(palavrasChaveCurso.length * 0.7));
           for (let i = 0; i < linkCount; i++) {
             const link = allLinks.nth(i);
             const href = (await link.getAttribute('href')) || '';
             const texto = (await link.textContent()) || '';
             const { matchCount } = cardMatchCursoEDuracao(texto, href);
-            if (matchCount >= minKeywordsMatch) {
-              console.log(`   ⚠️ FALLBACK E: Curso sem duração confirmada (${matchCount} kw)`);
+            if (matchCount >= minRigorosoE) {
+              console.log(`   ⚠️ FALLBACK E: Curso sem duração mas match rigoroso (${matchCount}/${palavrasChaveCurso.length} kw, mín ${minRigorosoE})`);
               await link.scrollIntoViewIfNeeded().catch(() => {});
               await link.click();
               cursoClicado = true;
@@ -1279,17 +1380,52 @@ test('inscricao-pos', async ({ page, context }) => {
     }
 
     if (!cursoClicado) {
-      console.log('   ❌ TODOS OS FALLBACKS FALHARAM - continuando na página atual...');
-      // Screenshot para diagnóstico
+      console.log('   ❌ TODOS OS FALLBACKS FALHARAM - ABORTANDO para não inscrever em curso errado');
       try {
-        await page.screenshot({ path: 'debug-etapa4-fallback-falhou.png', fullPage: true });
-        // debug screenshot salvo silenciosamente
+        await page.screenshot({ path: path.join(ARQUIVOS_DIR, `debug-etapa4-curso-nao-encontrado-${CLIENTE.cpf}.png`), fullPage: true });
       } catch (e) {}
+      throw new Error(`CURSO NÃO ENCONTRADO: "${CLIENTE.curso}" (${CLIENTE.duracao} meses). Inscrição abortada para evitar inscrição em curso errado.`);
     }
   }
   
   await page.waitForTimeout(3000);
-  
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VALIDAÇÃO PÓS-SELEÇÃO: Confirma que o curso na página é o correto
+  // Defesa crítica contra inscrição em curso errado
+  // ═══════════════════════════════════════════════════════════════════════════
+  {
+    const urlCurso = page.url().toLowerCase();
+    const tituloPagina = (await page.title().catch(() => '')).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    
+    let conteudoPagina = '';
+    try {
+      conteudoPagina = (await page.locator('[class*="productName"], [class*="product-name"], h1, h2').first().textContent({ timeout: 5000 })) || '';
+      conteudoPagina = conteudoPagina.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    } catch (e) {}
+
+    const textoValidacao = `${urlCurso} ${tituloPagina} ${conteudoPagina}`;
+    const keywordsRelevantes = palavrasChaveCurso.filter(p => p.length > 3 || siglasCurso.includes(p));
+    const matchValidacao = keywordsRelevantes.filter(p => textoValidacao.includes(p)).length;
+    const minValidacao = Math.max(2, Math.floor(keywordsRelevantes.length * 0.5));
+
+    console.log(`   🔍 VALIDAÇÃO PÓS-SELEÇÃO: ${matchValidacao}/${keywordsRelevantes.length} keywords na página (mínimo: ${minValidacao})`);
+    console.log(`      URL: ${urlCurso.substring(0, 80)}`);
+    console.log(`      Título: ${tituloPagina.substring(0, 80)}`);
+    if (conteudoPagina) console.log(`      Produto: ${conteudoPagina.substring(0, 80)}`);
+
+    if (matchValidacao < minValidacao) {
+      console.log(`   ❌ VALIDAÇÃO FALHOU! Curso na página NÃO corresponde a "${CLIENTE.curso}"`);
+      console.log(`      Keywords esperadas: [${keywordsRelevantes.join(', ')}]`);
+      console.log(`      Keywords encontradas: [${keywordsRelevantes.filter(p => textoValidacao.includes(p)).join(', ')}]`);
+      try {
+        await page.screenshot({ path: path.join(ARQUIVOS_DIR, `debug-curso-errado-${CLIENTE.cpf}.png`), fullPage: true });
+      } catch (e) {}
+      throw new Error(`CURSO ERRADO DETECTADO! Esperado: "${CLIENTE.curso}". A página não corresponde ao curso solicitado. Inscrição abortada.`);
+    }
+    console.log('   ✅ VALIDAÇÃO PÓS-SELEÇÃO: Curso correto confirmado!');
+  }
+
   // IMPORTANTE: Fecha popup "Baixar guia do curso" que aparece ao entrar na página do curso
   // Esse popup tem campos Nome/Email/Telefone que confundem o script
   await fecharTodosOverlays(page);
