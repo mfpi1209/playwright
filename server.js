@@ -1190,7 +1190,11 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     // Variáveis de integração n8n
     LEAD_ID: leadId || '',
     N8N_WEBHOOK_URL: webhookUrl || '',
-    LOG_ID: logId ? logId.toString() : ''
+    LOG_ID: logId ? logId.toString() : '',
+    // Pós: por padrão só finaliza no VTEX (sem SIAA/boleto). Defina POS_SKIP_PAGAMENTO_SIAA=0 para fluxo completo.
+    POS_SKIP_PAGAMENTO_SIAA: process.env.POS_SKIP_PAGAMENTO_SIAA !== undefined && process.env.POS_SKIP_PAGAMENTO_SIAA !== ''
+      ? process.env.POS_SKIP_PAGAMENTO_SIAA
+      : '1'
   };
 
   // Executa o Playwright com spawn para logs em tempo real
@@ -1259,7 +1263,8 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     }
     
     // Extrai informações do output (antes das verificações de sucesso/erro)
-    const numeroInscricaoMatch = stdout.match(/Número de Inscrição:\s*(\d+)/);
+    let numeroInscricaoMatch = stdout.match(/Número de Inscrição:\s*(\d+)/);
+    if (!numeroInscricaoMatch) numeroInscricaoMatch = stdout.match(/NUMERO_INSCRICAO_EXTRAIDO:\s*(\d+)/);
     const numeroInscricao = numeroInscricaoMatch ? numeroInscricaoMatch[1] : null;
     
     // ══════════════════════════════════════════════════════════════
@@ -1289,6 +1294,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     // Verifica se o processo foi concluído com sucesso
     // Aceita múltiplas strings de sucesso (o fluxo pode terminar em diferentes pontos)
     const processoCompleto = stdout.includes('PROCESSO COMPLETO DE INSCRIÇÃO PÓS-GRADUAÇÃO') ||
+                             stdout.includes('STATUS_INSCRICAO: INSCRICAO_POS_SUCESSO_APENAS_VTEX') ||
                              (stdout.includes('INSCRIÇÃO PÓS-GRADUAÇÃO FINALIZADA COM SUCESSO') && code === 0);
     
     // Número de inscrição do SIAA (diferente do pedido VTEX)

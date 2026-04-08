@@ -917,7 +917,7 @@ test('inscricao-pos', async ({ page, context }) => {
 
       await page.waitForTimeout(2500);
 
-      // Passo 5: Clicar "Entrar"
+      // Passo 5: Clicar "Entrar" (VTEX às vezes precisa de 2 cliques)
       try {
         const btnEntrar = page.getByRole('button', { name: 'Entrar' });
         await btnEntrar.waitFor({ state: 'visible', timeout: 5000 });
@@ -926,14 +926,26 @@ test('inscricao-pos', async ({ page, context }) => {
         } catch (e) {
           await clicarViaJS(btnEntrar, 'Clicou "Entrar"');
         }
-        console.log('   ✅ Clicou em "Entrar"');
+        console.log('   ✅ Clicou em "Entrar" (1º clique)');
+
+        await page.waitForTimeout(3000);
+
+        // Segundo clique: VTEX pode mostrar "Entrar" de novo para confirmar
+        try {
+          const btnEntrar2 = page.getByRole('button', { name: 'Entrar' });
+          if (await btnEntrar2.isVisible({ timeout: 3000 })) {
+            await btnEntrar2.click({ timeout: 3000 }).catch(() => {});
+            console.log('   ✅ Clicou em "Entrar" (2º clique - confirmação)');
+          }
+        } catch (e) {}
+
         loginClienteOk = true;
       } catch (e) {
         console.log(`   ⚠️ Erro ao clicar Entrar: ${e.message.substring(0, 60)}`);
         continue;
       }
 
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(5000);
       break;
     }
 
@@ -1438,24 +1450,52 @@ test('inscricao-pos', async ({ page, context }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 ETAPA 5: Formulário Inicial');
   
-  // Aguarda o formulário carregar
-  await page.waitForTimeout(2000);
+  // Aguarda o formulário carregar (pode demorar mais em conexões lentas)
+  await page.waitForTimeout(3000);
   
   // IMPORTANTE: Limpa NOVAMENTE todos os overlays (podem reaparecer após scroll)
   await fecharTodosOverlays(page);
+  await fecharModalSair(page);
   
   // Scroll até o formulário real de inscrição (fica mais abaixo na página)
-  try {
-    const formReal = page.locator('input[placeholder*="nome completo" i], input[name="userName"], [class*="formContainer"] input').first();
-    if (await formReal.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await formReal.scrollIntoViewIfNeeded();
-      console.log('   📍 Formulário de inscrição localizado');
-    } else {
-      // Scroll para baixo para encontrar o formulário
-      await page.evaluate(() => window.scrollTo(0, 600));
+  // Tenta múltiplos seletores e faz scroll agressivo para encontrá-lo
+  let formEncontrado = false;
+  const seletoresFormulario = [
+    'input[placeholder*="nome completo" i]',
+    'input[name="userName"]',
+    '[class*="formContainer"] input',
+    '[class*="purchase-box"] input',
+    'button:has-text("Inscreva-se")',
+    '[class*="productPurchaseBox"] input',
+  ];
+  for (const sel of seletoresFormulario) {
+    try {
+      const elem = page.locator(sel).first();
+      if (await elem.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await elem.scrollIntoViewIfNeeded();
+        formEncontrado = true;
+        console.log(`   📍 Formulário de inscrição localizado (${sel})`);
+        break;
+      }
+    } catch (e) {}
+  }
+  if (!formEncontrado) {
+    console.log('   📍 Formulário não visível, scrollando para baixo...');
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight * 0.4));
+    await page.waitForTimeout(2000);
+    await fecharTodosOverlays(page);
+    // Tenta de novo após scroll
+    for (const sel of seletoresFormulario) {
+      try {
+        const elem = page.locator(sel).first();
+        if (await elem.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await elem.scrollIntoViewIfNeeded();
+          formEncontrado = true;
+          console.log(`   📍 Formulário encontrado após scroll (${sel})`);
+          break;
+        }
+      } catch (e) {}
     }
-  } catch (e) {
-    await page.evaluate(() => window.scrollTo(0, 600));
   }
   await page.waitForTimeout(500);
   
@@ -1533,20 +1573,23 @@ test('inscricao-pos', async ({ page, context }) => {
     }
   }
   
-  // Estratégia 2: getByRole com nome específico (EXCLUINDO "mãe")
+  // Estratégia 2: getByRole com vários nomes possíveis
   if (!nomePreenchido) {
-    try {
-      // Busca campos com "nome" mas exclui os que contêm "mãe"
-      const campoNomeCompleto = page.getByRole('textbox', { name: /nome completo/i }).first();
-      if (await campoNomeCompleto.isVisible({ timeout: 2000 })) {
-        if (!(await ehCampoParente(campoNomeCompleto))) {
-          await campoNomeCompleto.click();
-          await campoNomeCompleto.fill(CLIENTE.nome);
-          console.log(`   ✅ Nome do candidato preenchido via getByRole: "${CLIENTE.nome}"`);
-          nomePreenchido = true;
+    const nomesRole = [/nome completo/i, /^nome$/i, /nome do candidato/i, /seu nome/i];
+    for (const nomeRole of nomesRole) {
+      try {
+        const campoNomeCompleto = page.getByRole('textbox', { name: nomeRole }).first();
+        if (await campoNomeCompleto.isVisible({ timeout: 2000 })) {
+          if (!(await ehCampoParente(campoNomeCompleto))) {
+            await campoNomeCompleto.click();
+            await campoNomeCompleto.fill(CLIENTE.nome);
+            console.log(`   ✅ Nome preenchido via getByRole(${nomeRole}): "${CLIENTE.nome}"`);
+            nomePreenchido = true;
+            break;
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
   }
   
   // Estratégia 3: Procura por label específico (APENAS "Nome completo" ou "Nome do aluno")
@@ -4029,6 +4072,22 @@ test('inscricao-pos', async ({ page, context }) => {
     }
     console.log(`📋 Campanha aplicada: ${CLIENTE.campanha}`);
     console.log('═══════════════════════════════════════════════════════════════════════════');
+
+    // Após orderPlaced: concluir só a inscrição no VTEX (sem SIAA, boleto ou telas extras como cadastro de cota).
+    // Ative com POS_SKIP_PAGAMENTO_SIAA=1 (padrão na rota /inscricao-pos/sync do server.js).
+    const skipSiaa =
+      process.env.POS_SKIP_PAGAMENTO_SIAA === '1' ||
+      process.env.POS_SKIP_PAGAMENTO_SIAA === 'true' ||
+      process.env.POS_SKIP_PAGAMENTO_SIAA === 'yes';
+    if (skipSiaa) {
+      console.log('PROCESSO COMPLETO DE INSCRIÇÃO PÓS-GRADUAÇÃO');
+      if (numeroInscricao) {
+        console.log(`NUMERO_INSCRICAO_EXTRAIDO: ${numeroInscricao}`);
+      }
+      console.log('STATUS_INSCRICAO: INSCRICAO_POS_SUCESSO_APENAS_VTEX');
+      console.log('ℹ️ Inscrição encerrada no VTEX (SIAA/pagamento não executados).');
+      return;
+    }
   } else {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════════════════');
