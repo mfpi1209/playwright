@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+const { validarPolo: validarPoloWhitelist } = require('./polos-atendidos');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
@@ -146,7 +147,7 @@ const CLIENTE = {
   cidade: corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo',
   // Curso
   curso: corrigirAcentos(process.env.CLIENTE_CURSO) || 'pedagogia',
-  polo: normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO)) || 'vila mariana',
+  polo: normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO) || ''),
   // Forma de ingresso ENEM
   tipoVestibular: 'ENEM',
 };
@@ -170,6 +171,23 @@ test('test-enem-sem-nota', async ({ page }) => {
   console.log(`   Forma de Ingresso: ${CLIENTE.tipoVestibular}`);
   console.log('   ⚠️ NOTAS DO ENEM: Ainda não disponíveis');
   console.log('');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VALIDAÇÃO DE POLO - rejeita se vazio ou fora da whitelist dos 12 atendidos
+  // ═══════════════════════════════════════════════════════════════════════════
+  const _validacaoPolo = validarPoloWhitelist(CLIENTE.polo);
+  if (!_validacaoPolo.valido) {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log(`❌ ${_validacaoPolo.motivo}`);
+    console.log(`   Polo informado: "${CLIENTE.polo}"`);
+    console.log(`   ${_validacaoPolo.mensagem}`);
+    console.log(`   Polos atendidos: ${_validacaoPolo.listaAtendidos.join(', ')}`);
+    console.log('═══════════════════════════════════════════════════════════════════════════');
+    console.log('');
+    throw new Error(`${_validacaoPolo.motivo}: ${_validacaoPolo.mensagem}`);
+  }
+  CLIENTE.polo = _validacaoPolo.canonico;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO AUXILIAR: Aguarda carregamento com verificação

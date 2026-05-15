@@ -5,6 +5,7 @@ const PDFDocument = require('pdfkit');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+const { validarPolo: validarPoloWhitelist } = require('./polos-atendidos');
 
 // Pasta padrão para arquivos gerados (acessível por todas as instâncias)
 const ARQUIVOS_DIR = process.env.ARQUIVOS_DIR || path.join(__dirname, '..', 'arquivos');
@@ -522,33 +523,21 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VALIDAÇÃO DE POLO - Rejeita polos inválidos antes de iniciar
+  // VALIDAÇÃO DE POLO - rejeita se vazio ou fora da whitelist dos 12 atendidos
   // ═══════════════════════════════════════════════════════════════════════════
-  const polosInvalidos = [
-    'polo mais próximo',
-    'polo mais proximo', 
-    'mais próximo',
-    'mais proximo',
-    'selecione',
-    'selecionar',
-    'escolha',
-    'nenhum',
-    'n/a',
-    ''
-  ];
-  
-  const poloLower = (CLIENTE.polo || '').toLowerCase().trim();
-  if (polosInvalidos.some(inv => poloLower === inv || poloLower.includes('mais próximo') || poloLower.includes('mais proximo'))) {
+  const _validacaoPolo = validarPoloWhitelist(CLIENTE.polo);
+  if (!_validacaoPolo.valido) {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════════════════');
-    console.log('❌ ERRO: POLO INVÁLIDO');
+    console.log(`❌ ${_validacaoPolo.motivo}`);
     console.log(`   Polo informado: "${CLIENTE.polo}"`);
-    console.log('   O polo deve ser um nome específico de polo válido.');
-    console.log('   Exemplos válidos: "barra funda", "ibirapuera", "vila mariana"');
+    console.log(`   ${_validacaoPolo.mensagem}`);
+    console.log(`   Polos atendidos: ${_validacaoPolo.listaAtendidos.join(', ')}`);
     console.log('═══════════════════════════════════════════════════════════════════════════');
     console.log('');
-    throw new Error(`POLO_INVALIDO: O polo "${CLIENTE.polo}" não é válido. Informe um polo específico.`);
+    throw new Error(`${_validacaoPolo.motivo}: ${_validacaoPolo.mensagem}`);
   }
+  CLIENTE.polo = _validacaoPolo.canonico;
 
   let numeroInscricao = null;
   let pdfBoletoBuffer = null; // Para capturar o PDF via listener passivo

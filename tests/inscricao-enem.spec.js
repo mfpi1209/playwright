@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+const { validarPolo: validarPoloWhitelist } = require('./polos-atendidos');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
@@ -131,8 +132,9 @@ function formatarTelefone(telefone) {
   return numeros;
 }
 
-// Calcula polo primeiro para determinar a cidade correta
-const poloSolicitado = normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO)) || 'vila mariana';
+// Calcula polo primeiro para determinar a cidade correta.
+// Sem default: validarPoloWhitelist falha logo no início do test se vier vazio.
+const poloSolicitado = normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO) || '');
 const cidadePadrao = corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo';
 
 const CLIENTE = {
@@ -196,33 +198,21 @@ test('test-enem', async ({ page }) => {
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VALIDAÇÃO DE POLO - Rejeita polos inválidos antes de iniciar
+  // VALIDAÇÃO DE POLO - rejeita se vazio ou fora da whitelist dos 12 atendidos
   // ═══════════════════════════════════════════════════════════════════════════
-  const polosInvalidos = [
-    'polo mais próximo',
-    'polo mais proximo', 
-    'mais próximo',
-    'mais proximo',
-    'selecione',
-    'selecionar',
-    'escolha',
-    'nenhum',
-    'n/a',
-    ''
-  ];
-  
-  const poloLower = (CLIENTE.polo || '').toLowerCase().trim();
-  if (polosInvalidos.some(inv => poloLower === inv || poloLower.includes('mais próximo') || poloLower.includes('mais proximo'))) {
+  const _validacaoPolo = validarPoloWhitelist(CLIENTE.polo);
+  if (!_validacaoPolo.valido) {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════════════════');
-    console.log('❌ ERRO: POLO INVÁLIDO');
+    console.log(`❌ ${_validacaoPolo.motivo}`);
     console.log(`   Polo informado: "${CLIENTE.polo}"`);
-    console.log('   O polo deve ser um nome específico de polo válido.');
-    console.log('   Exemplos válidos: "barra funda", "ibirapuera", "vila mariana"');
+    console.log(`   ${_validacaoPolo.mensagem}`);
+    console.log(`   Polos atendidos: ${_validacaoPolo.listaAtendidos.join(', ')}`);
     console.log('═══════════════════════════════════════════════════════════════════════════');
     console.log('');
-    throw new Error(`POLO_INVALIDO: O polo "${CLIENTE.polo}" não é válido. Informe um polo específico.`);
+    throw new Error(`${_validacaoPolo.motivo}: ${_validacaoPolo.mensagem}`);
   }
+  CLIENTE.polo = _validacaoPolo.canonico;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO AUXILIAR: Aguarda carregamento com verificação

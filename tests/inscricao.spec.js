@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { test, expect } from '@playwright/test';
+const { validarPolo: validarPoloWhitelist } = require('./polos-atendidos');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
@@ -134,8 +135,9 @@ function capitalizarNome(nome) {
   ).join(' ');
 }
 
-// Calcula polo primeiro para determinar a cidade correta
-const poloSolicitado = normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO)) || 'sapopemba (vila ema)';
+// Calcula polo primeiro para determinar a cidade correta.
+// Sem default: se vier vazio, validarPoloWhitelist falha logo no início do test (POLO_NAO_INFORMADO).
+const poloSolicitado = normalizarPolo(corrigirAcentos(process.env.CLIENTE_POLO) || '');
 const cidadePadrao = corrigirAcentos(process.env.CLIENTE_CIDADE) || 'São Paulo';
 
 const CLIENTE = {
@@ -206,33 +208,21 @@ test('test', async ({ page }) => {
   console.log('');
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // VALIDAÇÃO DE POLO - Rejeita polos inválidos antes de iniciar
+  // VALIDAÇÃO DE POLO - rejeita se vazio ou fora da whitelist dos 12 atendidos
   // ═══════════════════════════════════════════════════════════════════════════
-  const polosInvalidos = [
-    'polo mais próximo',
-    'polo mais proximo', 
-    'mais próximo',
-    'mais proximo',
-    'selecione',
-    'selecionar',
-    'escolha',
-    'nenhum',
-    'n/a',
-    ''
-  ];
-  
-  const poloLower = (CLIENTE.polo || '').toLowerCase().trim();
-  if (polosInvalidos.some(inv => poloLower === inv || poloLower.includes('mais próximo') || poloLower.includes('mais proximo'))) {
+  const _validacaoPolo = validarPoloWhitelist(CLIENTE.polo);
+  if (!_validacaoPolo.valido) {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════════════════');
-    console.log('❌ ERRO: POLO INVÁLIDO');
+    console.log(`❌ ${_validacaoPolo.motivo}`);
     console.log(`   Polo informado: "${CLIENTE.polo}"`);
-    console.log('   O polo deve ser um nome específico de polo válido.');
-    console.log('   Exemplos válidos: "barra funda", "ibirapuera", "vila mariana"');
+    console.log(`   ${_validacaoPolo.mensagem}`);
+    console.log(`   Polos atendidos: ${_validacaoPolo.listaAtendidos.join(', ')}`);
     console.log('═══════════════════════════════════════════════════════════════════════════');
     console.log('');
-    throw new Error(`POLO_INVALIDO: O polo "${CLIENTE.polo}" não é válido. Informe um polo específico.`);
+    throw new Error(`${_validacaoPolo.motivo}: ${_validacaoPolo.mensagem}`);
   }
+  CLIENTE.polo = _validacaoPolo.canonico;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // FUNÇÃO AUXILIAR: Aguarda carregamento com verificação
@@ -1506,84 +1496,33 @@ test('test', async ({ page }) => {
     'Cidade'
   );
   
-  // Polo - tenta o polo solicitado primeiro, depois fallbacks em ordem de prioridade
-  const polosFallback = [
-    'sapopemba (vila ema)',
-    'vila prudente 2',
-    'vila mariana',
-    'santana 2',
-    'morumbi'
-  ];
-  
-  let poloSelecionado = false;
-  
-  // Primeiro tenta o polo solicitado
+  // Polo - somente o polo solicitado. Sem fallback: nunca inscrever em polo diferente do pedido.
   console.log(`🔽 Tentando polo solicitado: "${CLIENTE.polo}"`);
-  poloSelecionado = await selecionarOpcao(
+  const poloSelecionado = await selecionarOpcao(
     page.locator('.react-select__input-container').nth(3),
     CLIENTE.polo,
     null,
     'Polo'
   );
-  
-  // Se não encontrou, tenta os polos de fallback em ordem
-  if (!poloSelecionado) {
-    console.log('');
-    console.log('⚠️ Polo solicitado não encontrado, tentando polos alternativos...');
-    
-    for (const poloAlternativo of polosFallback) {
-      // Pula se for o mesmo que já tentou
-      if (poloAlternativo.toLowerCase() === CLIENTE.polo.toLowerCase()) {
-        continue;
-      }
-      
-      console.log(`   🔄 Tentando polo: "${poloAlternativo}"...`);
-      
-      // Aguarda um pouco e tenta o próximo polo
-      await page.waitForTimeout(500);
-      
-      poloSelecionado = await selecionarOpcao(
-        page.locator('.react-select__input-container').nth(3),
-        poloAlternativo,
-        null,
-        `Polo (${poloAlternativo})`
-      );
-      
-      if (poloSelecionado) {
-        poloUsado = poloAlternativo;
-        console.log(`   ✅ POLO ALTERNATIVO SELECIONADO: "${poloAlternativo}"`);
-        break;
-      }
-    }
-  }
 
-  // Verifica se algum polo foi encontrado
   if (!poloSelecionado) {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════════════════');
-    console.log(`❌ ERRO: NENHUM POLO DISPONÍVEL`);
+    console.log('❌ POLO_INDISPONIVEL_PARA_CURSO');
     console.log(`   Polo solicitado: "${CLIENTE.polo}"`);
-    console.log(`   Polos tentados: ${polosFallback.join(', ')}`);
-    console.log(`   O curso "${CLIENTE.curso}" não está disponível em nenhum dos polos listados.`);
+    console.log(`   Curso: "${CLIENTE.curso}"`);
+    console.log('   O curso solicitado NÃO está disponível neste polo. Inscrição abortada.');
+    console.log('   (Nunca trocamos de polo automaticamente — peça ao operador escolher outro.)');
     console.log('═══════════════════════════════════════════════════════════════════════════');
     console.log('');
-    
-    // Tira screenshot do erro
+
     await page.screenshot({ path: 'erro-polo-nao-encontrado.png', fullPage: true });
     console.log('📸 Screenshot salvo: erro-polo-nao-encontrado.png');
-    
-    return; // Encerra o teste
+
+    throw new Error(`POLO_INDISPONIVEL_PARA_CURSO: curso "${CLIENTE.curso}" não disponível no polo "${CLIENTE.polo}".`);
   }
-  
-  // Se usou polo diferente do solicitado, loga isso
-  if (poloUsado.toLowerCase() !== CLIENTE.polo.toLowerCase()) {
-    console.log('');
-    console.log('═══════════════════════════════════════════════════════════════════════════');
-    console.log(`📍 POLO ALTERNATIVO UTILIZADO: "${poloUsado}"`);
-    console.log(`   (Polo original solicitado: "${CLIENTE.polo}")`);
-    console.log('═══════════════════════════════════════════════════════════════════════════');
-    console.log('');
-  }
+
+  poloUsado = CLIENTE.polo;
 
   // CPF
   const cpfInput = page.locator('input[name="userDocument"]');

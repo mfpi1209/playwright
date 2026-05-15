@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const db = require('./database/db');
+const { validarPolo, POLOS_ATENDIDOS } = require('./tests/polos-atendidos');
 
 // Força encoding UTF-8 no processo Node
 process.stdout.setEncoding('utf-8');
@@ -13,14 +14,46 @@ process.stderr.setEncoding('utf-8');
 const app = express();
 app.use(express.json());
 
-// Middleware: normaliza polo "sapopemba" → "sapopemba (vila ema)"
-app.use((req, res, next) => {
-  if (req.body && req.body.polo && req.body.polo.trim().toLowerCase() === 'sapopemba') {
-    console.log('⚠️ POLO CORRIGIDO: "sapopemba" → "sapopemba (vila ema)"');
-    req.body.polo = 'sapopemba (vila ema)';
+// Rotas de inscrição que exigem polo válido (whitelist).
+const ROTAS_QUE_EXIGEM_POLO = [
+  '/inscricao',
+  '/inscricao/sync',
+  '/inscricao-enem/sync',
+  '/inscricao-enem-sem-nota/sync',
+  '/inscricao-pos/sync',
+  '/inscricao-transferencia/sync'
+];
+
+// Middleware: garante que o polo recebido está na whitelist de polos atendidos.
+// Rejeita HTTP 400 quando vazio ou fora da lista. Normaliza para o nome canônico.
+function validarPoloMiddleware(req, res, next) {
+  const poloRaw = req.body ? req.body.polo : undefined;
+  const resultado = validarPolo(poloRaw);
+
+  if (!resultado.valido) {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════');
+    console.log(`❌ POLO REJEITADO (${resultado.motivo})`);
+    console.log(`   Polo recebido: "${poloRaw || ''}"`);
+    console.log(`   Polos atendidos: ${resultado.listaAtendidos.join(', ')}`);
+    console.log('═══════════════════════════════════════════════════════════════');
+    return res.status(400).json({
+      sucesso: false,
+      erro: resultado.motivo,
+      mensagem: resultado.mensagem,
+      poloRecebido: poloRaw || '',
+      polosAtendidos: resultado.listaAtendidos
+    });
   }
+
+  if (poloRaw !== resultado.canonico) {
+    console.log(`ℹ️ POLO NORMALIZADO: "${poloRaw}" → "${resultado.canonico}"`);
+  }
+  req.body.polo = resultado.canonico;
   next();
-});
+}
+
+ROTAS_QUE_EXIGEM_POLO.forEach((rota) => app.use(rota, validarPoloMiddleware));
 
 // Helper: configura spawn com encoding UTF-8
 function configuraSpawnUTF8(processo) {
@@ -1116,14 +1149,7 @@ app.post('/inscricao-pos/sync', async (req, res) => {
     });
   }
 
-  if (!polo || polo.trim() === '' || polo.trim().toLowerCase() === 'indefinido') {
-    console.log(`⚠️ POLO INVÁLIDO para pós-graduação: "${polo || ''}"`);
-    return res.status(200).json({
-      sucesso: false,
-      erro: `Polo inválido ou não informado: "${polo || ''}". Informe um polo específico (ex: "barra funda", "vila mariana", "ibirapuera").`,
-      cliente: { nome, cpf, email }
-    });
-  }
+  // Validação de polo já garantida pelo validarPoloMiddleware (whitelist).
 
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════');
