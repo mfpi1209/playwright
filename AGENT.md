@@ -39,3 +39,21 @@ Este arquivo registra decisões estruturais (escolhas de stack, padrão, mudanç
 - `.env` recebeu `POS_SKIP_PAGAMENTO_SIAA=1` (alinhado ao padrão da rota `/inscricao-pos/sync` do `server.js`).
 - Specs auxiliares que não fazem fluxo de ingresso (`continuar-pagamento.spec.js`, `download-boleto.spec.js`, `kommo-*.spec.js`, `teste-boleto.spec.js`) **não** foram migrados — caso enfrentem reCAPTCHA no futuro, podem ser migrados pelo mesmo procedimento (1 linha).
 
+---
+
+### 2026-06-16 — Correção do `stealth-fixture.js`: merge correto de `use:` global do config
+
+**Decisão:** Reescrever o cálculo de `launchOptions` e `headless` dentro de `tests/stealth-fixture.js` para mergear corretamente o `use:` global do config + o `use:` do projeto, em vez de ler apenas o `testInfo.project.use`.
+
+**Contexto:** Após o usuário rodar `inscricao-pos.spec.js` no servidor (Easypanel) com o curso "Mba Em Inteligência Digital E De Mercado", a API retornou `"erro": "CEP não encontrado."`. O log mostrava `Resultado busca endereço: sem-vtexjs`, `Número via API VTEX: sem-vtexjs`, `Campo data de nascimento não encontrado` e `Seção de endereço não expandiu, tentando navegar por hash` — sinais claros de que o `vtexjs` nunca carregava na página. O servidor usa `playwright.config.server.js`, que define `headless: true`, `userAgent: 'Chrome/120.0.0.0'`, `viewport: 1920x1080`, `locale: pt-BR`, `geolocation`, e `launchOptions.args: [--no-sandbox, --disable-gpu, --window-size=1920,1080, ...]` — tudo no nível `use:` global. O fixture stealth original lia apenas `testInfo.project.use.launchOptions` e `testInfo.project.use.headless`, descartando todas as configurações globais. Sem esses flags (especialmente o `userAgent` real do Chrome e os args Docker), o site detectava automação pelo navegador e renderizava o checkout em estado degradado, sem inicializar o `vtexjs`.
+
+**Alternativas descartadas:**
+- *Mover toda config do `use:` global para `projects[0].use`:* funcionaria mas espalha config entre arquivos e quebra a convenção do Playwright Test (que faz merge automático em cenários normais).
+- *Aplicar stealth via `addInitScript` manual em vez de `playwright-extra`:* menos eficaz; o plugin completo já está validado em produção.
+- *Adotar Xvfb no Dockerfile do servidor (display virtual para rodar headed):* mais robusto contra reCAPTCHA, mas requer alteração na imagem Docker do Easypanel. Considerado como próximo passo se o sintoma persistir após este fix.
+
+**Impacto:**
+- `tests/stealth-fixture.js` reescrito: nova função `mergeLaunchOptions(testInfo)` que combina `testInfo.config.use.launchOptions` + `testInfo.project.use.launchOptions`, concatena os arrays `args` deduplicando, e resolve `headless`/`slowMo` priorizando project sobre global.
+- Validação local com `--config=playwright.config.server.js` (mesmo do servidor): `vtexjs` voltou a carregar (`api-ok` em vez de `sem-vtexjs`), data de nascimento foi preenchida, CEP e número aceitos via API VTEX. O sintoma raiz reportado pelo usuário foi corrigido.
+- Sintoma secundário observado em local headless (checkout não avançou de `/profile` em algumas tentativas) pode ser causado por estado VTEX preexistente desse perfil ou por limitação residual de stealth+headless — será reavaliado após teste no servidor.
+
