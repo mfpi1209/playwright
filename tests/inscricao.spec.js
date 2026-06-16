@@ -1,6 +1,12 @@
 import 'dotenv/config';
 const { test, expect } = require('./stealth-fixture');
 const { validarPolo: validarPoloWhitelist } = require('./polos-atendidos');
+const {
+  safeEval,
+  passarEtapaEmail,
+  preencherDataNascimentoVtex,
+  calcularDatasNascimento,
+} = require('./checkout-helpers');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
@@ -1890,34 +1896,29 @@ test('test', async ({ page }) => {
   
   if (stepAtual === 'profile' || stepAtual === 'cart' || stepAtual === 'unknown') {
     console.log('📌 CHECKOUT: Dados Pessoais...');
-    
-    // Tenta preencher data de nascimento
-    const seletoresData = [
-      page.locator('input[name*="birthDate"]').first(),
-      page.locator('input[name*="birth"]').first(),
-      page.locator('input[placeholder*="nascimento"]').first(),
-      page.locator('input[type="date"]').first(),
-      page.getByRole('textbox', { name: /nascimento/i }),
-    ];
-    
-    for (const campo of seletoresData) {
-      try {
-        if (await campo.isVisible({ timeout: 2000 })) {
-          const valorAtual = await campo.inputValue().catch(() => '');
-          if (!valorAtual || valorAtual.length < 8) {
-            await campo.click();
-            await page.waitForTimeout(300);
-            await campo.clear();
-            await campo.type(CLIENTE.nascimento, { delay: 50 });
-            console.log(`   ✅ Data de nascimento: ${CLIENTE.nascimento}`);
-          } else {
-            console.log(`   ✅ Data já preenchida: ${valorAtual}`);
-          }
-          break;
-        }
-      } catch (e) {}
+
+    // Se caiu em #/email (cliente nao autenticado de fato), trata primeiro
+    if (page.url().includes('#/email')) {
+      await passarEtapaEmail(page, CLIENTE.email);
+      await page.waitForTimeout(1500);
     }
-    
+
+    // Preenche data de nascimento usando helper compartilhado.
+    // Estrategia A=valueAsDate eh a UNICA que funciona com o input HTML5
+    // date do checkout VTEX da Cruzeiro (descoberto empiricamente). Fallbacks
+    // B=keyboard.type e C=fill ficam para casos em que o input nao eh date.
+    const { dataBR: _dataBRVtex, dataIso: _dataIsoVtex } = calcularDatasNascimento(CLIENTE.nascimento);
+    const resBD = await preencherDataNascimentoVtex(page, _dataBRVtex, _dataIsoVtex);
+    if (resBD.ok && resBD.motivo && resBD.motivo.startsWith('re-preenchido')) {
+      console.log(`   ✅ Data de nascimento (${resBD.motivo}): ${resBD.valor}`);
+    } else if (resBD.ok && resBD.motivo === 'ja-preenchido') {
+      console.log(`   ✅ Data de nascimento já preenchida: ${resBD.valor}`);
+    } else if (!resBD.ok && resBD.motivo === 'campo-nao-visivel') {
+      console.log('   ℹ️ Campo data de nascimento não visível (provavelmente não obrigatório neste fluxo)');
+    } else {
+      console.log(`   ⚠️ Data de nascimento não pôde ser preenchida: ${resBD.motivo}`);
+    }
+
     await page.waitForTimeout(1000);
     
     // ═══════════════════════════════════════════════════════════════════════

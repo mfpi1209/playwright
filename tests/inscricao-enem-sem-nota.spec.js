@@ -1,5 +1,11 @@
 const { test, expect } = require('./stealth-fixture');
 const { validarPolo: validarPoloWhitelist } = require('./polos-atendidos');
+const {
+  safeEval,
+  passarEtapaEmail,
+  preencherDataNascimentoVtex,
+  calcularDatasNascimento,
+} = require('./checkout-helpers');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DADOS DO CLIENTE - Via variáveis de ambiente ou valores padrão
@@ -1141,48 +1147,35 @@ test('test-enem-sem-nota', async ({ page }) => {
   // CHECKOUT ETAPA 1: Dados Pessoais → Ir para o Endereço
   // ═══════════════════════════════════════════════════════════════════════════
   console.log('📌 CHECKOUT: Verificando Dados Pessoais...');
-  
-  // Tenta encontrar o campo de data de nascimento com vários seletores
-  console.log('📝 Procurando campo de data de nascimento...');
-  
-  const seletoresData = [
-    page.locator('input[name*="birthDate"]').first(),
-    page.locator('input[name*="birth"]').first(),
-    page.locator('input[placeholder*="nascimento"]').first(),
-    page.locator('input[type="date"]').first(),
-    page.getByRole('textbox', { name: /nascimento/i }),
-    page.locator('input').filter({ hasText: '' }).nth(5) // Campo após telefone
-  ];
-  
-  let campoDataEncontrado = false;
-  
-  for (const campo of seletoresData) {
-    try {
-      if (await campo.isVisible({ timeout: 2000 })) {
-        const valorAtual = await campo.inputValue().catch(() => '');
-        console.log(`   Encontrou campo de data, valor atual: "${valorAtual}"`);
-        
-        if (!valorAtual || valorAtual.length < 8) {
-          await campo.click();
-          await page.waitForTimeout(300);
-          await campo.clear();
-          await campo.type(CLIENTE.nascimento, { delay: 50 });
-          console.log(`✅ Data de nascimento preenchida: ${CLIENTE.nascimento}`);
-          campoDataEncontrado = true;
-          break;
-        } else {
-          console.log(`ℹ️ Data já preenchida: ${valorAtual}`);
-          campoDataEncontrado = true;
-          break;
-        }
-      }
-    } catch (e) {
-      // Continua tentando próximo seletor
-    }
+
+  // Se caiu em #/email (cliente nao autenticado de fato no VTEX), trata primeiro
+  if (page.url().includes('#/email')) {
+    await passarEtapaEmail(page, CLIENTE.email);
+    await page.waitForTimeout(1500);
   }
-  
+
+  // Preenche data de nascimento usando helper compartilhado.
+  // Estrategia A=valueAsDate eh a UNICA que funciona com o input HTML5
+  // date do checkout VTEX da Cruzeiro (descoberto empiricamente). Fallbacks
+  // B=keyboard.type e C=fill cobrem casos em que o input nao eh date.
+  console.log('📝 Preenchendo data de nascimento (helper VTEX)...');
+  const { dataBR: _dataBRVtex, dataIso: _dataIsoVtex } = calcularDatasNascimento(CLIENTE.nascimento);
+  const resBD = await preencherDataNascimentoVtex(page, _dataBRVtex, _dataIsoVtex);
+  let campoDataEncontrado = false;
+  if (resBD.ok && resBD.motivo && resBD.motivo.startsWith('re-preenchido')) {
+    console.log(`✅ Data de nascimento preenchida (${resBD.motivo}): ${resBD.valor}`);
+    campoDataEncontrado = true;
+  } else if (resBD.ok && resBD.motivo === 'ja-preenchido') {
+    console.log(`ℹ️ Data já preenchida: ${resBD.valor}`);
+    campoDataEncontrado = true;
+  } else if (resBD.ok && resBD.motivo === 'campo-desabilitado') {
+    console.log('ℹ️ Campo data de nascimento desabilitado (já validado)');
+    campoDataEncontrado = true;
+  } else {
+    console.log(`⚠️ Campo de data de nascimento não preenchido: ${resBD.motivo}`);
+  }
+
   if (!campoDataEncontrado) {
-    console.log('⚠️ Campo de data de nascimento não encontrado, listando inputs...');
     const inputs = await page.locator('input:visible').all();
     console.log(`   Total de inputs visíveis: ${inputs.length}`);
     for (let i = 0; i < Math.min(inputs.length, 10); i++) {
@@ -1192,7 +1185,7 @@ test('test-enem-sem-nota', async ({ page }) => {
       console.log(`   Input ${i}: name="${nome}", placeholder="${placeholder}", valor="${valor}"`);
     }
   }
-  
+
   await page.waitForTimeout(2000);
   
   // Clica no botão para próxima etapa (pode ser "Ir para o Endereço" ou "Ir para o pagamento")

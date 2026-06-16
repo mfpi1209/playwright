@@ -6,6 +6,13 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 const { validarPolo: validarPoloWhitelist } = require('./polos-atendidos');
+const {
+  safeEval,
+  passarEtapaEmail,
+  preencherDataNascimentoVtex,
+  calcularDatasNascimento,
+  contornarPromptCodigoOtp,
+} = require('./checkout-helpers');
 
 // Pasta padrão para arquivos gerados (acessível por todas as instâncias)
 const ARQUIVOS_DIR = process.env.ARQUIVOS_DIR || path.join(__dirname, '..', 'arquivos');
@@ -501,175 +508,9 @@ function desambiguarEmailParaVtex(emailOriginal, cpf) {
   return `${local}+${tag}@${dominio}`;
 }
 
-// Quando o cliente nao esta autenticado de fato (passwordless sem codigo), o checkout
-// VTEX renderiza a etapa #/email antes de #/profile. Se o spec ignorar isso, fica em
-// loop entre /profile e /email. Esse helper detecta #/email e avanca para /profile.
-async function passarEtapaEmail(page, email) {
-  if (!page.url().includes('#/email')) return false;
-  console.log('   📧 Etapa #/email detectada - tratando como visitante...');
-
-  const seletoresEmail = [
-    page.locator('#client-pre-email'),
-    page.locator('input[name="email"]:visible'),
-    page.locator('input[type="email"]:visible'),
-    page.getByRole('textbox', { name: /e[-]?mail/i }),
-  ];
-  for (const campo of seletoresEmail) {
-    try {
-      if (await campo.first().isVisible({ timeout: 2000 })) {
-        const atual = await campo.first().inputValue().catch(() => '');
-        if (!atual || atual.toLowerCase() !== email.toLowerCase()) {
-          await campo.first().click({ force: true });
-          await campo.first().fill('');
-          await campo.first().type(email, { delay: 40 });
-          console.log(`   ✅ Email da etapa #/email preenchido: ${email}`);
-        } else {
-          console.log(`   ✅ Email da etapa #/email já preenchido: ${atual}`);
-        }
-        break;
-      }
-    } catch (e) {}
-  }
-
-  await page.waitForTimeout(800);
-  const seletoresBtn = [
-    page.locator('#btn-go-to-shipping'),
-    page.getByRole('button', { name: /continuar/i }),
-    page.getByRole('button', { name: /pr[óo]xim[ao]/i }),
-    page.locator('button:has-text("Continuar")'),
-    page.locator('button:has-text("Avançar")'),
-  ];
-  for (const btn of seletoresBtn) {
-    try {
-      if (await btn.first().isVisible({ timeout: 2000 })) {
-        await btn.first().click({ force: true, timeout: 3000 }).catch(() => {});
-        console.log('   ✅ Clicou em Continuar na etapa #/email');
-        break;
-      }
-    } catch (e) {}
-  }
-  await page.waitForTimeout(1500);
-  await page.evaluate(async (em) => {
-    try {
-      const vj = window.vtexjs && window.vtexjs.checkout;
-      if (!vj) return;
-      const of = vj.orderForm || (await vj.getOrderForm());
-      if (!of || !of.orderFormId) return;
-      await fetch(`/api/checkout/pub/orderForm/${of.orderFormId}/attachments/clientProfileData`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: em, isCorporate: false }),
-      });
-    } catch (e) {}
-  }, email).catch(() => {});
-  await page.waitForTimeout(2000);
-  const novaUrl = page.url();
-  console.log(`   📍 URL após etapa #/email: ${novaUrl.split('#')[1] || novaUrl}`);
-  return novaUrl.includes('#/profile') || novaUrl.includes('#/shipping') || novaUrl.includes('#/payment');
-}
-
-// Wrapper "safe" para page.evaluate. Quando o checkout VTEX faz navegacao
-// automatica (cliente logado), o contexto JS do evaluate eh destruido e
-// gera "Execution context was destroyed". Este wrapper engole esse erro
-// especifico e retorna o fallback (sem propagar), para nao quebrar o spec.
-// Demais erros sao re-throw normalmente.
-async function safeEval(page, fn, arg, fallback) {
-  try {
-    return (arg !== undefined) ? await page.evaluate(fn, arg) : await page.evaluate(fn);
-  } catch (e) {
-    const msg = (e && e.message) || String(e);
-    if (msg.includes('Execution context was destroyed') || msg.includes('Target page, context or browser has been closed') || msg.includes('navigation')) {
-      return fallback;
-    }
-    throw e;
-  }
-}
-
-// Garante que o campo client-birthDate esta preenchido no momento da submissao.
-// O checkout VTEX da Cruzeiro renderiza o input como HTML5 type="date" e o
-// componente React tende a rejeitar tanto o setter nativo (via evaluate) quanto
-// o fill() simples. Estrategia em cascata:
-//   1) localiza o campo (varios seletores)
-//   2) scrolla para visivel
-//   3) tenta page.locator.fill(ISO) com retry
-//   4) se ainda vazio, usa keyboard.type() componente a componente (DD MM YYYY)
-//   5) verifica valor final via inputValue + dispatcha change para React
-async function garantirBirthDate(page, dataBR, dataIso) {
-  const sels = [
-    '#client-birthDate',
-    '#client-birth-date',
-    'input[name="birthDate"]',
-    'input[name="birth-date"]',
-    'input[type="date"]',
-    'input[placeholder*="dd/mm" i]',
-    'input[placeholder*="nascimento" i]',
-  ];
-  let loc = null;
-  let seletor = null;
-  for (const sel of sels) {
-    const cand = page.locator(sel).first();
-    try {
-      if (await cand.count() > 0 && await cand.isVisible({ timeout: 500 })) {
-        loc = cand;
-        seletor = sel;
-        break;
-      }
-    } catch (e) {}
-  }
-  if (!loc) return { ok: false, motivo: 'campo-nao-encontrado' };
-
-  const disabled = await loc.getAttribute('disabled').catch(() => null);
-  if (disabled !== null) return { ok: true, motivo: 'campo-desabilitado' };
-
-  const tipo = (await loc.getAttribute('type').catch(() => '')) || '';
-  const valorAtual = (await loc.inputValue().catch(() => '')) || '';
-  if (valorAtual && (valorAtual === dataBR || valorAtual === dataIso)) {
-    return { ok: true, motivo: 'ja-preenchido', valor: valorAtual, seletor, tipo };
-  }
-
-  await loc.scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
-
-  // Estrategia 1: fill direto (ISO para date, BR para text)
-  const valorPreencher = tipo === 'date' ? dataIso : dataBR;
-  try {
-    await loc.click({ force: true, timeout: 1500 });
-    await loc.fill('', { timeout: 1500 }).catch(() => {});
-    await loc.fill(valorPreencher, { timeout: 2000 });
-    await loc.dispatchEvent('change').catch(() => {});
-    await loc.press('Tab', { timeout: 1000 }).catch(() => {});
-  } catch (e) {}
-
-  let v = (await loc.inputValue().catch(() => '')) || '';
-  if (v) return { ok: true, motivo: 're-preenchido-fill', valor: v, seletor, tipo };
-
-  // Estrategia 2: keyboard.type componente a componente (DD MM YYYY)
-  // HTML5 date inputs aceitam digitacao sequencial dos campos dia/mes/ano.
-  if (dataBR && dataBR.includes('/')) {
-    const [dd, mm, yyyy] = dataBR.split('/');
-    try {
-      await loc.click({ force: true, timeout: 1500 });
-      await page.keyboard.type(dd, { delay: 50 });
-      await page.keyboard.type(mm, { delay: 50 });
-      await page.keyboard.type(yyyy, { delay: 50 });
-      await loc.dispatchEvent('change').catch(() => {});
-      await loc.press('Tab', { timeout: 1000 }).catch(() => {});
-    } catch (e) {}
-  }
-
-  v = (await loc.inputValue().catch(() => '')) || '';
-  if (v) return { ok: true, motivo: 're-preenchido-keyboard', valor: v, seletor, tipo };
-
-  // Estrategia 3 (ultimo recurso): pressKey iso direto
-  try {
-    await loc.click({ force: true, timeout: 1500 });
-    await loc.pressSequentially(valorPreencher, { delay: 60, timeout: 3000 });
-    await loc.dispatchEvent('change').catch(() => {});
-    await loc.press('Tab', { timeout: 1000 }).catch(() => {});
-  } catch (e) {}
-
-  v = (await loc.inputValue().catch(() => '')) || '';
-  return { ok: !!v, motivo: v ? 're-preenchido-press' : 'falha-fill', valor: v, seletor, tipo };
-}
+// passarEtapaEmail, safeEval e preencherDataNascimentoVtex agora vivem em
+// tests/checkout-helpers.js para serem reaproveitados por todos os specs
+// de inscricao (vestibular, ENEM, transferencia, etc). Veja imports no topo.
 
 // Função DESABILITADA - não mover o mouse para evitar popup "Antes de Você Sair"
 async function manterCursorNaTela(page) {
@@ -3665,11 +3506,12 @@ test('inscricao-pos', async ({ page, context }) => {
       }
 
       // Garante birthDate preenchido antes de cada tentativa. Diagnostico mostrou
-      // que o VTEX rebuilds o form e perde o valor. A helper tenta fill,
-      // keyboard.type componente a componente, e pressSequentially em cascata.
+      // que o VTEX rebuilds o form e perde o valor. Helper preencherDataNascimentoVtex
+      // tenta valueAsDate (UNICA que funciona no React HTML5 date), keyboard.type
+      // e fill() em cascata. Compartilhada em tests/checkout-helpers.js.
       if (_dataBR) {
-        const resBD = await garantirBirthDate(page, _dataBR, _dataIso);
-        const detalhe = `(seletor=${resBD.seletor || '-'} tipo=${resBD.tipo || '-'})`;
+        const resBD = await preencherDataNascimentoVtex(page, _dataBR, _dataIso);
+        const detalhe = `(tipo=${resBD.tipo || '-'})`;
         if (resBD.ok && resBD.motivo && resBD.motivo.startsWith('re-preenchido')) {
           console.log(`   🔁 birthDate ${resBD.motivo}: ${resBD.valor} ${detalhe}`);
         } else if (resBD.ok && resBD.motivo === 'ja-preenchido') {
@@ -4000,7 +3842,7 @@ test('inscricao-pos', async ({ page, context }) => {
         // inteira, fazendo o usuario ver "recarregamento idiota". Recarregar nao
         // resolve o problema do birthDate (e ainda perde estado de sessao), entao
         // foi REMOVIDO. Se chegou na tentativa 4 sem avancar, vamos confiar na
-        // helper garantirBirthDate + diagnostico visual para a proxima rodada.
+        // helper preencherDataNascimentoVtex + diagnostico visual para a proxima rodada.
       }
     }
     } // fecha else do caminho simples (fallbacks)

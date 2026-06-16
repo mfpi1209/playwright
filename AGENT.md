@@ -168,3 +168,28 @@ Validação local com `vinips2012@gmail.com` (email já existente no VTEX): **pe
 - Validação local com `--config=playwright.config.server.js` (mesmo do servidor): `vtexjs` voltou a carregar (`api-ok` em vez de `sem-vtexjs`), data de nascimento foi preenchida, CEP e número aceitos via API VTEX. O sintoma raiz reportado pelo usuário foi corrigido.
 - Sintoma secundário observado em local headless (checkout não avançou de `/profile` em algumas tentativas) pode ser causado por estado VTEX preexistente desse perfil ou por limitação residual de stealth+headless — será reavaliado após teste no servidor.
 
+---
+
+### 2026-06-16 — Extração de `tests/checkout-helpers.js` e propagação dos fixes do POS para os specs de Vestibular, ENEM, ENEM sem nota e Transferência
+
+**Decisão:** Criar o módulo compartilhado `tests/checkout-helpers.js` exportando `safeEval`, `passarEtapaEmail`, `preencherDataNascimentoVtex`, `calcularDatasNascimento` e `contornarPromptCodigoOtp`. Refatorar `tests/inscricao-pos.spec.js` para importar do módulo (remove ~165 linhas duplicadas) e aplicar nos 4 specs irmãos: `tests/inscricao.spec.js` (Vestibular Múltipla Escolha), `tests/inscricao-enem.spec.js`, `tests/inscricao-enem-sem-nota.spec.js` e `tests/inscricao-transferencia.spec.js`.
+
+**Contexto:** Durante a estabilização do `inscricao-pos.spec.js` foram descobertos 3 problemas estruturais no checkout VTEX da Cruzeiro que se aplicam a TODOS os fluxos de inscrição, não apenas Pós:
+1. **Cliente com email já cadastrado** entra em loop `#/profile ↔ #/email` quando o spec não trata a etapa de identificação.
+2. **Campo `client-birthDate`** (HTML5 `type="date"`) é rejeitado pelo componente React do VTEX quando se usa `fill()`, `keyboard.type()` direto ou setter nativo via `evaluate`. A ÚNICA estratégia que persiste o valor é `HTMLInputElement.valueAsDate = new Date(iso + 'T00:00:00')` + dispatch de `input`/`change`/`blur`. Descoberta empírica validada após N rodadas.
+3. **`page.evaluate` desprotegido** quebra com `Execution context was destroyed` quando o checkout VTEX (SPA) faz navegação automática no meio do callback (ex.: cliente logado redireciona de `/profile` para `/shipping` enquanto o evaluate ainda está rodando). Wrapper `safeEval` engole esse erro específico e retorna fallback.
+
+Inspeção dos 4 specs irmãos confirmou que todos usavam o mesmo padrão antigo: loop sobre `seletoresData = [input[name*="birthDate"], input[type="date"], ...]` + `await campo.type(CLIENTE.nascimento, { delay: 50 })`. Nenhum tratava `#/email` nem usava `safeEval`. A correção no POS sem propagação geraria regressão silenciosa quando outros tipos de inscrição fossem disparados pelo `server.js` com email já existente.
+
+**Alternativas descartadas:**
+- *Copiar os 3 helpers in-line em cada spec (duplicação aceita)*: economiza 1 require por arquivo, mas qualquer bug encontrado a partir de agora teria que ser corrigido em 5 lugares. Inviável para o ritmo atual de iteração.
+- *Aguardar problema aparecer em produção em cada outro tipo de inscrição antes de propagar*: o usuário rodaria com email já existente em um ENEM/Vestibular e veria o mesmo loop `/profile ↔ /email` que já diagnosticamos no POS. Decisão correta é propagar agora.
+- *Aplicar também em `inscricao-pos-gravado.spec.js`*: PULADO intencionalmente. É um spec gerado pelo Playwright codegen (sequência hardcoded de cliques), faz login admin + impersonate (linhas 4-17), não tem `CLIENTE` dinâmico e a etapa de data já usa `.fill('1980-09-12')` em formato ISO. Por ser pré-autenticado, não cai na etapa `#/email`. Modificar este spec mudaria a semântica de algo experimental/debug.
+
+**Impacto:**
+- 1 arquivo novo: `tests/checkout-helpers.js` (~230 linhas; 5 exports CommonJS).
+- `tests/inscricao-pos.spec.js`: removidas as definições locais de `passarEtapaEmail`, `safeEval` e `garantirBirthDate` (~165 linhas), adicionado require do módulo compartilhado, e substituído `garantirBirthDate` por `preencherDataNascimentoVtex` (helper agora usa `valueAsDate` como estratégia primária A, em vez de fallback). Comportamento preservado e ligeiramente melhor (estratégia que comprovadamente funciona vira a primeira tentativa).
+- `tests/inscricao.spec.js`, `tests/inscricao-enem.spec.js`, `tests/inscricao-enem-sem-nota.spec.js`, `tests/inscricao-transferencia.spec.js`: cada um recebeu require do módulo + handler `passarEtapaEmail` antes da etapa de Dados Pessoais + substituição do loop antigo de seletores de data pela chamada de `preencherDataNascimentoVtex`. ~40 linhas removidas e ~25 adicionadas por arquivo (saldo: -15 linhas/arquivo).
+- `tests/inscricao-pos-gravado.spec.js`: não modificado (motivo registrado nas alternativas descartadas).
+- Sem novas dependências. Sem mudança de configuração. Sem mudança de comportamento esperada para clientes/emails 100% novos. Para emails já existentes em VTEX, os 4 specs irmãos agora têm o mesmo comportamento defensivo do POS.
+
