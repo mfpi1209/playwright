@@ -1032,16 +1032,57 @@ test('inscricao-pos', async ({ page, context }) => {
 
         await page.waitForTimeout(3000);
 
-        // Segundo clique: VTEX pode mostrar "Entrar" de novo para confirmar
-        try {
-          const btnEntrar2 = page.getByRole('button', { name: 'Entrar' });
-          if (await btnEntrar2.isVisible({ timeout: 3000 })) {
-            await btnEntrar2.click({ timeout: 3000 }).catch(() => {});
-            console.log('   ✅ Clicou em "Entrar" (2º clique - confirmação)');
+        // Quando o email JA EXISTE no VTEX, aparece prompt de codigo por email
+        // (OTP). O spec nao tem como digitar o codigo (rodando no servidor).
+        // Workaround validado empiricamente: navegar para /pos-graduacao fecha
+        // o prompt e a sessao "visitante com email lembrado" segue valida para
+        // o resto do checkout. Combinado com o handler #/email da Etapa 10,
+        // cobre o caso de email ja existente.
+        const promptCodigoVisivel = await (async () => {
+          const seletores = [
+            page.locator('input[maxlength="6"]:visible').first(),
+            page.locator('input[name*="otp" i]:visible').first(),
+            page.locator('input[name*="code" i]:visible').first(),
+            page.locator('input[placeholder*="código" i]:visible').first(),
+            page.locator('input[placeholder*="codigo" i]:visible').first(),
+            page.locator('text=/use o c[óo]digo/i').first(),
+            page.locator('text=/digite o c[óo]digo/i').first(),
+            page.locator('text=/enviamos um c[óo]digo/i').first(),
+            page.locator('text=/verifique seu e[-]?mail/i').first(),
+            page.locator('text=/n[ãa]o recebi/i').first(),
+          ];
+          for (const s of seletores) {
+            try {
+              if (await s.isVisible({ timeout: 800 })) return true;
+            } catch (e) {}
           }
-        } catch (e) {}
+          return false;
+        })();
 
-        loginClienteOk = true;
+        if (promptCodigoVisivel) {
+          console.log('   📧 Prompt de código detectado (email já existe no VTEX)');
+          console.log('   🔄 Contornando: navegando para /pos-graduacao (sessão visitante com email é preservada)');
+          try {
+            await page.goto('https://cruzeirodosul.myvtex.com/pos-graduacao', { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await page.waitForTimeout(2500);
+            await fecharModais(page).catch(() => {});
+            console.log('   ✅ Contorno aplicado, seguindo para busca do curso');
+          } catch (eGoto) {
+            console.log(`   ⚠️ Erro ao navegar para /pos-graduacao: ${eGoto.message.substring(0, 60)}`);
+          }
+          loginClienteOk = true;
+        } else {
+          // Segundo clique: VTEX pode mostrar "Entrar" de novo para confirmar
+          try {
+            const btnEntrar2 = page.getByRole('button', { name: 'Entrar' });
+            if (await btnEntrar2.isVisible({ timeout: 3000 })) {
+              await btnEntrar2.click({ timeout: 3000 }).catch(() => {});
+              console.log('   ✅ Clicou em "Entrar" (2º clique - confirmação)');
+            }
+          } catch (e) {}
+
+          loginClienteOk = true;
+        }
       } catch (e) {
         console.log(`   ⚠️ Erro ao clicar Entrar: ${e.message.substring(0, 60)}`);
         continue;
@@ -3236,45 +3277,59 @@ test('inscricao-pos', async ({ page, context }) => {
   
   console.log('   📝 Navegando no checkout VTEX...');
   
-  // Usa JavaScript para entender e navegar no checkout VTEX
-  const statusCheckout = await page.evaluate(() => {
-    // Verifica quais seções existem e estão visíveis
-    const sections = {
-      profile: document.querySelector('#client-profile-data'),
-      shipping: document.querySelector('#shipping-data'),
-      payment: document.querySelector('#payment-data')
-    };
-    
-    // Verifica se cada seção está ativa/expandida
-    const isActive = (section) => {
-      if (!section) return false;
-      return section.classList.contains('active') || 
-             section.classList.contains('accordion-inner-show') ||
-             section.querySelector('.accordion-inner-show') !== null;
-    };
-    
-    // Procura o link real para ir para shipping (não o fake-button)
-    const linkShipping = document.querySelector('#go-to-shipping') ||
-                         document.querySelector('a[href="#/shipping"]') ||
-                         document.querySelector('.link-box-edit[data-i18n*="shipping"]');
-    
-    // Procura campos de endereço
-    const campoCep = document.querySelector('#ship-postalCode') ||
-                     document.querySelector('input[name="postalCode"]') ||
-                     document.querySelector('input[id*="postalCode"]');
-    
-    return {
-      hasProfile: !!sections.profile,
-      hasShipping: !!sections.shipping,
-      hasPayment: !!sections.payment,
-      profileActive: isActive(sections.profile),
-      shippingActive: isActive(sections.shipping),
-      paymentActive: isActive(sections.payment),
-      hasLinkShipping: !!linkShipping,
-      hasCampoCep: !!campoCep,
-      campoCepVisible: campoCep ? campoCep.offsetParent !== null : false
-    };
-  });
+  // Usa JavaScript para entender e navegar no checkout VTEX.
+  // O evaluate pode ser interrompido se o checkout navegar no meio (cliente logado
+  // de verdade faz o VTEX auto-avancar de /profile para /shipping), entao protegemos
+  // com try/catch + retry leve. Defaults seguros para nao quebrar o fluxo abaixo.
+  let statusCheckout = {
+    hasProfile: false, hasShipping: false, hasPayment: false,
+    profileActive: false, shippingActive: false, paymentActive: false,
+    hasLinkShipping: false, hasCampoCep: false, campoCepVisible: false,
+  };
+  for (let tEval = 0; tEval < 3; tEval++) {
+    try {
+      statusCheckout = await page.evaluate(() => {
+        const sections = {
+          profile: document.querySelector('#client-profile-data'),
+          shipping: document.querySelector('#shipping-data'),
+          payment: document.querySelector('#payment-data')
+        };
+        const isActive = (section) => {
+          if (!section) return false;
+          return section.classList.contains('active') || 
+                 section.classList.contains('accordion-inner-show') ||
+                 section.querySelector('.accordion-inner-show') !== null;
+        };
+        const linkShipping = document.querySelector('#go-to-shipping') ||
+                             document.querySelector('a[href="#/shipping"]') ||
+                             document.querySelector('.link-box-edit[data-i18n*="shipping"]');
+        const campoCep = document.querySelector('#ship-postalCode') ||
+                         document.querySelector('input[name="postalCode"]') ||
+                         document.querySelector('input[id*="postalCode"]');
+        return {
+          hasProfile: !!sections.profile,
+          hasShipping: !!sections.shipping,
+          hasPayment: !!sections.payment,
+          profileActive: isActive(sections.profile),
+          shippingActive: isActive(sections.shipping),
+          paymentActive: isActive(sections.payment),
+          hasLinkShipping: !!linkShipping,
+          hasCampoCep: !!campoCep,
+          campoCepVisible: campoCep ? campoCep.offsetParent !== null : false
+        };
+      });
+      break;
+    } catch (eEval) {
+      const msg = (eEval && eEval.message) || String(eEval);
+      if (msg.includes('Execution context was destroyed') || msg.includes('navigation')) {
+        console.log(`   ⏳ Checkout navegou durante diagnóstico, re-tentando (${tEval + 1}/3)...`);
+        await page.waitForTimeout(1500);
+      } else {
+        console.log(`   ⚠️ Erro inesperado no diagnóstico: ${msg.substring(0, 80)}`);
+        break;
+      }
+    }
+  }
   
   // Status checkout para decisão interna (log só se necessário debug)
   

@@ -41,6 +41,25 @@ Este arquivo registra decisões estruturais (escolhas de stack, padrão, mudanç
 
 ---
 
+### 2026-06-16 — Login da Etapa 3 cobre email já existente (prompt código) + `evaluate` defensivo
+
+**Decisão:** Tratar explicitamente o caso de "email já existe no VTEX" na Etapa 3 (Login Cliente). Após clicar "Entrar", detectar se aparece prompt de código por email (OTP) — situação que ocorre quando o email já tem conta — e contornar navegando para `/pos-graduacao` sem inserir código. A sessão "visitante com email lembrado" segue válida para o restante do checkout. Adicionar também um wrapper defensivo em volta do `page.evaluate` do diagnóstico de checkout na Etapa 9, que pode ser interrompido por navegação automática quando o cliente está realmente logado.
+
+**Contexto:** Validação empírica do usuário: "a página que aparece para receber o código via email é só dar refresh ou clicar nos cursos (para já pesquisar o curso da inscrição)". Implementação detecta inputs e textos típicos do prompt de OTP (`input[maxlength="6"]`, "use o código", "verifique seu e-mail", "não recebi", etc.) e, se detectado, navega para `https://cruzeirodosul.myvtex.com/pos-graduacao` em vez de tentar digitar o código (impossível no servidor headless). Após o contorno, o spec continua para a Etapa 4 (Busca do Curso) normalmente.
+
+Validação local com `vinips2012@gmail.com` (email já existente no VTEX): **pela primeira vez** o log mostrou `✅ Login confirmado (header "Olá" visível)` para email existente. Isso libera o restante do checkout para tentar progredir com cliente autenticado.
+
+**Alternativas descartadas:**
+- *Tentar inserir o código por email automaticamente:* exigiria leitura programática do email (IMAP/SMTP), credenciais adicionais e tempo de espera. Inviável para o servidor síncrono.
+- *Continuar dependendo do passwordless sem reagir ao prompt:* mantinha o comportamento de "Login pode não ter funcionado (sem 'Olá' no header)" e bloqueava o caso comum de cliente reincidente.
+
+**Impacto:**
+- `tests/inscricao-pos.spec.js`: detector inline do prompt de código + bloco de contorno (~40 linhas) dentro do loop de retry da Etapa 3, antes do 2º clique "Entrar". Quando o prompt NÃO aparece (email novo), o fluxo segue como antes (2º clique de confirmação + marcação `loginClienteOk = true`).
+- `tests/inscricao-pos.spec.js`: wrapper try/catch + 3 retries em volta do `page.evaluate` do diagnóstico de checkout (Etapa 9, antes da navegação para shipping). Necessário porque com cliente logado de verdade, o VTEX pode auto-avançar de `/profile` para `/shipping` no meio do evaluate e destruir o contexto de execução.
+- Resultado parcial: Etapa 3 agora cobre email existente (login confirmado). Etapas 9/10 progrediram além do ponto de antes, mas o checkout ainda pode travar em loop `/profile` ↔ `/email` para clientes com dados de Master Data CL incompletos (provável falta de campos como `motherName`, `rg` ou outros customizados pela Cruzeiro). Investigação dessa última camada fica para uma próxima rodada.
+
+---
+
 ### 2026-06-16 — Robustez extra no `inscricao-pos.spec.js`: `birthDate`, handler `/email`, alias VTEX opcional
 
 **Decisão:** Adicionar três camadas defensivas ao `inscricao-pos.spec.js` para o caso de cliente já existente no VTEX (email JÁ tem conta), sem mexer no fluxo de login do cliente (que segue passwordless). Mudanças combinadas:
