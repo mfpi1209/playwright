@@ -568,56 +568,107 @@ async function passarEtapaEmail(page, email) {
   return novaUrl.includes('#/profile') || novaUrl.includes('#/shipping') || novaUrl.includes('#/payment');
 }
 
+// Wrapper "safe" para page.evaluate. Quando o checkout VTEX faz navegacao
+// automatica (cliente logado), o contexto JS do evaluate eh destruido e
+// gera "Execution context was destroyed". Este wrapper engole esse erro
+// especifico e retorna o fallback (sem propagar), para nao quebrar o spec.
+// Demais erros sao re-throw normalmente.
+async function safeEval(page, fn, arg, fallback) {
+  try {
+    return (arg !== undefined) ? await page.evaluate(fn, arg) : await page.evaluate(fn);
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    if (msg.includes('Execution context was destroyed') || msg.includes('Target page, context or browser has been closed') || msg.includes('navigation')) {
+      return fallback;
+    }
+    throw e;
+  }
+}
+
 // Garante que o campo client-birthDate esta preenchido no momento da submissao.
-// Diagnostico visual (screenshots debug-checkout-stuck-*.png) mostrou que o checkout
-// VTEX da Cruzeiro renderiza o input de birthDate como HTML5 type="date" e o React
-// rejeita o setter nativo (valor zera apos o re-render). A abordagem confiavel e
-// usar a API do Playwright (simula teclado real) com fill() do valor ISO (yyyy-mm-dd),
-// que e o formato que HTML5 date inputs sempre aceitam, e disparar blur (Tab) para
-// que o React reconheca a mudanca. Aceita data BR (08/09/2000) ou ISO (2000-09-08).
+// O checkout VTEX da Cruzeiro renderiza o input como HTML5 type="date" e o
+// componente React tende a rejeitar tanto o setter nativo (via evaluate) quanto
+// o fill() simples. Estrategia em cascata:
+//   1) localiza o campo (varios seletores)
+//   2) scrolla para visivel
+//   3) tenta page.locator.fill(ISO) com retry
+//   4) se ainda vazio, usa keyboard.type() componente a componente (DD MM YYYY)
+//   5) verifica valor final via inputValue + dispatcha change para React
 async function garantirBirthDate(page, dataBR, dataIso) {
   const sels = [
     '#client-birthDate',
     '#client-birth-date',
     'input[name="birthDate"]',
     'input[name="birth-date"]',
-    'input[type="date"]:visible',
+    'input[type="date"]',
     'input[placeholder*="dd/mm" i]',
     'input[placeholder*="nascimento" i]',
   ];
+  let loc = null;
+  let seletor = null;
   for (const sel of sels) {
-    const loc = page.locator(sel).first();
+    const cand = page.locator(sel).first();
     try {
-      if (!(await loc.isVisible({ timeout: 800 }))) continue;
-      const disabled = await loc.getAttribute('disabled').catch(() => null);
-      if (disabled !== null) {
-        return { ok: true, motivo: 'campo-desabilitado' };
+      if (await cand.count() > 0 && await cand.isVisible({ timeout: 500 })) {
+        loc = cand;
+        seletor = sel;
+        break;
       }
-      const valorAtual = (await loc.inputValue().catch(() => '')) || '';
-      if (valorAtual && (valorAtual === dataBR || valorAtual === dataIso)) {
-        return { ok: true, motivo: 'ja-preenchido', valor: valorAtual };
-      }
-      // HTML5 date input sempre aceita ISO; text com mascara aceita BR.
-      // Tentamos ISO primeiro (cobre o caso comum do checkout VTEX Cruzeiro).
-      const tipo = (await loc.getAttribute('type').catch(() => '')) || '';
-      const valorPreencher = tipo === 'date' ? dataIso : dataBR;
-      await loc.click({ force: true, timeout: 1500 }).catch(() => {});
-      await loc.fill('', { timeout: 1500 }).catch(() => {});
-      await loc.fill(valorPreencher, { timeout: 2500 });
-      await loc.press('Tab', { timeout: 1500 }).catch(() => {});
-      const valorFinal = (await loc.inputValue().catch(() => '')) || '';
-      if (!valorFinal && tipo !== 'date') {
-        // Fallback: tenta o outro formato
-        await loc.fill(dataIso, { timeout: 2500 }).catch(() => {});
-        await loc.press('Tab', { timeout: 1500 }).catch(() => {});
-      }
-      const valorReal = (await loc.inputValue().catch(() => '')) || '';
-      return { ok: !!valorReal, motivo: valorReal ? 're-preenchido' : 'falha-fill', valor: valorReal, seletor: sel, tipo };
-    } catch (e) {
-      // tenta proximo seletor
-    }
+    } catch (e) {}
   }
-  return { ok: false, motivo: 'campo-nao-encontrado' };
+  if (!loc) return { ok: false, motivo: 'campo-nao-encontrado' };
+
+  const disabled = await loc.getAttribute('disabled').catch(() => null);
+  if (disabled !== null) return { ok: true, motivo: 'campo-desabilitado' };
+
+  const tipo = (await loc.getAttribute('type').catch(() => '')) || '';
+  const valorAtual = (await loc.inputValue().catch(() => '')) || '';
+  if (valorAtual && (valorAtual === dataBR || valorAtual === dataIso)) {
+    return { ok: true, motivo: 'ja-preenchido', valor: valorAtual, seletor, tipo };
+  }
+
+  await loc.scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
+
+  // Estrategia 1: fill direto (ISO para date, BR para text)
+  const valorPreencher = tipo === 'date' ? dataIso : dataBR;
+  try {
+    await loc.click({ force: true, timeout: 1500 });
+    await loc.fill('', { timeout: 1500 }).catch(() => {});
+    await loc.fill(valorPreencher, { timeout: 2000 });
+    await loc.dispatchEvent('change').catch(() => {});
+    await loc.press('Tab', { timeout: 1000 }).catch(() => {});
+  } catch (e) {}
+
+  let v = (await loc.inputValue().catch(() => '')) || '';
+  if (v) return { ok: true, motivo: 're-preenchido-fill', valor: v, seletor, tipo };
+
+  // Estrategia 2: keyboard.type componente a componente (DD MM YYYY)
+  // HTML5 date inputs aceitam digitacao sequencial dos campos dia/mes/ano.
+  if (dataBR && dataBR.includes('/')) {
+    const [dd, mm, yyyy] = dataBR.split('/');
+    try {
+      await loc.click({ force: true, timeout: 1500 });
+      await page.keyboard.type(dd, { delay: 50 });
+      await page.keyboard.type(mm, { delay: 50 });
+      await page.keyboard.type(yyyy, { delay: 50 });
+      await loc.dispatchEvent('change').catch(() => {});
+      await loc.press('Tab', { timeout: 1000 }).catch(() => {});
+    } catch (e) {}
+  }
+
+  v = (await loc.inputValue().catch(() => '')) || '';
+  if (v) return { ok: true, motivo: 're-preenchido-keyboard', valor: v, seletor, tipo };
+
+  // Estrategia 3 (ultimo recurso): pressKey iso direto
+  try {
+    await loc.click({ force: true, timeout: 1500 });
+    await loc.pressSequentially(valorPreencher, { delay: 60, timeout: 3000 });
+    await loc.dispatchEvent('change').catch(() => {});
+    await loc.press('Tab', { timeout: 1000 }).catch(() => {});
+  } catch (e) {}
+
+  v = (await loc.inputValue().catch(() => '')) || '';
+  return { ok: !!v, motivo: v ? 're-preenchido-press' : 'falha-fill', valor: v, seletor, tipo };
 }
 
 // Função DESABILITADA - não mover o mouse para evitar popup "Antes de Você Sair"
@@ -2344,9 +2395,23 @@ test('inscricao-pos', async ({ page, context }) => {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(500);
     
-    // Tenta clicar até 3 vezes
+    // Tenta clicar até 3 vezes. ATENCAO: dependendo do curso/contexto, o VTEX
+    // pode pular direto para /checkout/#/cart (ou /#/profile, /#/email) sem
+    // passar pela pagina de campanha-comercial. Isso e SUCESSO, nao falha:
+    // a Etapa 8 (Carrinho) cuidara do proximo passo. Re-clicar "Continuar
+    // Inscricao" no carrinho 3x e desperdicio de tempo e pode causar efeitos
+    // colaterais. Por isso checamos /checkout/ como sucesso valido.
     let navegouParaCampanha = false;
     for (let tentativa = 1; tentativa <= 3 && !navegouParaCampanha; tentativa++) {
+      // Se ja estamos no checkout (cart/profile/email/shipping), pula sem re-clicar
+      const urlPre = page.url();
+      if (urlPre.includes('/checkout/') || urlPre.includes('/campanha-comercial')) {
+        const destino = urlPre.includes('/checkout/') ? (urlPre.split('#')[1] || urlPre) : 'campanha-comercial';
+        console.log(`   ✅ Já estamos em ${destino}, pulando re-cliques desnecessários`);
+        navegouParaCampanha = true;
+        break;
+      }
+
       console.log(`   🔄 Tentativa ${tentativa}/3 de clicar em Continuar Inscrição...`);
       
       try {
@@ -2366,11 +2431,19 @@ test('inscricao-pos', async ({ page, context }) => {
         }
       }
       
-      // Aguarda navegação para página de campanha
+      // Aguarda navegação para campanha OU checkout (qualquer um e sucesso)
       console.log('   ⏳ Aguardando navegação...');
       try {
-        await page.waitForURL('**/campanha-comercial**', { timeout: 15000 });
-        console.log('   ✅ Navegou para página de campanha');
+        await Promise.race([
+          page.waitForURL('**/campanha-comercial**', { timeout: 15000 }),
+          page.waitForURL('**/checkout/**', { timeout: 15000 }),
+        ]);
+        const urlPos = page.url();
+        if (urlPos.includes('/checkout/')) {
+          console.log(`   ✅ Pulou direto para o checkout: ${urlPos.split('#')[1] || urlPos}`);
+        } else {
+          console.log('   ✅ Navegou para página de campanha');
+        }
         navegouParaCampanha = true;
       } catch (e) {
         console.log(`   ⚠️ Tentativa ${tentativa}: não navegou ainda`);
@@ -2785,121 +2858,67 @@ test('inscricao-pos', async ({ page, context }) => {
     console.log('');
   } else {
   
-  await page.waitForTimeout(2000);
-  
+  await page.waitForTimeout(1000);
+
   // ══════════════════════════════════════════════════════════════════════
-  // Detecta popup "Aviso Importante" / inconsistência no cadastro
-  // Se detectado, PARA o fluxo e retorna erro (não continua a inscrição)
+  // Detecta popup BLOQUEANTE de inconsistencia no cadastro (raro).
+  // ATENCAO: o popup informativo "Atencao: A primeira mensalidade equivale
+  // a matricula..." NAO eh bloqueante. So bloqueia se o titulo for
+  // EXATAMENTE "Aviso Importante" E o corpo contem "inconsist".
+  // Captura mensagem APENAS de modais/overlays visiveis (nao da pagina
+  // inteira), evitando confundir com texto de menu/footer.
   // ══════════════════════════════════════════════════════════════════════
   try {
-    // Verifica especificamente "Aviso Importante" e "inconsistência"
     const avisoImportante = page.locator('text=Aviso Importante').first();
     const inconsistencia = page.locator('text=/inconsist/i').first();
-    const atencao = page.locator('text=Atenção').first();
-    
-    let popupBloqueante = false;
-    let mensagemPopup = '';
-    
-    // Checa os textos-chave do popup
-    const temAviso = await avisoImportante.isVisible({ timeout: 3000 }).catch(() => false);
-    const temInconsistencia = await inconsistencia.isVisible({ timeout: 1000 }).catch(() => false);
-    const temAtencao = await atencao.isVisible({ timeout: 1000 }).catch(() => false);
-    
-    if (temAviso || temInconsistencia || temAtencao) {
-      console.log('   📍 Popup detectado!');
-      
-      // Captura TODO o texto visível da página (o popup está por cima)
-      mensagemPopup = await page.evaluate(() => {
-        // Estratégia 1: Buscar todos os elementos visíveis que contenham texto relevante
-        const todosElementos = document.querySelectorAll('*');
-        const textos = [];
-        
-        for (const el of todosElementos) {
-          if (el.offsetParent === null) continue;
-          if (['SCRIPT', 'STYLE', 'META', 'LINK'].includes(el.tagName)) continue;
-          
-          // Pega texto direto (sem filhos) para evitar duplicação
-          const textoDirecto = Array.from(el.childNodes)
-            .filter(n => n.nodeType === 3) // TEXT_NODE
-            .map(n => n.textContent.trim())
-            .filter(t => t.length > 0)
-            .join(' ');
-          
-          if (textoDirecto && (
-            textoDirecto.toLowerCase().includes('aviso') ||
-            textoDirecto.toLowerCase().includes('inconsist') ||
-            textoDirecto.toLowerCase().includes('cadastro') ||
-            textoDirecto.toLowerCase().includes('contato') ||
-            textoDirecto.toLowerCase().includes('verificamos')
-          )) {
-            textos.push(textoDirecto);
-          }
-        }
-        
-        if (textos.length > 0) return textos.join(' ').substring(0, 500);
-        
-        // Estratégia 2: Pega texto do overlay/modal mais próximo
+    const temAviso = await avisoImportante.isVisible({ timeout: 1500 }).catch(() => false);
+    const temInconsistencia = await inconsistencia.isVisible({ timeout: 500 }).catch(() => false);
+
+    if (temAviso && temInconsistencia) {
+      const mensagemPopup = await page.evaluate(() => {
         const overlays = document.querySelectorAll(
           '[class*="modal"], [class*="overlay"], [class*="popup"], [class*="dialog"], ' +
           '[class*="alert"], [class*="aviso"], [role="dialog"], [role="alertdialog"]'
         );
         for (const ov of overlays) {
           if (ov.offsetParent !== null) {
-            const t = ov.textContent?.trim().replace(/\s+/g, ' ').substring(0, 500);
-            if (t && t.length > 10) return t;
+            const t = (ov.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 500);
+            if (t && /aviso importante/i.test(t) && /inconsist/i.test(t)) return t;
           }
         }
-        
         return '';
       }).catch(() => '');
-      
-      // Se não capturou texto via JS, tenta via Playwright
-      if (!mensagemPopup) {
-        if (temAviso) {
-          const parent = avisoImportante.locator('xpath=ancestor::*[3]');
-          mensagemPopup = await parent.textContent().catch(() => '');
-          mensagemPopup = mensagemPopup?.trim().replace(/\s+/g, ' ').substring(0, 500) || '';
-        }
-      }
-      
-      // Fallback hardcoded se nada funcionou mas sabemos que o popup existe
-      if (!mensagemPopup && (temAviso || temInconsistencia)) {
-        mensagemPopup = 'Aviso Importante: Verificamos que há alguma inconsistência em seu cadastro.';
-      }
-      
-      console.log(`   📋 Mensagem: ${mensagemPopup}`);
-      
-      // Screenshot do popup
-      await page.screenshot({ path: `debug-aviso-importante-${Date.now()}.png`, fullPage: true }).catch(() => {});
-      
-      // Verifica se é um popup bloqueante (inconsistência)
-      const msgLower = mensagemPopup.toLowerCase();
-      if (msgLower.includes('inconsist') || msgLower.includes('aviso importante') || msgLower.includes('cadastro')) {
-        popupBloqueante = true;
+
+      if (mensagemPopup) {
+        console.log(`   ❌ Popup bloqueante (Aviso Importante + Inconsistência) detectado`);
         console.log(`ALERTA_INSCRICAO: ${mensagemPopup}`);
-        console.log('   ❌ Popup de inconsistência detectado - inscrição não pode prosseguir');
-        
-        // Clica em OK para fechar
+        await page.screenshot({ path: `debug-aviso-importante-${Date.now()}.png`, fullPage: true }).catch(() => {});
         const btnOk = page.locator('button:has-text("Ok"), button:has-text("OK")').first();
-        if (await btnOk.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await btnOk.click({ force: true });
-          console.log('   ✅ Clicou em OK');
+        if (await btnOk.isVisible({ timeout: 1500 }).catch(() => false)) {
+          await btnOk.click({ force: true }).catch(() => {});
         } else {
-          await page.keyboard.press('Escape');
+          await page.keyboard.press('Escape').catch(() => {});
         }
-        await page.waitForTimeout(1000);
-        
-        // ENCERRA O TESTE - não continua a inscrição
-        return;
+        await page.waitForTimeout(800);
+        return; // encerra teste apenas neste caso comprovadamente bloqueante
       }
-      
-      // Se não é bloqueante, apenas fecha
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
     }
   } catch (e) {
-    console.log(`   ⚠️ Erro ao verificar popup: ${e.message.split('\n')[0]}`);
+    // segue sem bloquear
   }
+
+  // Popup informativo "Atencao: primeira mensalidade equivale a matricula..."
+  // eh esperado e nao bloqueante. So fechamos para liberar o botao de baixo.
+  try {
+    const btnFecharPopup = page.locator(
+      '.vtex-modal__close, button[aria-label="close"], button[aria-label="Fechar"], .close-button, [class*="popupExitClose"]'
+    ).first();
+    if (await btnFecharPopup.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await btnFecharPopup.click({ force: true }).catch(() => {});
+      console.log('   📍 Popup informativo fechado');
+      await page.waitForTimeout(400);
+    }
+  } catch (e) {}
   
   // Clica em "Seguir para o carrinho" ou "Continuar Inscrição"
   console.log('   📝 Clicando para ir ao checkout...');
@@ -3399,41 +3418,30 @@ test('inscricao-pos', async ({ page, context }) => {
   if (fakeVisivel || pagamentoVisivel) {
     console.log('   ✅ Dados já preenchidos, navegando para Pagamento...');
     
-    // Tenta via JavaScript diretamente (mais confiável)
-    await page.evaluate(() => {
-      // Método 1: Clica na seção de pagamento para expandir
+    // Tenta via JavaScript diretamente (mais confiável). Protegido contra
+    // navegacao concorrente (checkout pode auto-avancar e destruir contexto).
+    await safeEval(page, () => {
       const paymentSection = document.querySelector('#payment-data');
       if (paymentSection) {
         const editLink = paymentSection.querySelector('.link-box-edit');
-        if (editLink) {
-          console.log('Clicando em link-box-edit do payment');
-          editLink.click();
-          return;
-        }
+        if (editLink) { editLink.click(); return; }
         const accordionToggle = paymentSection.querySelector('.accordion-toggle');
-        if (accordionToggle) {
-          console.log('Clicando em accordion-toggle do payment');
-          accordionToggle.click();
-          return;
-        }
+        if (accordionToggle) { accordionToggle.click(); return; }
       }
-      
-      // Método 2: Navega para #/payment
       if (window.location.hash !== '#/payment') {
-        console.log('Navegando para #/payment via hash');
         window.location.hash = '#/payment';
       }
-    });
+    }, undefined, undefined);
     
     await page.waitForTimeout(5000);
     console.log(`   📍 URL após tentar navegar para Pagamento: ${page.url()}`);
   } else if (statusCheckout.campoCepVisible) {
     console.log('   ✅ Campos de endereço já estão visíveis');
   } else {
-    // Tenta expandir a seção de shipping
+    // Tenta expandir a seção de shipping (protegido)
     console.log('   📝 Tentando expandir seção de endereço...');
     
-    const expanded = await page.evaluate(() => {
+    const expanded = await safeEval(page, () => {
       // Método 0: Clica no botão fake-button-go-to-shipping (específico do VTEX)
       const fakeButton = document.querySelector('#fake-button-go-to-shipping');
       if (fakeButton && fakeButton.offsetParent !== null) {
@@ -3476,7 +3484,7 @@ test('inscricao-pos', async ({ page, context }) => {
       }
       
       return { method: 'none', success: false };
-    });
+    }, undefined, { method: 'navegacao-no-meio', success: false });
     
     console.log(`   📍 Método usado: ${expanded.method}, sucesso: ${expanded.success}`);
     
@@ -3544,12 +3552,108 @@ test('inscricao-pos', async ({ page, context }) => {
   // ── Se estamos em #/profile, precisamos avançar para #/shipping ──
   const urlE10 = page.url();
   if (urlE10.includes('#/profile') || urlE10.includes('#/cart') || urlE10.includes('#/email')) {
-    console.log('   📍 Checkout está na etapa Profile/Cart, tentando avançar para Shipping...');
     
-    // Pre-calcula data nascimento nos 2 formatos para a helper garantirBirthDate
+    // Pre-calcula data nascimento nos 2 formatos
     const _partesNasc = (CLIENTE.nascimento || '').split('/');
     const _dataBR = CLIENTE.nascimento || '';
     const _dataIso = CLIENTE.nascimentoIso || (_partesNasc.length === 3 ? `${_partesNasc[2]}-${_partesNasc[1]}-${_partesNasc[0]}` : '');
+
+    // ═══════════════════════════════════════════════════════════════════
+    // CAMINHO SIMPLES PRIMEIRO: o que um humano faria.
+    // 1) clica no campo de data de nascimento
+    // 2) digita a data (varias estrategias em cascata)
+    // 3) clica em "Ir para o Endereço"
+    // Se funcionar, pula todo o resto da Etapa 10.
+    // ═══════════════════════════════════════════════════════════════════
+    console.log('   👆 Tentativa simples: preencher data e clicar "Ir para o Endereço"');
+    try {
+      const campoDataSimples = page.locator(
+        '#client-birthDate, #client-birth-date, input[name="birthDate"], input[type="date"]'
+      ).first();
+      if (await campoDataSimples.isVisible({ timeout: 4000 }).catch(() => false)) {
+        await campoDataSimples.scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
+        const tipoCampo = (await campoDataSimples.getAttribute('type').catch(() => '')) || '';
+        const [dd, mm, yyyy] = _dataBR.split('/');
+
+        // Estrategia A: valueAsDate (API especifica de HTML5 date) + eventos React
+        // valueAsDate eh aceito por componentes React controlados que falham com value setter.
+        let v = await page.evaluate(({ iso, dataBR }) => {
+          const sels = ['#client-birthDate', '#client-birth-date', 'input[name="birthDate"]', 'input[type="date"]'];
+          for (const s of sels) {
+            const el = document.querySelector(s);
+            if (el && el.offsetParent !== null && !el.disabled) {
+              el.focus();
+              try {
+                if (el.type === 'date' && iso) {
+                  el.valueAsDate = new Date(iso + 'T00:00:00');
+                } else {
+                  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                  setter.call(el, iso || dataBR);
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur', { bubbles: true }));
+                return el.value;
+              } catch (e) { return `erro: ${e.message}`; }
+            }
+          }
+          return '';
+        }, { iso: _dataIso, dataBR: _dataBR }).catch(() => '');
+        console.log(`   📅 [A valueAsDate] valor=${v || '(vazio)'}`);
+
+        // Estrategia B: click NORMAL (sem force) + page.keyboard.type DDMMYYYY
+        if (!v) {
+          await campoDataSimples.click({ timeout: 2000 }).catch(() => {});
+          await page.waitForTimeout(200);
+          if (dd && mm && yyyy) {
+            await page.keyboard.type(dd, { delay: 80 });
+            await page.keyboard.type(mm, { delay: 80 });
+            await page.keyboard.type(yyyy, { delay: 80 });
+          }
+          await page.keyboard.press('Tab').catch(() => {});
+          v = (await campoDataSimples.inputValue().catch(() => '')) || '';
+          console.log(`   📅 [B keyboard] valor=${v || '(vazio)'}`);
+        }
+
+        // Estrategia C: fill direto com formato apropriado
+        if (!v) {
+          const valor = tipoCampo === 'date' ? _dataIso : _dataBR;
+          await campoDataSimples.fill('').catch(() => {});
+          await campoDataSimples.fill(valor, { timeout: 2000 }).catch(() => {});
+          await campoDataSimples.press('Tab').catch(() => {});
+          v = (await campoDataSimples.inputValue().catch(() => '')) || '';
+          console.log(`   📅 [C fill] valor=${v || '(vazio)'}`);
+        }
+
+        await page.waitForTimeout(500);
+        console.log(`   📅 Data final no campo: "${v}" (tipo=${tipoCampo})`);
+      } else {
+        console.log('   ℹ️ Campo de data não visível (ainda) no caminho simples');
+      }
+
+      // Clica em "Ir para o Endereço"
+      const btnEnderecoSimples = page.getByRole('button', { name: /Ir para o Endere[çc]o/i }).first();
+      if (await btnEnderecoSimples.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await btnEnderecoSimples.scrollIntoViewIfNeeded({ timeout: 1500 }).catch(() => {});
+        await btnEnderecoSimples.click({ force: true, timeout: 3000 }).catch(() => {});
+        console.log('   ✅ Clicou "Ir para o Endereço"');
+        try {
+          await page.waitForURL((u) => u.toString().includes('#/shipping') || u.toString().includes('#/payment'), { timeout: 8000 });
+          console.log(`   ✅ Avançou para: ${page.url().split('#')[1] || page.url()}`);
+        } catch (e) {
+          console.log(`   ⚠️ Caminho simples nao avancou (URL: ${page.url().split('#')[1] || page.url()}), tentando fallbacks...`);
+        }
+      }
+    } catch (eSimples) {
+      console.log(`   ⚠️ Erro no caminho simples: ${(eSimples.message || '').slice(0, 60)}`);
+    }
+
+    // Se o caminho simples ja avancou, pula o loop e o codigo de fallback abaixo
+    if (page.url().includes('#/shipping') || page.url().includes('#/payment')) {
+      console.log('✅ ETAPA 10 (caminho simples) - segue para a Etapa 11');
+    } else {
+
+    console.log('   📍 Checkout está na etapa Profile/Cart, tentando avançar para Shipping (fallbacks)...');
 
     for (let tentProfile = 1; tentProfile <= 5; tentProfile++) {
       console.log(`   🔄 Tentativa ${tentProfile}/5 de avançar para Shipping...`);
@@ -3561,15 +3665,17 @@ test('inscricao-pos', async ({ page, context }) => {
       }
 
       // Garante birthDate preenchido antes de cada tentativa. Diagnostico mostrou
-      // que o VTEX rebuilds o form e perde o valor (causando erro "Marque o campo
-      // novamente"). Usa setter nativo + eventos React para que o state interno
-      // do checkout receba o valor.
+      // que o VTEX rebuilds o form e perde o valor. A helper tenta fill,
+      // keyboard.type componente a componente, e pressSequentially em cascata.
       if (_dataBR) {
         const resBD = await garantirBirthDate(page, _dataBR, _dataIso);
-        if (resBD.ok && resBD.motivo === 're-preenchido') {
-          console.log(`   🔁 birthDate re-preenchido (estava vazio): ${resBD.valor}`);
+        const detalhe = `(seletor=${resBD.seletor || '-'} tipo=${resBD.tipo || '-'})`;
+        if (resBD.ok && resBD.motivo && resBD.motivo.startsWith('re-preenchido')) {
+          console.log(`   🔁 birthDate ${resBD.motivo}: ${resBD.valor} ${detalhe}`);
+        } else if (resBD.ok && resBD.motivo === 'ja-preenchido') {
+          // ja estava OK, sem log
         } else if (!resBD.ok) {
-          console.log(`   ⚠️ birthDate nao garantido: ${resBD.motivo}`);
+          console.log(`   ⚠️ birthDate nao garantido: ${resBD.motivo} ${detalhe}`);
         }
       }
       
@@ -3890,14 +3996,14 @@ test('inscricao-pos', async ({ page, context }) => {
           }
         }
 
-        // Se estamos na tentativa 4, tenta reload completo
-        if (tentProfile === 4) {
-          console.log('   🔄 Reload completo do checkout...');
-          await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-          await page.waitForTimeout(5000);
-        }
+        // ANTES havia um page.reload() na tentativa 4 que recarregava a pagina
+        // inteira, fazendo o usuario ver "recarregamento idiota". Recarregar nao
+        // resolve o problema do birthDate (e ainda perde estado de sessao), entao
+        // foi REMOVIDO. Se chegou na tentativa 4 sem avancar, vamos confiar na
+        // helper garantirBirthDate + diagnostico visual para a proxima rodada.
       }
     }
+    } // fecha else do caminho simples (fallbacks)
   }
   
   await page.waitForTimeout(1000);
@@ -3962,7 +4068,7 @@ test('inscricao-pos', async ({ page, context }) => {
       return true;
     }
     return false;
-  });
+  }).catch(() => false);
   
   // Verifica botão "Calcular"
   const btnCalcular = page.locator('#shipping-calculate-link, button:has-text("Calcular")').first();
@@ -4158,30 +4264,28 @@ test('inscricao-pos', async ({ page, context }) => {
     } catch (e) {}
   }
   
-  // Fallback: JavaScript
+  // Fallback: JavaScript (protegido contra navegacao concorrente)
   if (!avancouPagamento) {
-    try {
-      const clicked = await page.evaluate(() => {
-        const btns = document.querySelectorAll('button, a');
-        for (const btn of btns) {
-          const txt = btn.textContent?.toLowerCase() || '';
-          if (txt.includes('pagamento') || txt.includes('payment')) {
-            btn.click();
-            return true;
-          }
-        }
-        const goPayment = document.querySelector('#go-to-payment, #btn-go-to-payment, .btn-go-to-payment');
-        if (goPayment) {
-          goPayment.click();
+    const clicked = await page.evaluate(() => {
+      const btns = document.querySelectorAll('button, a');
+      for (const btn of btns) {
+        const txt = btn.textContent?.toLowerCase() || '';
+        if (txt.includes('pagamento') || txt.includes('payment')) {
+          btn.click();
           return true;
         }
-        return false;
-      });
-      if (clicked) {
-        console.log('   ✅ Botão Pagamento clicado (via JavaScript)');
-        avancouPagamento = true;
       }
-    } catch (e) {}
+      const goPayment = document.querySelector('#go-to-payment, #btn-go-to-payment, .btn-go-to-payment');
+      if (goPayment) {
+        goPayment.click();
+        return true;
+      }
+      return false;
+    }).catch(() => false);
+    if (clicked) {
+      console.log('   ✅ Botão Pagamento clicado (via JavaScript)');
+      avancouPagamento = true;
+    }
   }
   
   if (!avancouPagamento) {
@@ -4350,39 +4454,30 @@ test('inscricao-pos', async ({ page, context }) => {
   // Fallback: qualquer botão que contenha os textos de finalização via JavaScript
   // MAS evita botões com textos proibidos
   if (!finalizou) {
-    try {
-      const clicked = await page.evaluate(({ textos, evitar }) => {
-        const btns = document.querySelectorAll('button, input[type="submit"]');
-        for (const btn of btns) {
-          const txt = btn.textContent?.toLowerCase() || btn.value?.toLowerCase() || '';
-          
-          // Verifica se contém texto a evitar
-          let deveEvitar = false;
-          for (const e of evitar) {
-            if (txt.includes(e.toLowerCase())) {
-              deveEvitar = true;
-              break;
-            }
-          }
-          if (deveEvitar) continue;
-          
-          // Verifica se contém texto de finalização
-          for (const t of textos) {
-            if (txt.includes(t.toLowerCase())) {
-              btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              btn.click();
-              return { success: true, text: btn.textContent?.trim() || btn.value };
-            }
+    const clicked = await page.evaluate(({ textos, evitar }) => {
+      const btns = document.querySelectorAll('button, input[type="submit"]');
+      for (const btn of btns) {
+        const txt = btn.textContent?.toLowerCase() || btn.value?.toLowerCase() || '';
+        let deveEvitar = false;
+        for (const e of evitar) {
+          if (txt.includes(e.toLowerCase())) { deveEvitar = true; break; }
+        }
+        if (deveEvitar) continue;
+        for (const t of textos) {
+          if (txt.includes(t.toLowerCase())) {
+            btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            btn.click();
+            return { success: true, text: btn.textContent?.trim() || btn.value };
           }
         }
-        return { success: false };
-      }, { textos: textosFinalizacao, evitar: textosEvitar });
-      
-      if (clicked.success) {
-        console.log(`   ✅ Botão "${clicked.text}" clicado (via JavaScript)`);
-        finalizou = true;
       }
-    } catch (e) {}
+      return { success: false };
+    }, { textos: textosFinalizacao, evitar: textosEvitar }).catch(() => ({ success: false }));
+    
+    if (clicked.success) {
+      console.log(`   ✅ Botão "${clicked.text}" clicado (via JavaScript)`);
+      finalizou = true;
+    }
   }
   
   if (!finalizou) {

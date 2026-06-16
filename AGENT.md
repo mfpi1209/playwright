@@ -41,6 +41,52 @@ Este arquivo registra decisões estruturais (escolhas de stack, padrão, mudanç
 
 ---
 
+### 2026-06-16 — Inscrição PÓS finalizando ponta a ponta: `valueAsDate` + caminho simples + Etapas 6/8 sem re-cliques
+
+**Decisão:** Reescrever a Etapa 10 do `inscricao-pos.spec.js` com um **caminho simples primeiro** (preencher data + clicar "Ir para o Endereço") antes do loop com 5 tentativas + fallbacks. A chave para preencher o campo de data foi descobrir que o React do checkout VTEX aceita atualizações via `HTMLInputElement.valueAsDate` (API específica de HTML5 date inputs), enquanto rejeita silenciosamente o setter nativo de `value` E o `locator.fill()` do Playwright. Adicionalmente, corrigir bugs antigos das Etapas 6 e 8 que faziam o spec ficar re-clicando botões e re-carregando a página sem necessidade.
+
+**Contexto:** Após implementar diagnóstico visual e identificar que o único campo bloqueando era `client-birthDate`, várias estratégias foram testadas em sequência sem sucesso:
+- `el.value = ...` via setter nativo + `dispatchEvent('input' + 'change')`: campo zerava no re-render
+- `locator.fill(ISO)` do Playwright: ficava vazio
+- `page.keyboard.type('DDMMYYYY')`: também não persistia
+- `pressSequentially`: idem
+
+A descoberta crucial: para HTML5 date inputs, `el.valueAsDate = new Date('2000-09-08T00:00:00')` + eventos React (`input`, `change`, `blur`) FUNCIONA. Validado empiricamente:
+```
+📅 [A valueAsDate] valor=2000-09-08
+📅 Data final no campo: "2000-09-08" (tipo=date)
+✅ Clicou "Ir para o Endereço"
+✅ Avançou para: /shipping
+...
+✅ Botão Ir para o Pagamento clicado
+✅ Botão clicado (via ID)
+📍 URL final: /checkout/orderPlaced/?og=1640053859675
+🎉 INSCRIÇÃO PÓS-GRADUAÇÃO FINALIZADA COM SUCESSO!
+📋 Número de Inscrição SIAA: 265763203
+```
+Run completa em 6.9 min, exit code 0, com email já existente no VTEX (`ultimolider@gmail.com`).
+
+**Alternativas descartadas:**
+- *Continuar batalhando com `fill()` + `keyboard.type()`:* validado empiricamente que **não funciona** para o input específico do checkout VTEX da Cruzeiro (provavelmente um React component com `onChange` que verifica algum estado interno).
+- *Refatorar tudo para usar API VTEX direta:* mais robusto a longo prazo mas é refatoração massiva (1-2 dias). O `valueAsDate` resolve sem refazer nada.
+- *Continuar com `page.reload()` na 4ª tentativa do loop:* usuário relatou que isso causava "recarregamento idiota". Removido pois não resolvia o problema e perdia estado.
+
+**Impacto:**
+
+1. **`tests/inscricao-pos.spec.js` Etapa 6** (linhas ~2347-2400): O loop "Continuar Inscrição" da localização agora **aceita `/checkout/*` como sucesso válido**. Antes, se o VTEX pulasse direto da localização para `/checkout/#/cart` (sem passar pela página de campanha), o spec via como "não navegou" e re-clicava o botão "Continuar Inscrição" do carrinho 3 vezes em vão. Agora detecta a URL pré-clique e pula se já está no checkout, e usa `Promise.race` para aceitar campanha OU checkout como destino válido.
+
+2. **`tests/inscricao-pos.spec.js` Etapa 8** (linhas ~2810-2875): Reescrita a lógica de detecção de popup bloqueante. **Antes**: capturava texto da página INTEIRA (header, footer, menu) e marcava como bloqueante se encontrasse palavras genéricas como "cadastro", "aviso", "atenção" — confundindo com o popup informativo "Atenção: A primeira mensalidade equivale à matrícula" (que deveria só ser fechado). **Agora**: só bloqueia se um modal/overlay VISÍVEL contiver EXATAMENTE "Aviso Importante" E "inconsist". Para o popup informativo, fecha com o botão X e segue.
+
+3. **`tests/inscricao-pos.spec.js` Etapa 10** (linhas ~3552-3620): Novo **caminho simples primeiro**, antes do loop com 5 tentativas. Tenta preencher a data (3 estratégias em cascata: A=`valueAsDate`, B=`keyboard.type`, C=`fill`) e clicar "Ir para o Endereço". Se URL muda para `/shipping` ou `/payment`, pula todo o restante. Se não, executa o loop original como fallback.
+
+4. **`tests/inscricao-pos.spec.js` Etapa 10** (linha ~3895): Removido o `page.reload()` da tentativa 4 do loop. O usuário identificou corretamente que isso fazia o navegador "recarregar igual idiota" sem resolver o problema, e ainda perdia estado de sessão.
+
+5. **`tests/inscricao-pos.spec.js`**: Adicionado helper `safeEval(page, fn, arg, fallback)` que engole apenas o erro específico "Execution context was destroyed" (quando o checkout VTEX faz navegação automática no meio do `evaluate`) e retorna o fallback. Aplicado em 4 `page.evaluate` críticos das Etapas 9-11 que estavam quebrando o spec inteiro.
+
+6. **`tests/inscricao-pos.spec.js`**: Helper `garantirBirthDate(page, dataBR, dataIso)` mantida no spec mas agora rara de ser acionada (o caminho simples resolve o caso comum). Mantém 3 estratégias em cascata para resiliência.
+
+---
+
 ### 2026-06-16 — Helper `garantirBirthDate` (Playwright API) + diagnóstico visual do checkout travado
 
 **Decisão:** Reescrever a lógica de preenchimento do campo `client-birthDate` na Etapa 10 do `inscricao-pos.spec.js` para usar a API do Playwright (`fill` + `press('Tab')`) em vez do setter nativo de `value` via `evaluate`. Adicionar captura proativa de screenshot + diagnóstico visual de erros (lista de mensagens de erro do VTEX, campos obrigatórios vazios, campos inválidos) quando o spec detectar 3+ tentativas frustradas avançando do `#/profile` para `#/shipping`.
