@@ -568,6 +568,58 @@ async function passarEtapaEmail(page, email) {
   return novaUrl.includes('#/profile') || novaUrl.includes('#/shipping') || novaUrl.includes('#/payment');
 }
 
+// Garante que o campo client-birthDate esta preenchido no momento da submissao.
+// Diagnostico visual (screenshots debug-checkout-stuck-*.png) mostrou que o checkout
+// VTEX da Cruzeiro renderiza o input de birthDate como HTML5 type="date" e o React
+// rejeita o setter nativo (valor zera apos o re-render). A abordagem confiavel e
+// usar a API do Playwright (simula teclado real) com fill() do valor ISO (yyyy-mm-dd),
+// que e o formato que HTML5 date inputs sempre aceitam, e disparar blur (Tab) para
+// que o React reconheca a mudanca. Aceita data BR (08/09/2000) ou ISO (2000-09-08).
+async function garantirBirthDate(page, dataBR, dataIso) {
+  const sels = [
+    '#client-birthDate',
+    '#client-birth-date',
+    'input[name="birthDate"]',
+    'input[name="birth-date"]',
+    'input[type="date"]:visible',
+    'input[placeholder*="dd/mm" i]',
+    'input[placeholder*="nascimento" i]',
+  ];
+  for (const sel of sels) {
+    const loc = page.locator(sel).first();
+    try {
+      if (!(await loc.isVisible({ timeout: 800 }))) continue;
+      const disabled = await loc.getAttribute('disabled').catch(() => null);
+      if (disabled !== null) {
+        return { ok: true, motivo: 'campo-desabilitado' };
+      }
+      const valorAtual = (await loc.inputValue().catch(() => '')) || '';
+      if (valorAtual && (valorAtual === dataBR || valorAtual === dataIso)) {
+        return { ok: true, motivo: 'ja-preenchido', valor: valorAtual };
+      }
+      // HTML5 date input sempre aceita ISO; text com mascara aceita BR.
+      // Tentamos ISO primeiro (cobre o caso comum do checkout VTEX Cruzeiro).
+      const tipo = (await loc.getAttribute('type').catch(() => '')) || '';
+      const valorPreencher = tipo === 'date' ? dataIso : dataBR;
+      await loc.click({ force: true, timeout: 1500 }).catch(() => {});
+      await loc.fill('', { timeout: 1500 }).catch(() => {});
+      await loc.fill(valorPreencher, { timeout: 2500 });
+      await loc.press('Tab', { timeout: 1500 }).catch(() => {});
+      const valorFinal = (await loc.inputValue().catch(() => '')) || '';
+      if (!valorFinal && tipo !== 'date') {
+        // Fallback: tenta o outro formato
+        await loc.fill(dataIso, { timeout: 2500 }).catch(() => {});
+        await loc.press('Tab', { timeout: 1500 }).catch(() => {});
+      }
+      const valorReal = (await loc.inputValue().catch(() => '')) || '';
+      return { ok: !!valorReal, motivo: valorReal ? 're-preenchido' : 'falha-fill', valor: valorReal, seletor: sel, tipo };
+    } catch (e) {
+      // tenta proximo seletor
+    }
+  }
+  return { ok: false, motivo: 'campo-nao-encontrado' };
+}
+
 // Função DESABILITADA - não mover o mouse para evitar popup "Antes de Você Sair"
 async function manterCursorNaTela(page) {
   // NÃO FAZER NADA - movimento do mouse causa popup
@@ -3155,16 +3207,20 @@ test('inscricao-pos', async ({ page, context }) => {
   let paginaCarregada = false;
   for (let tentativaReload = 1; tentativaReload <= 3; tentativaReload++) {
     // Verifica se a página está em branco (sem conteúdo visível)
+    // Protegido contra navegação concorrente (checkout pode auto-avançar)
     const temConteudo = await page.evaluate(() => {
       const body = document.body;
       if (!body) return false;
-      
-      // Verifica se há elementos visíveis no body além de headers/footers
       const elementos = body.querySelectorAll('input, button, form, table, .cart, .checkout, [class*="vtex"], [class*="cart"], [class*="checkout"]');
       const textoBody = body.innerText?.trim() || '';
-      
-      // Considera página carregada se tiver elementos interativos OU texto significativo
       return elementos.length > 5 || textoBody.length > 200;
+    }).catch((e) => {
+      const msg = (e && e.message) || String(e);
+      if (msg.includes('Execution context was destroyed') || msg.includes('navigation')) {
+        console.log('   ⏳ Página navegou durante verificação de conteúdo (assumindo OK)');
+        return true; // assume que tem conteudo - vai prosseguir e o proximo evaluate decide
+      }
+      return false;
     });
     
     console.log(`   📍 [Tentativa ${tentativaReload}/3] Conteúdo detectado: ${temConteudo}`);
@@ -3437,11 +3493,19 @@ test('inscricao-pos', async ({ page, context }) => {
       await page.waitForTimeout(3000);
     }
     
-    // Verifica se agora o campo CEP está visível
+    // Verifica se agora o campo CEP está visível (protegido contra navegação no meio)
     const cepVisivelAgora = await page.evaluate(() => {
       const campoCep = document.querySelector('#ship-postalCode') ||
                        document.querySelector('input[name="postalCode"]');
       return campoCep ? campoCep.offsetParent !== null : false;
+    }).catch((e) => {
+      const msg = (e && e.message) || String(e);
+      if (msg.includes('Execution context was destroyed') || msg.includes('navigation')) {
+        console.log('   ⏳ Checkout navegou durante verificação do CEP (ignorando)');
+        return false;
+      }
+      console.log(`   ⚠️ Erro inesperado: ${msg.slice(0, 60)}`);
+      return false;
     });
     
     if (cepVisivelAgora) {
@@ -3450,7 +3514,7 @@ test('inscricao-pos', async ({ page, context }) => {
       console.log('   ⚠️ Seção de endereço não expandiu, tentando navegar por hash...');
       // Tenta navegar diretamente para a seção de shipping
       try {
-        await page.evaluate(() => { window.location.hash = '#/shipping'; });
+        await page.evaluate(() => { window.location.hash = '#/shipping'; }).catch(() => {});
         await page.waitForTimeout(3000);
       } catch (e) {}
     }
@@ -3482,6 +3546,11 @@ test('inscricao-pos', async ({ page, context }) => {
   if (urlE10.includes('#/profile') || urlE10.includes('#/cart') || urlE10.includes('#/email')) {
     console.log('   📍 Checkout está na etapa Profile/Cart, tentando avançar para Shipping...');
     
+    // Pre-calcula data nascimento nos 2 formatos para a helper garantirBirthDate
+    const _partesNasc = (CLIENTE.nascimento || '').split('/');
+    const _dataBR = CLIENTE.nascimento || '';
+    const _dataIso = CLIENTE.nascimentoIso || (_partesNasc.length === 3 ? `${_partesNasc[2]}-${_partesNasc[1]}-${_partesNasc[0]}` : '');
+
     for (let tentProfile = 1; tentProfile <= 5; tentProfile++) {
       console.log(`   🔄 Tentativa ${tentProfile}/5 de avançar para Shipping...`);
       
@@ -3489,6 +3558,19 @@ test('inscricao-pos', async ({ page, context }) => {
       if (page.url().includes('#/email')) {
         await passarEtapaEmail(page, CLIENTE.emailVtex);
         await page.waitForTimeout(1500);
+      }
+
+      // Garante birthDate preenchido antes de cada tentativa. Diagnostico mostrou
+      // que o VTEX rebuilds o form e perde o valor (causando erro "Marque o campo
+      // novamente"). Usa setter nativo + eventos React para que o state interno
+      // do checkout receba o valor.
+      if (_dataBR) {
+        const resBD = await garantirBirthDate(page, _dataBR, _dataIso);
+        if (resBD.ok && resBD.motivo === 're-preenchido') {
+          console.log(`   🔁 birthDate re-preenchido (estava vazio): ${resBD.valor}`);
+        } else if (!resBD.ok) {
+          console.log(`   ⚠️ birthDate nao garantido: ${resBD.motivo}`);
+        }
       }
       
       // Diagnóstico: verificar campos e erros de validação
@@ -3726,8 +3808,13 @@ test('inscricao-pos', async ({ page, context }) => {
         console.log(`   📋 Resultado API VTEX: ${resultado}`);
         await page.waitForTimeout(2000);
         
-        // Força navegação via hash
-        await page.evaluate(() => { window.location.hash = '#/shipping'; });
+        // Força navegação via hash (protegido contra navegação concorrente do VTEX)
+        await page.evaluate(() => { window.location.hash = '#/shipping'; }).catch((e) => {
+          const msg = (e && e.message) || String(e);
+          if (msg.includes('Execution context was destroyed') || msg.includes('navigation')) {
+            console.log('   ⏳ Checkout navegou durante hash-redirect (ignorando)');
+          }
+        });
         console.log('   📍 Forçou navegação para #/shipping via hash');
         await page.waitForTimeout(3000);
         
@@ -3737,10 +3824,75 @@ test('inscricao-pos', async ({ page, context }) => {
           break;
         }
         
+        // Captura diagnóstico visual quando trava por 3+ tentativas
+        if (tentProfile >= 3) {
+          try {
+            const arq = `debug-checkout-stuck-t${tentProfile}.png`;
+            await page.screenshot({ path: arq, fullPage: true });
+            console.log(`   📸 Screenshot do checkout travado salvo: ${arq}`);
+          } catch (eShot) {}
+
+          try {
+            const diag = await page.evaluate(() => {
+              const txt = (el) => (el && el.innerText && el.innerText.trim()) || '';
+              const seletoresErro = [
+                '.error', '.invalid', '.vtex-input__error', '.help.is-danger',
+                '[class*="error" i]', '[class*="invalid" i]',
+                '.alert', '.alert-danger', '[role="alert"]',
+              ];
+              const erros = new Set();
+              seletoresErro.forEach(sel => {
+                document.querySelectorAll(sel).forEach(el => {
+                  const t = txt(el);
+                  if (t && t.length > 2 && t.length < 200) erros.add(t.replace(/\s+/g, ' '));
+                });
+              });
+              const inputs = [];
+              document.querySelectorAll('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])').forEach(el => {
+                if (el.offsetParent !== null) {
+                  inputs.push({
+                    id: el.id || null,
+                    name: el.name || null,
+                    placeholder: el.placeholder || null,
+                    type: el.type,
+                    disabled: el.disabled,
+                    required: el.required,
+                    valor: el.value || '',
+                    invalido: el.classList.contains('error') || el.classList.contains('invalid'),
+                  });
+                }
+              });
+              return {
+                url: window.location.href,
+                errosVisiveis: Array.from(erros),
+                campos: inputs,
+              };
+            });
+            console.log(`   📋 URL travada: ${diag.url}`);
+            if (diag.errosVisiveis.length) {
+              console.log(`   ⚠️ Erros visuais detectados:`);
+              diag.errosVisiveis.forEach(e => console.log(`      - ${e}`));
+            } else {
+              console.log('   ℹ️ Nenhum erro visual capturado.');
+            }
+            const camposObrigVazios = diag.campos.filter(c => c.required && !c.valor && !c.disabled);
+            if (camposObrigVazios.length) {
+              console.log(`   ⚠️ Campos obrigatórios VAZIOS:`);
+              camposObrigVazios.forEach(c => console.log(`      - id=${c.id || '-'} name=${c.name || '-'} placeholder="${c.placeholder || '-'}"`));
+            }
+            const camposInvalidos = diag.campos.filter(c => c.invalido);
+            if (camposInvalidos.length) {
+              console.log(`   ⚠️ Campos marcados INVÁLIDOS:`);
+              camposInvalidos.forEach(c => console.log(`      - id=${c.id || '-'} name=${c.name || '-'} valor="${c.valor.slice(0, 40)}"`));
+            }
+          } catch (eDiag) {
+            console.log(`   ⚠️ Erro ao coletar diagnóstico: ${(eDiag.message || '').slice(0, 80)}`);
+          }
+        }
+
         // Se estamos na tentativa 4, tenta reload completo
         if (tentProfile === 4) {
           console.log('   🔄 Reload completo do checkout...');
-          await page.screenshot({ path: `debug-profile-stuck-t${tentProfile}.png`, fullPage: true }).catch(() => {});
           await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
           await page.waitForTimeout(5000);
         }
@@ -3755,7 +3907,7 @@ test('inscricao-pos', async ({ page, context }) => {
   if (page.url().includes('#/profile')) {
     console.log('   ⚠️ Ainda em #/profile! Tentando último esforço via API VTEX + hash...');
     
-    // Tenta enviar profile via API do VTEX e navegar diretamente
+    // Tenta enviar profile via API do VTEX e navegar diretamente (protegido)
     await page.evaluate(async (dados) => {
       try {
         if (window.vtexjs && window.vtexjs.checkout && window.vtexjs.checkout.orderForm) {

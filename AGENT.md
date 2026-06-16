@@ -41,6 +41,25 @@ Este arquivo registra decisões estruturais (escolhas de stack, padrão, mudanç
 
 ---
 
+### 2026-06-16 — Helper `garantirBirthDate` (Playwright API) + diagnóstico visual do checkout travado
+
+**Decisão:** Reescrever a lógica de preenchimento do campo `client-birthDate` na Etapa 10 do `inscricao-pos.spec.js` para usar a API do Playwright (`fill` + `press('Tab')`) em vez do setter nativo de `value` via `evaluate`. Adicionar captura proativa de screenshot + diagnóstico visual de erros (lista de mensagens de erro do VTEX, campos obrigatórios vazios, campos inválidos) quando o spec detectar 3+ tentativas frustradas avançando do `#/profile` para `#/shipping`.
+
+**Contexto:** Após resolver o login da Etapa 3 para email já existente, o checkout VTEX continuou travando em loop `/profile` ↔ `/email`. Diagnóstico visual (screenshots `debug-checkout-stuck-t3.png`, `t4.png`, `t5.png`) revelou que **TODOS os campos do profile estavam preenchidos e válidos (verdes) EXCETO o campo "Data de nascimento"**, que aparecia vazio com placeholder `dd/mm/aaaa` apesar do spec ter preenchido na Etapa 9. As mensagens de erro `"A verificação expirou. Marque o campo novamente."` e `"Encontramos um problema no preenchimento. Por favor, verifique os campos em destaque"` apontavam diretamente para esse campo. Causa raiz: o input é HTML5 `type="date"` e o componente React do VTEX rejeita atualizações via setter nativo (`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set`) — o valor é "preenchido" no DOM mas o estado interno do React permanece vazio, e o re-render zera o valor exibido. A solução confiável é usar `locator.fill(...)` do Playwright (que simula entrada por teclado) com o valor em ISO (`yyyy-mm-dd`, formato sempre aceito por `type="date"`), seguido de `locator.press('Tab')` para disparar `blur` e forçar o React a reconhecer a mudança.
+
+**Alternativas descartadas:**
+- *Usar `dispatchEvent('input' + 'change')` + setter nativo:* tentado primeiro. O log mostrou "✅ birthDate re-preenchido (estava vazio): 2000-09-08" mas o screenshot subsequente revelou o campo continuando vazio — o React do checkout VTEX claramente ignora esses eventos quando o setter é usado.
+- *Preencher apenas no formato BR (08/09/2000):* o componente HTML5 date input só aceita ISO. Tentar BR resulta em campo vazio.
+- *Submeter `birthDate` apenas via API VTEX (`clientProfileData`):* já estava sendo feito, e o log mostrava `api-ok`, mas o VTEX UI continuava marcando o campo como vazio na validação do botão "Ir para o Endereço" — provavelmente o checkout valida o React state local antes de chamar a API.
+
+**Impacto:**
+- `tests/inscricao-pos.spec.js`: helper `garantirBirthDate(page, dataBR, dataIso)` reescrita para usar `page.locator(...).fill(...)` + `press('Tab')` com fallback de formato. Detecta automaticamente se o input é `type="date"` (usa ISO) ou text com máscara (usa BR). Retorna `{ ok, motivo, valor, seletor, tipo }` para logging.
+- `tests/inscricao-pos.spec.js`: bloco de diagnóstico visual proativo dentro do loop de retry da Etapa 10. Quando `tentProfile >= 3`, captura `debug-checkout-stuck-t{N}.png`, lista mensagens de erro visíveis (`.error`, `.invalid`, `[role="alert"]`, etc), campos obrigatórios vazios e campos marcados como inválidos. Esse diagnóstico foi crítico para identificar a causa raiz do `birthDate` vazio.
+- `tests/inscricao-pos.spec.js`: try/catch defensivos adicionais em mais dois `page.evaluate` (verificação de CEP visível e diagnóstico de conteúdo da página) que falhavam com "Execution context was destroyed" quando o checkout auto-navegava durante a chamada.
+- O spec ainda tem ~35 outros `page.evaluate` não protegidos. Conforme as runs vão revelando quais quebram, eles podem ser protegidos seguindo o mesmo padrão (`.catch((e) => msg.includes('Execution context was destroyed') ? fallbackSeguro : ...)`). Alternativamente, no futuro, criar um helper `evalSafe(page, fn, args, fallback)` com retry e fazer um sweep global.
+
+---
+
 ### 2026-06-16 — Login da Etapa 3 cobre email já existente (prompt código) + `evaluate` defensivo
 
 **Decisão:** Tratar explicitamente o caso de "email já existe no VTEX" na Etapa 3 (Login Cliente). Após clicar "Entrar", detectar se aparece prompt de código por email (OTP) — situação que ocorre quando o email já tem conta — e contornar navegando para `/pos-graduacao` sem inserir código. A sessão "visitante com email lembrado" segue válida para o restante do checkout. Adicionar também um wrapper defensivo em volta do `page.evaluate` do diagnóstico de checkout na Etapa 9, que pode ser interrompido por navegação automática quando o cliente está realmente logado.
