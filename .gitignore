@@ -5,6 +5,7 @@ playwright-report/
 *.pdf
 *.webm
 *.zip
+*.log
 .env
 
 # Pasta de arquivos gerados (mantém a pasta, ignora conteúdo)

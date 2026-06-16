@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+const { test, expect } = require('./stealth-fixture');
 const { validarPolo: validarPoloWhitelist } = require('./polos-atendidos');
 
 // ═══════════════════════════════════════════════════════════════════════════

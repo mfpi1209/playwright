@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { test, expect } from '@playwright/test';
+const { test, expect } = require('./stealth-fixture');
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const path = require('path');
@@ -4047,17 +4047,114 @@ test('inscricao-pos', async ({ page, context }) => {
   console.log(`📍 URL final: ${urlFinal}`);
   
   if (urlFinal.includes('orderPlaced')) {
-    // Extrai número da inscrição
+    // Captura orderFormId do VTEX (NÃO é o nº de inscrição acadêmica do SIAA)
     const ogMatch = urlFinal.match(/og=(\d+)/);
-    if (ogMatch) {
-      numeroInscricao = ogMatch[1];
+    const vtexOrderFormId = ogMatch ? ogMatch[1] : null;
+
+    // Extrai número de inscrição REAL do SIAA.
+    // Estratégia: abre a aba do SIAA via "Realizar pagamento", preenche CPF + Próximo,
+    // captura nrInscricao da URL final (matricula-unificada.jsp?...&nrInscricao=NNNNN)
+    // e fecha a aba ANTES de qualquer botão que gere boleto/cartão.
+    try {
+      await page.waitForTimeout(2500);
+
+      // Tentativa 1 (rápida): href já tem nrInscricao? (raro, mas barato testar)
+      const seletoresLinkSiaa = [
+        page.getByRole('link', { name: 'Realizar pagamento' }),
+        page.locator('a:has-text("Realizar pagamento")').first(),
+        page.locator('a[href*="nrInscricao"]').first(),
+      ];
+      for (const linkLocator of seletoresLinkSiaa) {
+        try {
+          if (await linkLocator.isVisible({ timeout: 1000 }).catch(() => false)) {
+            const href = await linkLocator.getAttribute('href').catch(() => null);
+            if (href) {
+              const matchNr = href.match(/[?&]nrInscricao=(\d+)/i);
+              if (matchNr) {
+                numeroInscricao = matchNr[1];
+                console.log(`📋 Número de Inscrição SIAA (via href): ${numeroInscricao}`);
+                break;
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
+      // Tentativa 2: abre a aba do SIAA e preenche CPF para chegar na página de aprovação
+      if (!numeroInscricao) {
+        const linkPag = page.getByRole('link', { name: 'Realizar pagamento' }).first();
+        if (await linkPag.isVisible({ timeout: 1500 }).catch(() => false)) {
+          console.log('   📝 Abrindo aba SIAA para extrair nrInscricao...');
+          const [siaaTabSkip] = await Promise.all([
+            page.context().waitForEvent('page', { timeout: 12000 }).catch(() => null),
+            linkPag.click().catch(() => {}),
+          ]);
+
+          if (siaaTabSkip) {
+            try {
+              await siaaTabSkip.waitForLoadState('domcontentloaded', { timeout: 10000 });
+              await siaaTabSkip.waitForTimeout(1500);
+
+              try {
+                const campoCpf = siaaTabSkip.locator('input[id*="cpf"], input[name*="cpf"], input[placeholder*="CPF" i]').first();
+                if (await campoCpf.isVisible({ timeout: 4000 }).catch(() => false)) {
+                  await campoCpf.click();
+                  await campoCpf.fill(CLIENTE.cpf);
+                  console.log(`   ✅ CPF preenchido no SIAA: ${CLIENTE.cpf}`);
+                }
+              } catch (e) {}
+
+              try {
+                const btnProximo = siaaTabSkip.getByRole('button', { name: /Pr[óo]ximo/i }).first();
+                if (await btnProximo.isVisible({ timeout: 4000 }).catch(() => false)) {
+                  await btnProximo.click();
+                  console.log('   ✅ Clicou "Próximo" no SIAA');
+                  await siaaTabSkip.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+                  await siaaTabSkip.waitForTimeout(3500);
+                }
+              } catch (e) {}
+
+              const urlSiaaFinal = siaaTabSkip.url();
+              console.log(`   🔗 URL SIAA pós-Próximo: ${urlSiaaFinal}`);
+              const matchUrl = urlSiaaFinal.match(/[?&]nrInscricao=(\d+)/i);
+              if (matchUrl) {
+                numeroInscricao = matchUrl[1];
+                console.log(`📋 Número de Inscrição SIAA (via URL): ${numeroInscricao}`);
+              } else {
+                const textoBody = await siaaTabSkip.locator('body').textContent().catch(() => '');
+                const matchTexto = textoBody && textoBody.match(/N[ºo°]\s*(?:DE\s*)?INSCRI[CÇ][AÃ]O\s*:?\s*(\d{6,})/i);
+                if (matchTexto) {
+                  numeroInscricao = matchTexto[1];
+                  console.log(`📋 Número de Inscrição SIAA (via texto): ${numeroInscricao}`);
+                } else {
+                  console.log('   ⚠️ nrInscricao não encontrado na URL nem no texto do SIAA');
+                }
+              }
+            } catch (e) {
+              console.log(`   ⚠️ Erro ao processar SIAA: ${e.message}`);
+            } finally {
+              await siaaTabSkip.close().catch(() => {});
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`   ⚠️ Falha ao tentar extrair nrInscricao do SIAA: ${e.message}`);
     }
-    
+
+    // Se ainda não encontrou nº SIAA, mantém o orderFormId como fallback (compatibilidade)
+    if (!numeroInscricao) {
+      numeroInscricao = vtexOrderFormId;
+    }
+
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════════════════');
     console.log('🎉 INSCRIÇÃO PÓS-GRADUAÇÃO FINALIZADA COM SUCESSO!');
     if (numeroInscricao) {
       console.log(`📋 Número de Inscrição: ${numeroInscricao}`);
+    }
+    if (vtexOrderFormId && vtexOrderFormId !== numeroInscricao) {
+      console.log(`📋 OrderFormId VTEX: ${vtexOrderFormId}`);
     }
     console.log(`📋 Campanha aplicada: ${CLIENTE.campanha}`);
     console.log('═══════════════════════════════════════════════════════════════════════════');
@@ -4072,6 +4169,9 @@ test('inscricao-pos', async ({ page, context }) => {
       console.log('PROCESSO COMPLETO DE INSCRIÇÃO PÓS-GRADUAÇÃO');
       if (numeroInscricao) {
         console.log(`NUMERO_INSCRICAO_EXTRAIDO: ${numeroInscricao}`);
+      }
+      if (vtexOrderFormId) {
+        console.log(`VTEX_ORDERFORM_ID: ${vtexOrderFormId}`);
       }
       console.log('STATUS_INSCRICAO: INSCRICAO_POS_SUCESSO_APENAS_VTEX');
       console.log('ℹ️ Inscrição encerrada no VTEX (SIAA/pagamento não executados).');
