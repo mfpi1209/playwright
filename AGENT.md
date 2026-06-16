@@ -41,6 +41,33 @@ Este arquivo registra decisões estruturais (escolhas de stack, padrão, mudanç
 
 ---
 
+### 2026-06-16 — Robustez extra no `inscricao-pos.spec.js`: `birthDate`, handler `/email`, alias VTEX opcional
+
+**Decisão:** Adicionar três camadas defensivas ao `inscricao-pos.spec.js` para o caso de cliente já existente no VTEX (email JÁ tem conta), sem mexer no fluxo de login do cliente (que segue passwordless). Mudanças combinadas:
+1. **`birthDate` no payload `/api/checkout/pub/orderForm/{ofId}/attachments/clientProfileData`** — converte `CLIENTE.nascimento` (DD/MM/YYYY) para ISO (YYYY-MM-DD) via `CLIENTE.nascimentoIso` e inclui no payload nos 2 fallbacks de API VTEX, junto com `isCorporate: false`.
+2. **Helper `passarEtapaEmail(page, email)`** — detecta `#/email` (etapa de identificação que o VTEX renderiza para visitantes/clientes não autenticados), preenche o campo de email, clica "Continuar" e força fallback via `clientProfileData`. Chamado em 3 pontos: início da Etapa 9, início da Etapa 10 e dentro de cada iteração do loop de retry da Etapa 10.
+3. **Função `desambiguarEmailParaVtex(email, cpf)` + `CLIENTE.emailVtex` controlado por `VTEX_USE_EMAIL_ALIAS=1`** — opt-in via env var (default OFF). Quando ligado, gera alias `+pos<sufixo>` para provedores que aceitam (Gmail/Outlook/iCloud/etc) e usa no checkout VTEX, enquanto SIAA/DB Eduit/Kommo/N8N mantêm o email original. Útil quando o CPF também é novo.
+
+**Contexto:** O usuário reportou erro `"sucesso": false, "erro": "CEP não encontrado"` ao tentar inscrição Pós-graduação no curso "Mba Em Inteligência Digital E De Mercado" com `vinips2012@gmail.com` / CPF `66878279011`. Após corrigir o `stealth-fixture` (registro anterior), o `vtexjs` voltou a carregar mas o checkout ainda travava entre `/profile` ↔ `/email` em loop. Investigação revelou:
+- O cliente fica como visitante porque o login passwordless da Etapa 3 só preenche email + clica "Entrar" — não tem código por email pra completar a autenticação quando o email JÁ EXISTE no VTEX. Pra emails novos (como o `gww32asilva@gmail.com` da Prótese Ocular anterior), o VTEX cria conta na hora sem código → funciona.
+- O VTEX renderiza `#/email` no checkout antes de `#/profile` quando o cliente não está autenticado. Sem handler, o spec entra em loop.
+- O payload de `clientProfileData` precisa de `birthDate` para o VTEX considerar o profile válido em contas existentes; sem ele a API responde 200 mas o checkout silenciosamente rejeita.
+- Tentativa de impersonação via `POST /api/sessions` com `{ impersonate: { storeUserEmail } }` retornou 200 (com sessionToken) mas **não impersonou de verdade** — `profile.email` continuou vazio e nenhum cookie `VtexIdclientAutCookie_<account>` ou `VtexImpersonatedCustomerId` foi setado. O admin polo (`fabio.boas50@polo.cruzeirodosul.edu.br`) não tem permissão "Telemarketing" no VTEX da Cruzeiro.
+- Tentativa com alias `+pos` validou o login (header "Olá" apareceu pela 1ª vez), mas a Etapa 5 travou em "Carregando..." 3x — provável conflito de CPF (mesmo CPF tentando criar 2ª conta com email diferente). Por isso o alias ficou opt-in.
+
+**Alternativas descartadas:**
+- *Impersonação via `/api/sessions`:* validada experimentalmente, mas o admin polo não tem permissão. Resolveria a raiz se o admin tivesse role correta; requer mudança de configuração no VTEX da Cruzeiro.
+- *Alias ligado por default:* causa conflito de CPF quando a conta antiga existe, deixando o spec em estado pior do que sem alias. Por isso ficou opt-in via env var.
+- *Refatorar a Etapa 3 para impersonar via UI nativa do admin-login da Cruzeiro:* o endpoint `/_v/segment/admin-login/v1/impersonate` retornou 404; o app customizado da Cruzeiro não expõe esse caminho. Exploração ficou para uma próxima rodada.
+
+**Impacto:**
+- `tests/inscricao-pos.spec.js`: ~150 linhas adicionadas (1 função desambiguar + 1 helper passarEtapaEmail + ajustes nos 2 payloads `clientProfileData` + 3 callsites de `passarEtapaEmail` + propriedade `nascimentoIso` em `CLIENTE`).
+- `.env.example`: nova variável `VTEX_USE_EMAIL_ALIAS=0` documentada com aviso sobre conflito de CPF.
+- Validação local com `--config=playwright.config.server.js` e dados do erro reportado: `birthDate` foi preenchido na UI ("✅ Data nascimento: 08/09/2000" — antes era "⚠️ Campo data de nascimento não encontrado"); com alias OFF, o checkout segue limitado pelo conflito de autenticação (problema estrutural, não de código).
+- **Próxima inscrição real**: usar email + CPF totalmente novos para garantir fluxo limpo. Para o caso de email JÁ existente com CPF JÁ existente, a solução robusta exige liberação de permissão de impersonação no VTEX da Cruzeiro (decisão fora deste repo).
+
+---
+
 ### 2026-06-16 — Correção do `stealth-fixture.js`: merge correto de `use:` global do config
 
 **Decisão:** Reescrever o cálculo de `launchOptions` e `headless` dentro de `tests/stealth-fixture.js` para mergear corretamente o `use:` global do config + o `use:` do projeto, em vez de ler apenas o `testInfo.project.use`.

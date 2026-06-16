@@ -431,6 +431,15 @@ const CLIENTE = {
   email: (process.env.CLIENTE_EMAIL || '').toLowerCase(),
   telefone: formatarTelefone(process.env.CLIENTE_TELEFONE || ''),
   nascimento: process.env.CLIENTE_NASCIMENTO || '',
+  nascimentoIso: (() => {
+    const raw = (process.env.CLIENTE_NASCIMENTO || '').trim();
+    if (!raw) return '';
+    const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    const m2 = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+    return '';
+  })(),
   cep: process.env.CLIENTE_CEP || '',
   numero: process.env.CLIENTE_NUMERO || String(Math.floor(Math.random() * 999) + 1),
   estado: corrigirEncoding(process.env.CLIENTE_ESTADO || ''),
@@ -454,6 +463,110 @@ const CLIENTE = {
   matricula: (process.env.CLIENTE_MATRICULA || '').replace(/[R$\s]/g, '').replace(',', '.').trim(),
   mensalidade: (process.env.CLIENTE_MENSALIDADE || '').replace(/[R$\s]/g, '').replace(',', '.').trim(),
 };
+
+// Email usado APENAS no checkout VTEX. Por padrao, usa o original (CLIENTE.email).
+// Se VTEX_USE_EMAIL_ALIAS=1 e provedor aceitar (Gmail/Outlook/etc), gera alias +sufixo
+// para evitar bloqueio de email ja existente. ATENCAO: usar alias com CPF que ja tem
+// conta VTEX gera conflito (CPF eh chave unica de cliente B2C). So habilitar quando
+// o CPF tambem for novo OU se a conta antiga ja foi removida do VTEX.
+// Integracoes externas (SIAA, DB Eduit, Kommo, N8N) seguem usando CLIENTE.email original.
+CLIENTE.emailVtex = (process.env.VTEX_USE_EMAIL_ALIAS === '1')
+  ? desambiguarEmailParaVtex(CLIENTE.email, CLIENTE.cpf)
+  : CLIENTE.email;
+if (CLIENTE.emailVtex !== CLIENTE.email) {
+  console.log(`   📧 Email VTEX (alias): ${CLIENTE.emailVtex}`);
+  console.log(`   📧 Email original (SIAA/DB/Kommo/N8N): ${CLIENTE.email}`);
+}
+
+// Desambigua o email para o checkout VTEX usando alias +sufixo (Gmail/Outlook/etc).
+// O VTEX trata como conta nova e nao exige codigo de email (problema de email ja existente).
+// As integracoes SIAA/DB/Kommo/N8N seguem usando o email original (CLIENTE.email).
+function desambiguarEmailParaVtex(emailOriginal, cpf) {
+  if (!emailOriginal) return emailOriginal;
+  const partes = emailOriginal.split('@');
+  if (partes.length !== 2) return emailOriginal;
+  const [local, dominio] = partes;
+  const dominioLower = dominio.toLowerCase();
+  const aceitaPlus = new Set([
+    'gmail.com', 'googlemail.com',
+    'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
+    'icloud.com', 'me.com', 'mac.com',
+    'fastmail.com', 'fastmail.fm', 'protonmail.com', 'proton.me',
+    'yandex.com', 'yandex.ru',
+  ]);
+  if (!aceitaPlus.has(dominioLower)) return emailOriginal;
+  if (local.includes('+')) return emailOriginal; // ja tem alias
+  const cpfClean = (cpf || '').replace(/\D/g, '');
+  const tag = cpfClean ? `pos${cpfClean.slice(-4)}${Date.now().toString().slice(-5)}` : `pos${Date.now().toString().slice(-7)}`;
+  return `${local}+${tag}@${dominio}`;
+}
+
+// Quando o cliente nao esta autenticado de fato (passwordless sem codigo), o checkout
+// VTEX renderiza a etapa #/email antes de #/profile. Se o spec ignorar isso, fica em
+// loop entre /profile e /email. Esse helper detecta #/email e avanca para /profile.
+async function passarEtapaEmail(page, email) {
+  if (!page.url().includes('#/email')) return false;
+  console.log('   📧 Etapa #/email detectada - tratando como visitante...');
+
+  const seletoresEmail = [
+    page.locator('#client-pre-email'),
+    page.locator('input[name="email"]:visible'),
+    page.locator('input[type="email"]:visible'),
+    page.getByRole('textbox', { name: /e[-]?mail/i }),
+  ];
+  for (const campo of seletoresEmail) {
+    try {
+      if (await campo.first().isVisible({ timeout: 2000 })) {
+        const atual = await campo.first().inputValue().catch(() => '');
+        if (!atual || atual.toLowerCase() !== email.toLowerCase()) {
+          await campo.first().click({ force: true });
+          await campo.first().fill('');
+          await campo.first().type(email, { delay: 40 });
+          console.log(`   ✅ Email da etapa #/email preenchido: ${email}`);
+        } else {
+          console.log(`   ✅ Email da etapa #/email já preenchido: ${atual}`);
+        }
+        break;
+      }
+    } catch (e) {}
+  }
+
+  await page.waitForTimeout(800);
+  const seletoresBtn = [
+    page.locator('#btn-go-to-shipping'),
+    page.getByRole('button', { name: /continuar/i }),
+    page.getByRole('button', { name: /pr[óo]xim[ao]/i }),
+    page.locator('button:has-text("Continuar")'),
+    page.locator('button:has-text("Avançar")'),
+  ];
+  for (const btn of seletoresBtn) {
+    try {
+      if (await btn.first().isVisible({ timeout: 2000 })) {
+        await btn.first().click({ force: true, timeout: 3000 }).catch(() => {});
+        console.log('   ✅ Clicou em Continuar na etapa #/email');
+        break;
+      }
+    } catch (e) {}
+  }
+  await page.waitForTimeout(1500);
+  await page.evaluate(async (em) => {
+    try {
+      const vj = window.vtexjs && window.vtexjs.checkout;
+      if (!vj) return;
+      const of = vj.orderForm || (await vj.getOrderForm());
+      if (!of || !of.orderFormId) return;
+      await fetch(`/api/checkout/pub/orderForm/${of.orderFormId}/attachments/clientProfileData`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: em, isCorporate: false }),
+      });
+    } catch (e) {}
+  }, email).catch(() => {});
+  await page.waitForTimeout(2000);
+  const novaUrl = page.url();
+  console.log(`   📍 URL após etapa #/email: ${novaUrl.split('#')[1] || novaUrl}`);
+  return novaUrl.includes('#/profile') || novaUrl.includes('#/shipping') || novaUrl.includes('#/payment');
+}
 
 // Função DESABILITADA - não mover o mouse para evitar popup "Antes de Você Sair"
 async function manterCursorNaTela(page) {
@@ -897,8 +1010,8 @@ test('inscricao-pos', async ({ page, context }) => {
         await page.waitForTimeout(300);
         await campoEmail.fill('');
         await page.waitForTimeout(200);
-        await campoEmail.type(CLIENTE.email, { delay: 60 });
-        console.log(`   ✅ Email: ${CLIENTE.email}`);
+        await campoEmail.type(CLIENTE.emailVtex, { delay: 60 });
+        console.log(`   ✅ Email: ${CLIENTE.emailVtex}`);
       } catch (e) {
         console.log(`   ⚠️ Erro ao preencher email: ${e.message.substring(0, 60)}`);
         continue;
@@ -967,7 +1080,7 @@ test('inscricao-pos', async ({ page, context }) => {
 
   await fecharModais(page);
 
-  console.log(`✅ ETAPA 3 CONCLUÍDA - ${jaLogado ? 'Já logado' : CLIENTE.email}`);
+  console.log(`✅ ETAPA 3 CONCLUÍDA - ${jaLogado ? 'Já logado' : CLIENTE.emailVtex}`);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ETAPA 4: BUSCA DO CURSO
@@ -3069,6 +3182,14 @@ test('inscricao-pos', async ({ page, context }) => {
   
   await page.waitForTimeout(2000);
   
+  // Se cliente caiu em #/email (visitante), trata antes de tentar preencher data
+  for (let tEmail = 0; tEmail < 3; tEmail++) {
+    if (!page.url().includes('#/email')) break;
+    const avancou = await passarEtapaEmail(page, CLIENTE.emailVtex);
+    if (avancou) break;
+    await page.waitForTimeout(2000);
+  }
+  
   // Preenche data de nascimento (formato YYYY-MM-DD para input type=date)
   const partes = CLIENTE.nascimento.split('/');
   const dataFormatada = `${partes[2]}-${partes[1]}-${partes[0]}`;
@@ -3293,13 +3414,27 @@ test('inscricao-pos', async ({ page, context }) => {
   
   await page.waitForTimeout(2000);
 
+  // Antes do loop: se caiu em #/email (visitante), trata primeiro
+  for (let tEmail = 0; tEmail < 3; tEmail++) {
+    if (!page.url().includes('#/email')) break;
+    const avancou = await passarEtapaEmail(page, CLIENTE.emailVtex);
+    if (avancou) break;
+    await page.waitForTimeout(2000);
+  }
+  
   // ── Se estamos em #/profile, precisamos avançar para #/shipping ──
   const urlE10 = page.url();
-  if (urlE10.includes('#/profile') || urlE10.includes('#/cart')) {
+  if (urlE10.includes('#/profile') || urlE10.includes('#/cart') || urlE10.includes('#/email')) {
     console.log('   📍 Checkout está na etapa Profile/Cart, tentando avançar para Shipping...');
     
     for (let tentProfile = 1; tentProfile <= 5; tentProfile++) {
       console.log(`   🔄 Tentativa ${tentProfile}/5 de avançar para Shipping...`);
+      
+      // Se em qualquer tentativa cair de novo em #/email, passa por ele primeiro
+      if (page.url().includes('#/email')) {
+        await passarEtapaEmail(page, CLIENTE.emailVtex);
+        await page.waitForTimeout(1500);
+      }
       
       // Diagnóstico: verificar campos e erros de validação
       const diagnostico = await page.evaluate(() => {
@@ -3351,9 +3486,9 @@ test('inscricao-pos', async ({ page, context }) => {
           if (!disabled) {
             await campoEmail.click().catch(() => {});
             await campoEmail.fill('');
-            await campoEmail.fill(CLIENTE.email);
+            await campoEmail.fill(CLIENTE.emailVtex);
             await campoEmail.press('Tab');
-            console.log(`   ✅ Email: ${CLIENTE.email}`);
+            console.log(`   ✅ Email: ${CLIENTE.emailVtex}`);
             await page.waitForTimeout(1500); // Aguardar validação de email do VTEX
           } else {
             console.log(`   ℹ️ Email desabilitado (já preenchido)`);
@@ -3503,17 +3638,20 @@ test('inscricao-pos', async ({ page, context }) => {
               const orderForm = window.vtexjs.checkout.orderForm;
               if (orderForm && orderForm.orderFormId) {
                 // Envia dados do profile via API
+                const payload = {
+                  email: dados.email,
+                  firstName: dados.nome,
+                  lastName: dados.sobrenome,
+                  document: dados.cpf,
+                  documentType: 'cpf',
+                  phone: dados.telefone,
+                  isCorporate: false,
+                };
+                if (dados.birthDate) payload.birthDate = dados.birthDate;
                 return fetch(`/api/checkout/pub/orderForm/${orderForm.orderFormId}/attachments/clientProfileData`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    email: dados.email,
-                    firstName: dados.nome,
-                    lastName: dados.sobrenome,
-                    document: dados.cpf,
-                    documentType: 'cpf',
-                    phone: dados.telefone,
-                  })
+                  body: JSON.stringify(payload),
                 }).then(r => r.ok ? 'api-ok' : `api-erro-${r.status}`);
               }
             }
@@ -3522,11 +3660,12 @@ test('inscricao-pos', async ({ page, context }) => {
             return `erro: ${e.message}`;
           }
         }, {
-          email: CLIENTE.email,
+          email: CLIENTE.emailVtex,
           nome: CLIENTE.nome.split(' ')[0],
           sobrenome: CLIENTE.nome.split(' ').slice(1).join(' ') || CLIENTE.nome,
           cpf: CLIENTE.cpf.replace(/\D/g, ''),
           telefone: CLIENTE.telefone,
+          birthDate: CLIENTE.nascimentoIso,
         }).catch(() => 'evaluate-erro');
         
         console.log(`   📋 Resultado API VTEX: ${resultado}`);
@@ -3566,27 +3705,31 @@ test('inscricao-pos', async ({ page, context }) => {
       try {
         if (window.vtexjs && window.vtexjs.checkout && window.vtexjs.checkout.orderForm) {
           const ofId = window.vtexjs.checkout.orderForm.orderFormId;
+          const payload = {
+            email: dados.email,
+            firstName: dados.nome,
+            lastName: dados.sobrenome,
+            document: dados.cpf,
+            documentType: 'cpf',
+            phone: dados.telefone,
+            isCorporate: false,
+          };
+          if (dados.birthDate) payload.birthDate = dados.birthDate;
           await fetch(`/api/checkout/pub/orderForm/${ofId}/attachments/clientProfileData`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: dados.email,
-              firstName: dados.nome,
-              lastName: dados.sobrenome,
-              document: dados.cpf,
-              documentType: 'cpf',
-              phone: dados.telefone,
-            })
+            body: JSON.stringify(payload),
           });
         }
       } catch (e) {}
       window.location.hash = '#/shipping';
     }, {
-      email: CLIENTE.email,
+      email: CLIENTE.emailVtex,
       nome: CLIENTE.nome.split(' ')[0],
       sobrenome: CLIENTE.nome.split(' ').slice(1).join(' ') || CLIENTE.nome,
       cpf: CLIENTE.cpf.replace(/\D/g, ''),
       telefone: CLIENTE.telefone,
+      birthDate: CLIENTE.nascimentoIso,
     }).catch(() => {});
     
     await page.waitForTimeout(5000);
